@@ -1,0 +1,13 @@
+# Build directories
+/build/
+/build-*/
+*.o
+*.a
+
+# Reader tool output
+*.pgm
+*.png
+
+# Local config / secrets
+*.conf
+config

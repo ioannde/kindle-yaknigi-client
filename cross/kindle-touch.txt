@@ -1,0 +1,23 @@
+# Meson cross-file for the lower bound: Kindle Touch (2011) and same-era
+# devices with an OLD glibc. Phase 5 target (PLAN.md). The key difference from
+# pw5.txt is an older toolchain/sysroot and the requirement to statically link
+# our own TLS stack (the stock TLS on this device cannot talk to Yandex —
+# PLAN.md 2.2).
+#
+# Usage: meson setup build-touch --cross-file cross/kindle-touch.txt
+
+[binaries]
+c = 'arm-kindle-linux-gnueabi-gcc'
+cpp = 'arm-kindle-linux-gnueabi-g++'
+ar = 'arm-kindle-linux-gnueabi-ar'
+strip = 'arm-kindle-linux-gnueabi-strip'
+pkg-config = 'pkg-config'
+
+[host_machine]
+system = 'linux'
+cpu_family = 'arm'
+cpu = 'arm926ej-s'
+endian = 'little'
+
+[properties]
+# sys_root = '/opt/kindle-touch-sysroot'

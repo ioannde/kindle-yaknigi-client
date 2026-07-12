@@ -1,0 +1,26 @@
+# Meson cross-file for Kindle Paperwhite 2022 (PW5) and other modern models.
+# Fill in the paths to your ARM cross toolchain (e.g. a musl or glibc GCC
+# targeting the Kindle). See docs/STRUCTURE.md and kindlemodding.org.
+#
+# Usage: meson setup build-pw5 --cross-file cross/pw5.txt
+#
+# The system libs listed in meson.build (libcurl, cjson, zlib, freetype) must
+# be provided for the target — either cross-built into a sysroot/pkg-config
+# path, or vendored under third_party/ and linked statically (PLAN.md 5).
+
+[binaries]
+c = 'arm-linux-gnueabihf-gcc'
+cpp = 'arm-linux-gnueabihf-g++'
+ar = 'arm-linux-gnueabihf-ar'
+strip = 'arm-linux-gnueabihf-strip'
+pkg-config = 'pkg-config'
+
+[host_machine]
+system = 'linux'
+cpu_family = 'arm'
+cpu = 'cortex-a9'
+endian = 'little'
+
+[properties]
+# Point pkg-config at the target sysroot that carries the cross-built deps.
+# sys_root = '/opt/kindle-pw5-sysroot'
