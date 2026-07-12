@@ -18,6 +18,7 @@ libcurl_dep  = dependency('libcurl')
 cjson_dep    = dependency('libcjson')
 zlib_dep     = dependency('zlib')
 freetype_dep = dependency('freetype2')
+crypto_dep   = dependency('libcrypto')   # AES-256-CBC for the Bookmate manifest
 libm_dep     = cc.find_library('m', required : false)
 
 inc = include_directories('src')
@@ -29,14 +30,18 @@ core_sources = files(
   'src/util/log.c',
   'src/util/buf.c',
   'src/util/url.c',
+  'src/util/base64.c',
   'src/platform/net.c',
   'src/yandex/json.c',
   'src/yandex/models.c',
   'src/yandex/auth.c',
   'src/yandex/api.c',
+  'src/yandex/crypto.c',
   'src/yandex/content.c',
   'src/storage/config.c',
   'src/reader/zip.c',
+  'src/reader/html.c',
+  'src/reader/opf.c',
   'src/reader/epub.c',
   'src/reader/document.c',
   'src/reader/layout.c',
@@ -44,15 +49,17 @@ core_sources = files(
   'src/platform/display.c',
 )
 
+yb_deps = [libcurl_dep, cjson_dep, zlib_dep, freetype_dep, crypto_dep, libm_dep]
+
 libyb = static_library('yb', core_sources,
   include_directories : inc,
-  dependencies : [libcurl_dep, cjson_dep, zlib_dep, freetype_dep, libm_dep],
+  dependencies : yb_deps,
 )
 
 yb_dep = declare_dependency(
   link_with : libyb,
   include_directories : inc,
-  dependencies : [libcurl_dep, cjson_dep, zlib_dep, freetype_dep, libm_dep],
+  dependencies : yb_deps,
 )
 
 # --- tools ------------------------------------------------------------------
@@ -71,7 +78,7 @@ executable('yb-render', 'src/tools/render.c',
 # --- tests ------------------------------------------------------------------
 test_inc = include_directories('src', 'tests')
 
-foreach t : ['test_buf', 'test_url', 'test_models', 'test_zip', 'test_layout']
+foreach t : ['test_buf', 'test_url', 'test_models', 'test_zip', 'test_layout', 'test_base64', 'test_opf', 'test_crypto']
   exe = executable(t, 'tests/' + t + '.c',
     include_directories : test_inc,
     dependencies : yb_dep,

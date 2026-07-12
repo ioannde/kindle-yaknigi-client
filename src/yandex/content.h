@@ -1,34 +1,19 @@
 #ifndef YB_YANDEX_CONTENT_H
 #define YB_YANDEX_CONTENT_H
 
-/* Book reading-content acquisition.
+#include "reader/document.h"
+
+/* Bookmate reading protocol (confirmed in Phase 0, docs/PHASE0-FINDINGS.md):
  *
- * ┌─────────────────────────────────────────────────────────────────────┐
- * │ BLOCKED ON PHASE 0 (docs/PHASE0.md, track A) — the single biggest    │
- * │ product risk. yandex-book-api exposes metadata only; the reading     │
- * │ protocol (chapter manifest, per-chapter documents, and any content   │
- * │ decryption) is undocumented and must be reverse-engineered from      │
- * │ traffic under the user's own legal access before this is written.    │
- * └─────────────────────────────────────────────────────────────────────┘
+ *   1. GET /books/{uuid}/metadata/v4   -> document_uuid + AES-encrypted opf
+ *   2. GET /metadata_secret            -> base64 AES-256 key
+ *   3. AES-256-CBC decrypt opf (IV = first 16 bytes) -> EPUB OPF
+ *   4. parse spine -> ordered chapter paths
+ *   5. GET /documents/{document_uuid}/content?path=<dir>/<href> -> plain XHTML
+ *   6. XHTML -> reader document
  *
- * Intended shape once Phase 0 lands: resolve a book_uuid to an ordered set
- * of chapter documents, stream+decrypt them (never the whole book in RAM —
- * PLAN.md 2.3), and hand a normalized document to reader/. The interface
- * below is a placeholder to keep call sites compiling; every function returns
- * "not implemented" until then.
- */
-
-typedef enum {
-    YB_CONTENT_NOT_IMPLEMENTED = -100,
-} yb_content_result;
-
-/* Placeholder: will become an opaque handle to a resolved book's chapter
- * stream. */
-typedef struct yb_content_stream yb_content_stream;
-
-/* Returns YB_CONTENT_NOT_IMPLEMENTED until Phase 0 defines the protocol. */
-int yb_content_open(const char *token, const char *book_uuid,
-                    yb_content_stream **out);
-void yb_content_close(yb_content_stream *s);
+ * Loads a book's full text into `out` (zeroed first). Returns 0 on success,
+ * negative on error. Uses only the user's own legal access (their token). */
+int yb_content_load_book(const char *token, const char *book_uuid, yb_document *out);
 
 #endif /* YB_YANDEX_CONTENT_H */

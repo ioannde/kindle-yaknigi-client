@@ -42,6 +42,26 @@ const char *yb_api_graphql_url(void) {
         { NULL, NULL },                                   \
     }
 
+int yb_api_get_raw(const char *token, const char *url, char **body, size_t *len) {
+    if (body) *body = NULL;
+    if (len) *len = 0;
+    yb_header headers[] = YB_BOOKMATE_HEADERS(token);
+
+    yb_http_response resp;
+    if (yb_http_request("GET", url, headers, NULL, NULL, 0, &resp) != 0) return -1;
+
+    if (resp.status >= 400) {
+        int st = (int)resp.status;
+        YB_WARN("GET %s -> HTTP %d", url, st);
+        yb_http_response_free(&resp);
+        return st;
+    }
+    if (body) { *body = resp.body; resp.body = NULL; }
+    if (len) *len = resp.body_len;
+    yb_http_response_free(&resp);
+    return 0;
+}
+
 static const cJSON *find_items_array(const cJSON *root) {
     if (cJSON_IsArray(root)) return root;
     static const char *keys[] = { "library_cards", "items", "cards", "books", "objects" };

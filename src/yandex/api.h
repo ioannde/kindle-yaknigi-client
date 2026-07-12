@@ -22,6 +22,12 @@ int yb_api_get_my_library(const char *token, yb_library *out);
 /* GET a single book's metadata by uuid into `out` (zeroed first). */
 int yb_api_get_book(const char *token, const char *uuid, yb_book *out);
 
+/* Authenticated Bookmate GET returning the raw response body (used for the
+ * reading protocol: metadata/v4, metadata_secret, document content). On
+ * success returns 0 and sets *body (owned, NUL-terminated) and *len. Returns
+ * the HTTP status on >= 400, or -1 on transport error. */
+int yb_api_get_raw(const char *token, const char *url, char **body, size_t *len);
+
 /* POST a GraphQL query (transport for search/stats). `variables_json` is a
  * JSON object string or NULL. On success returns 0 and sets *out_body to the
  * raw response (caller frees). The concrete search query text is captured in

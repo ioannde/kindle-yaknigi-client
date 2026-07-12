@@ -13,9 +13,11 @@
  *   YB_CA_BUNDLE          path to a CA bundle (device build)
  */
 #include "platform/net.h"
+#include "reader/document.h"
 #include "storage/config.h"
 #include "yandex/api.h"
 #include "yandex/auth.h"
+#include "yandex/content.h"
 #include "yandex/models.h"
 
 #include <stdio.h>
@@ -33,6 +35,7 @@ static void usage(const char *argv0) {
         "            no token is available)\n"
         "  library   list the authenticated user's library\n"
         "  whoami    validate the current token\n"
+        "  read UUID  load a book's text and print the first blocks\n"
         "\n"
         "Configuration comes from env vars (see source header) and the config\n"
         "file (YB_CONFIG, else ~/.config/kindle-yaknigi/config).\n",
@@ -125,6 +128,22 @@ static int do_library(const char *token) {
     return 0;
 }
 
+static int do_read(const char *token, const char *uuid) {
+    yb_document doc;
+    if (yb_content_load_book(token, uuid, &doc) != 0) {
+        fprintf(stderr, "error: could not load book %s\n", uuid);
+        return 1;
+    }
+    printf("Title: %s\n", doc.title ? doc.title : "(untitled)");
+    printf("Blocks: %zu\n\n", doc.count);
+    for (size_t i = 0; i < doc.count && i < 8; ++i) {
+        const yb_block *b = &doc.blocks[i];
+        printf("%s%.200s\n", b->heading ? "# " : "", b->text);
+    }
+    yb_document_free(&doc);
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc > 1 && (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0)) {
         usage(argv[0]);
@@ -140,8 +159,12 @@ int main(int argc, char **argv) {
 
     if (cmd && strcmp(cmd, "login") == 0) {
         rc = do_login(cfg);
-    } else if (!token && (!cmd || strcmp(cmd, "library") == 0 || strcmp(cmd, "whoami") == 0)) {
+    } else if (!token && cmd && strcmp(cmd, "login") != 0) {
         fprintf(stderr, "No token found; running login first.\n");
+        rc = do_login(cfg);
+        free(token);
+        token = resolve_token(cfg);
+    } else if (!token && !cmd) {
         rc = do_login(cfg);
         free(token);
         token = resolve_token(cfg);
@@ -150,6 +173,10 @@ int main(int argc, char **argv) {
     if (rc == 0 && token) {
         if (!cmd || strcmp(cmd, "library") == 0) rc = do_library(token);
         else if (strcmp(cmd, "whoami") == 0) rc = do_whoami(token);
+        else if (strcmp(cmd, "read") == 0) {
+            if (argc > 2) rc = do_read(token, argv[2]);
+            else { fprintf(stderr, "usage: read <book_uuid>\n"); rc = 2; }
+        }
         else if (strcmp(cmd, "login") != 0) { usage(argv[0]); rc = 2; }
     }
 
