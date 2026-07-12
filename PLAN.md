@@ -8,6 +8,10 @@
 - API-обёртка (референс): https://github.com/stepan163s/yandex-book-api
 - Kindle dev: https://kindlemodding.org/kindle-dev/index.html
 
+Связанные документы:
+- [`docs/PHASE0.md`](docs/PHASE0.md) — детальный план Фазы 0 (разведка протокола чтения).
+- [`docs/STRUCTURE.md`](docs/STRUCTURE.md) — структура C-проекта по модулям.
+
 ---
 
 ## 0. Зафиксированные решения
