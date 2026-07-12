@@ -11,3 +11,10 @@
 # Local config / secrets
 *.conf
 config
+
+# Python
+__pycache__/
+*.pyc
+
+# Phase 0 capture output
+tools/phase0/out/
