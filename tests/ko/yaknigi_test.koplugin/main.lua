@@ -1012,7 +1012,7 @@ local function test_books_and_memory(settings)
     local cards_before = #menu.item_table
     local removed_before = count("removed")
     tap_widget(top().rows.remove_library)
-    wait("the question", is_named("ConfirmBox"))
+    wait("the question", function() return top().ok_callback end)
     UIManager:forceRePaint()
     shot("64-remove-confirm")
     answer(top(), true)
@@ -1057,7 +1057,7 @@ local function test_books_and_memory(settings)
     if not settings.cache.picks.books then fail("the switch of the saved books") end
     settings.cache.freed = nil
     tap_widget(settings.clear_button)
-    wait("the question about saved books", is_named("ConfirmBox"))
+    wait("the question about saved books", function() return top().ok_callback end)
     if exists(keep_dir .. "/book.epub") == false then fail("cleared before asking") end
     answer(top(), true)
     wait("the books to go", function() return settings.cache.freed end)
