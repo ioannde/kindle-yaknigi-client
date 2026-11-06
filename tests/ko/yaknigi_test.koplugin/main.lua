@@ -101,9 +101,11 @@ local function script()
     local http = require("socket.http")
     http.request(os.getenv("YB_OAUTH_BASE") .. "/challenge?c=" .. challenge)
     qr:onTapClose()
+    -- The keyboard is the topmost widget, above the dialog it belongs to.
     local dialog = wait("the code dialog", function()
-        local w = top()
-        return w.getInputText and w
+        for _, window in ipairs(UIManager._window_stack) do
+            if window.widget.getInputText then return window.widget end
+        end
     end)
     shot("02-login-code")
     dialog:setInputText("abc123")

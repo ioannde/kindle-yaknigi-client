@@ -11,7 +11,8 @@ mkdir -p "$OUT/empty" "$HOME_DIR/settings"
 
 cp -R "$REPO/koreader/yaknigi.koplugin" "$KO/plugins/"
 cp -R "$REPO/tests/ko/yaknigi_test.koplugin" "$KO/plugins/"
-cp "$REPO/koreader/settings.reader.lua" "$HOME_DIR/settings.reader.lua"
+# The emulated screen is colour, which KOReader asks about once; a Paperwhite's is not.
+sed 's/^}$/    ["color_rendering"] = false,\n}/' "$REPO/koreader/settings.reader.lua" > "$HOME_DIR/settings.reader.lua"
 
 python3 "$REPO/tools/mock/server.py" "$PORT" koreader &
 SERVER=$!

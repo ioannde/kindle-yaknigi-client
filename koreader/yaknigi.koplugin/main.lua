@@ -128,7 +128,8 @@ function Yaknigi:showLoginQr(url, on_dismiss)
         text = url,
         width = side,
         height = side,
-        dismiss_callback = on_dismiss,
+        -- Runs while the QR is being closed; the dialog must not be shown from inside that.
+        dismiss_callback = function() UIManager:nextTick(on_dismiss) end,
     })
 end
 
@@ -188,21 +189,26 @@ function Yaknigi:libraryItems(cards)
 end
 
 function Yaknigi:showLibrary()
-    if not saved_token() then
-        self:showLogin()
-        return
-    end
     if self.library then UIManager:close(self.library) end
-    local cached = read_json(LIBRARY_CACHE)
+    local signed_in = saved_token() ~= nil
+    local cached = signed_in and read_json(LIBRARY_CACHE) or nil
+    local items
+    if not signed_in then
+        items = { { text = "Войдите по QR-коду, затем коснитесь экрана", sign_in = true } }
+    else
+        items = cached and self:libraryItems(cached) or {}
+    end
     local menu
     menu = Menu:new{
         title = "Яндекс Книги",
-        item_table = cached and self:libraryItems(cached) or {},
+        item_table = items,
         is_borderless = true,
         is_popout = false,
         covers_fullscreen = true,
         single_line = true,
-        onMenuSelect = function(_menu, item) self:openCard(item.card) end,
+        onMenuSelect = function(_menu, item)
+            if item.sign_in then self:showLogin() else self:openCard(item.card) end
+        end,
         close_callback = function()
             UIManager:close(menu)
             self.library = nil
@@ -213,7 +219,11 @@ function Yaknigi:showLibrary()
     }
     self.library = menu
     UIManager:show(menu)
-    UIManager:nextTick(function() self:refreshLibrary(cached == nil) end)
+    if signed_in then
+        UIManager:nextTick(function() self:refreshLibrary(cached == nil) end)
+    else
+        UIManager:nextTick(function() self:showLogin() end)
+    end
 end
 
 function Yaknigi:refreshLibrary(tell_failure)
