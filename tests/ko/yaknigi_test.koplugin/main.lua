@@ -927,7 +927,7 @@ local function test_books_and_memory(settings)
     tap_widget(menu.row_buttons[item])
     wait("the book to be added", function() return item.in_library and menu:inLibrary(item) end)
     if count("added") ~= added_before + 1 then fail("the plus did not add the book once") end
-    if top() ~= menu and top().name ~= "Notification" then fail("the plus opened something: " .. tostring(top().name)) end
+    if top() ~= menu and not top().toast then fail("the plus opened something: " .. tostring(top().name)) end
     if menu.view ~= "catalogue" then fail("the plus left the results: " .. menu.view) end
     UIManager:forceRePaint()
     shot("57-row-added-toast")
