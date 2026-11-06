@@ -1024,11 +1024,16 @@ local function test_books_and_memory(settings)
 
     -- A book to save again, for the memory to have it.
     local keep = menu.rows[1]
-    tap_widget(menu.row_buttons[keep])
-    wait("the menu to save from", is_named("YaknigiBookMenu"))
-    UIManager:forceRePaint()
-    tap_widget(top().rows.save)
-    wait("the kept book to be saved", function() return menu.book_status(keep) == "whole" end, 60)
+    for _, candidate in ipairs(menu.rows) do
+        if menu.book_status(candidate) ~= "whole" then keep = candidate end
+    end
+    if menu.book_status(keep) ~= "whole" then
+        tap_widget(menu.row_buttons[keep])
+        wait("the menu to save from", is_named("YaknigiBookMenu"))
+        UIManager:forceRePaint()
+        tap_widget(top().rows.save)
+        wait("the kept book to be saved", function() return menu.book_status(keep) == "whole" end, 60)
+    end
     local keep_dir = books .. "/" .. keep.card.book.uuid
 
     -- The memory: by default everything but the saved books.
