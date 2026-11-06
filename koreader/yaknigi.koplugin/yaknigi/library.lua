@@ -30,6 +30,16 @@ local Status = require("yaknigi/status")
 local Tabs = require("yaknigi/tabs")
 
 -- item_table holds { text, title, authors, mandatory, card, sign_in, whole, cover, shelf }.
+-- What went wrong and what to do about it, each on a line of its own: together they
+-- would not fit the width of the screen.
+local function retry_label(message, width)
+    return VerticalGroup:new{ align = "center",
+        Kit.text(message, 18, { max_width = width }),
+        Kit.gap(Kit.px(6)),
+        Kit.text("Нажмите, чтобы повторить", 16, { color = Blitbuffer.COLOR_DARK_GRAY, max_width = width }),
+    }
+end
+
 local Library = InputContainer:extend{
     name = "YaknigiLibrary",
     covers_fullscreen = true,
@@ -368,8 +378,8 @@ function Library:feedBody(width, area)
         local box = Geom:new{ w = width, h = area }
         if state.failed then
             self.retry_button = Kit.button(
-                Kit.text(state.failed .. " Нажмите, чтобы повторить.", 18, { max_width = width }),
-                width, Kit.px(ROW_H), function()
+                retry_label(state.failed, width),
+                width, Kit.px(2 * ROW_H), function()
                     self.on_feed(state)
                     self:refreshScreen()
                 end)
@@ -474,8 +484,8 @@ function Library:catalogueBody(width, area)
         local box = Geom:new{ w = width, h = area }
         if state.failed then
             self.retry_button = Kit.button(
-                Kit.text(state.failed .. " Нажмите, чтобы повторить.", 18, { max_width = width }),
-                width, Kit.px(ROW_H), function()
+                retry_label(state.failed, width),
+                width, Kit.px(2 * ROW_H), function()
                     self.on_catalogue(state)
                     self:refreshScreen()
                 end)

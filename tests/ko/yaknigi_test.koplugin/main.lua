@@ -1249,7 +1249,22 @@ local function script()
     shot("53-opened-at-text")
     reader().rolling:onGotoViewRel(-1)
     UIManager:forceRePaint()
-    wait("the picture a page back", function() return fragment() == 1 end)
+    wait("the page before the text", function() return fragment() == 1 end)
+    shot("54a-cover-page-at-once")
+    -- The picture itself, not the empty box that stands for it until it comes.
+    wait("the picture to show", function()
+        if not reader() or top().name ~= "ReaderUI" then return false end
+        UIManager:forceRePaint()
+        local W, H = Screen:getWidth(), Screen:getHeight()
+        local dark = 0
+        for y = math.floor(H * 0.08), math.floor(H * 0.9), 8 do
+            for x = 0, W - 1, 8 do
+                if Screen.bb:getPixel(x, y):getColor8().a < 200 then dark = dark + 1 end
+            end
+        end
+        return dark > 100
+    end, 40)
+    if fragment() ~= 1 then fail("the picture moved the page: " .. tostring(fragment())) end
     shot("54-cover-a-page-back")
     reader():onHome()
     menu = library_with(23)
