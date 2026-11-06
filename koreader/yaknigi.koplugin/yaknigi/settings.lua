@@ -4,6 +4,7 @@
 -- it does not fit the screen.
 local Blitbuffer = require("ffi/blitbuffer")
 local CenterContainer = require("ui/widget/container/centercontainer")
+local ConfirmBox = require("ui/widget/confirmbox")
 local Device = require("device")
 local Event = require("ui/event")
 local FrameContainer = require("ui/widget/container/framecontainer")
@@ -12,6 +13,7 @@ local GestureRange = require("ui/gesturerange")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local HorizontalSpan = require("ui/widget/horizontalspan")
 local IconWidget = require("ui/widget/iconwidget")
+local InfoMessage = require("ui/widget/infomessage")
 local InputContainer = require("ui/widget/container/inputcontainer")
 local LeftContainer = require("ui/widget/container/leftcontainer")
 local LineWidget = require("ui/widget/linewidget")
@@ -26,6 +28,7 @@ local Kit = require("yaknigi/kit")
 local Power = require("yaknigi/power")
 local Prefs = require("yaknigi/prefs")
 local Status = require("yaknigi/status")
+local Storage = require("yaknigi/storage")
 local Tabs = require("yaknigi/tabs")
 
 local ROW_H, HEADING_H, BAR_H, PAGER_H = 60, 46, 56, 56
@@ -37,6 +40,7 @@ local Settings = InputContainer:extend{
     on_sign_out = nil,
     on_close_app = nil,
     on_tab = nil, -- function(id): as a tab of the library, with the tabs at the bottom
+    storage = nil, -- { measure(done), clear(picks, done) }; what is on the device, from the library
     body_height = nil, -- how much room the list has; the rest of the screen unless given
     all_rows = nil, -- also the rows that this device has no use for
 }
@@ -108,6 +112,12 @@ function Settings:entries()
         Prefs.set_sleep_minutes(self.ui, Prefs.SLEEP_MINUTES[i])
     end)
 
+    if self.storage then
+        heading("Память")
+        list[#list + 1] = { key = "clear_cache", title = "Очистить кэш", leads_on = true,
+            action = function() self:openCache() end }
+    end
+
     if self.on_sign_out then
         heading("Аккаунт")
         list[#list + 1] = { key = "sign_out", title = "Выйти из аккаунта", action = function()
@@ -173,6 +183,9 @@ function Settings:mainRows()
             if entry.labels then
                 local right, room = Kit.value_and_chevron(entry.labels[entry.selected])
                 widget = self:row(entry.title, right, room, function() self:open(entry) end)
+            elseif entry.leads_on then
+                local right, room = Kit.value_and_chevron()
+                widget = self:row(entry.title, right, room, entry.action)
             elseif entry.action then
                 widget = self:row(entry.title, nil, nil, entry.action)
             else
@@ -226,6 +239,120 @@ function Settings:choiceRows(choice)
         rows[#rows + 1] = { height = note:getSize().h, widget = note }
     end
     return rows
+end
+
+--- What can be cleared, each with what it takes and a switch, and the button that does it.
+function Settings:cacheRows()
+    local W = self.dimen.w
+    local pad = Kit.px(16)
+    local cache = self.cache
+    local sizes = cache.sizes or {}
+    local rows = {}
+    self.cache_rows = {}
+    local function line(key, title)
+        local value = sizes[key] and Storage.size_text(sizes[key]) or "…"
+        local right = HorizontalGroup:new{ align = "center",
+            Kit.text(value, 16, { color = Blitbuffer.COLOR_DARK_GRAY }),
+            HorizontalSpan:new{ width = Kit.px(12) },
+            Kit.Switch:new{ on = cache.picks[key] },
+        }
+        local widget = self:row(title, right, nil, function()
+            cache.picks[key] = not cache.picks[key]
+            self:changed()
+        end)
+        self.cache_rows[key] = widget
+        rows[#rows + 1] = {
+            height = Kit.px(ROW_H) + Kit.px(1),
+            widget = VerticalGroup:new{ align = "left", widget, row_line(W) },
+        }
+    end
+    line("junk", "Вёрстка и временные файлы")
+    line("covers", "Обложки")
+    line("partial", "Недокачанные книги")
+    local count = sizes.books_count
+    line("books", count and count > 0 and ("Сохранённые книги · " .. count) or "Сохранённые книги")
+
+    local note = FrameContainer:new{
+        bordersize = 0, padding = 0, padding_left = pad, padding_right = pad, padding_top = Kit.px(12),
+        padding_bottom = Kit.px(16),
+        TextBoxWidget:new{
+            text = "Всё это скачается и посчитается снова, когда понадобится: первое открытие книги после очистки будет дольше. Место чтения, закладки и заметки останутся.",
+            face = Kit.face(15),
+            fgcolor = Blitbuffer.COLOR_DARK_GRAY,
+            width = W - 2 * pad,
+        },
+    }
+    rows[#rows + 1] = { height = note:getSize().h, widget = note }
+
+    local button_h = Kit.px(56)
+    self.clear_button = Kit.Tappable:new{
+        callback = function() self:clearCache() end,
+        FrameContainer:new{
+            background = Blitbuffer.COLOR_BLACK,
+            bordersize = 0, padding = 0,
+            radius = math.floor(button_h / 2),
+            CenterContainer:new{
+                dimen = Geom:new{ w = W - 2 * pad, h = button_h },
+                Kit.text(cache.busy and "Очищаю…" or "Очистить", 20, { bold = true, color = Blitbuffer.COLOR_WHITE }),
+            },
+        },
+    }
+    rows[#rows + 1] = {
+        height = button_h,
+        widget = HorizontalGroup:new{ HorizontalSpan:new{ width = pad }, self.clear_button },
+    }
+    return rows
+end
+
+--- Finds out what things take, which on the device is no matter of a moment.
+function Settings:measureCache()
+    local cache = self.cache
+    self.storage.measure(function(sizes)
+        if self.cache ~= cache or self.gone then return end
+        cache.sizes = sizes
+        if self.choice and self.choice.cache_screen then self:changed() end
+    end)
+end
+
+function Settings:openCache()
+    self.cache = { picks = { junk = true, covers = true, partial = true, books = false } }
+    self.choice = { title = "Очистить кэш", cache_screen = true }
+    self.list_page = self.page
+    self.page = 1
+    self:changed()
+    self:measureCache()
+end
+
+function Settings:clearCache()
+    local cache = self.cache
+    if cache.busy then return end
+    local picks = cache.picks
+    if not (picks.junk or picks.covers or picks.partial or picks.books) then return end
+    local function go()
+        cache.busy = true
+        self:changed()
+        self.storage.clear(picks, function(freed)
+            cache.busy = false
+            cache.freed = freed
+            if self.gone then return end
+            UIManager:show(InfoMessage:new{ text = "Освобождено " .. Storage.size_text(freed), timeout = 3 })
+            if self.cache == cache then
+                cache.sizes = nil
+                self:changed()
+                self:measureCache()
+            end
+        end)
+    end
+    if picks.books then
+        self.cache_confirm = ConfirmBox:new{
+            text = "Удалить сохранённые книги с устройства? Их можно будет скачать снова, место чтения и заметки останутся.",
+            ok_text = "Удалить",
+            ok_callback = go,
+        }
+        UIManager:show(self.cache_confirm)
+    else
+        go()
+    end
 end
 
 --- Splits rows between pages of the given height. A heading stays with the row after it.
@@ -307,7 +434,12 @@ function Settings:build()
         tab_bar, self.tab_cells = Tabs.bar(W, "settings", function(id) self:selectTab(id) end)
     end
 
-    local rows = choice and self:choiceRows(choice) or self:mainRows()
+    local rows
+    if choice then
+        rows = choice.cache_screen and self:cacheRows() or self:choiceRows(choice)
+    else
+        rows = self:mainRows()
+    end
     local room = self.body_height or self.dimen.h - header_h - tabs_h
     local pages = paginate(rows, room)
     if #pages > 1 then
@@ -392,6 +524,7 @@ function Settings:close()
 end
 
 function Settings:onCloseWidget()
+    self.gone = true
     self.stop_status()
 end
 

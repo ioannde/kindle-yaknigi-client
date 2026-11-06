@@ -893,6 +893,195 @@ local function test_reading_screen()
     footer:onUpdateFooter(true)
 end
 
+-- The picture at the right of a row, the book's menu, and what is kept on the device.
+local function test_books_and_memory(settings)
+    local lfs = require("libs/libkoreader-lfs")
+    local books = require("datastorage"):getDataDir() .. "/yaknigi/books"
+    local function exists(path) return lfs.attributes(path) ~= nil end
+    local function count(name) return #mock_get("/test/" .. name)[name] end
+    local function to_library()
+        tap_widget(top().tab_cells.library)
+        return wait("the library", function() return top().item_table and top().view == "home" and top() end)
+    end
+    local menu = to_library()
+
+    -- In the results: not yet in the library, a plus.
+    tap_widget(menu.tab_cells.search)
+    wait("the results", function() return menu.view == "catalogue" and #menu.rows > 0 end)
+    local item
+    for _, row in ipairs(menu.rows) do
+        if not row.in_library and not menu:inLibrary(row) then item = row; break end
+    end
+    if not item then fail("no book outside the library on the first page") end
+    local id = item.card.book.uuid
+    local added_before = count("added")
+    UIManager:forceRePaint()
+    shot("56-row-plus")
+    tap_widget(menu.row_buttons[item])
+    wait("the book to be added", function() return item.in_library and menu:inLibrary(item) end)
+    if count("added") ~= added_before + 1 then fail("the plus did not add the book once") end
+    if top() ~= menu and top().name ~= "Notification" then fail("the plus opened something: " .. tostring(top().name)) end
+    if menu.view ~= "catalogue" then fail("the plus left the results: " .. menu.view) end
+    UIManager:forceRePaint()
+    shot("57-row-added-toast")
+    if exists(books .. "/" .. id .. "/state") then fail("the plus saved the book") end
+
+    -- In the library: it can be saved.
+    tap_widget(menu.row_buttons[item])
+    wait("the book to be saving", function() return menu.book_status(item) == "saving" end)
+    UIManager:forceRePaint()
+    shot("58-row-saving")
+    wait("the book to be saved", function() return menu.book_status(item) == "whole" end, 60)
+    if not exists(books .. "/" .. id .. "/book.epub") then fail("a saved book with no file") end
+    UIManager:forceRePaint()
+    shot("59-row-saved")
+    local card = menu:inLibrary(item).card
+
+    -- Saved: a check, and the menu takes it off the device with the place in it left alone.
+    local place = books .. "/" .. id .. "/to_send"
+    local f = io.open(place, "w")
+    f:write("a place to send")
+    f:close()
+    tap_widget(menu.row_buttons[item])
+    wait("the book's menu", is_named("YaknigiBookMenu"))
+    UIManager:forceRePaint()
+    shot("60-book-menu-saved")
+    local sheet = top()
+    if not sheet.rows.remove_device or sheet.rows.save then fail("what the menu has for a saved book") end
+    tap_widget(sheet.rows.remove_device)
+    wait("the book to leave the device", function() return not menu.book_status(item) and top().name ~= "YaknigiBookMenu" end)
+    if exists(books .. "/" .. id .. "/book.epub") then fail("the book is still on the device") end
+    if not exists(place) or not exists(books .. "/" .. id .. "/manifest.json") then
+        fail("taking the text off took what was not text")
+    end
+    os.remove(place)
+
+    -- And reads again, from Yandex.
+    menu:onMenuSelect(item)
+    wait("the book to open again", function()
+        return reader() and reader().document and top().name == "ReaderUI"
+            and reader().document.file:find("/" .. id .. "/", 1, true)
+    end)
+    reader():onHome()
+    menu = wait("the library again", function() return top().item_table and top() end)
+    menu = to_library()
+
+    -- A book of the library has dots, and the menu of a book not saved offers to save it.
+    menu:openShelf("all")
+    wait("the shelf", function() return #menu.rows > 0 end)
+    local row
+    for _, candidate in ipairs(menu.rows) do
+        if candidate.card.uuid == card.uuid then row = candidate end
+    end
+    row = row or menu.rows[1]
+    local gone = row.card
+    UIManager:forceRePaint()
+    shot("61-rows-dots")
+    tap_widget(menu.row_buttons[row])
+    wait("the book's menu in the library", is_named("YaknigiBookMenu"))
+    sheet = top()
+    if not sheet.rows.about or not sheet.rows.save or not sheet.rows.remove_library then
+        fail("what the menu has for a book not saved")
+    end
+    UIManager:forceRePaint()
+    shot("62-book-menu")
+    tap_widget(sheet.rows.about)
+    wait("about the book", is_named("YaknigiBookCard"))
+    UIManager:forceRePaint()
+    shot("63-book-menu-about")
+    tap_widget(top().back_button)
+    wait("back from about", function() return top() == menu end)
+    -- A tap outside takes the sheet away and opens nothing.
+    tap_widget(menu.row_buttons[row])
+    wait("the menu once more", is_named("YaknigiBookMenu"))
+    UIManager:forceRePaint()
+    tap_at(math.floor(Screen:getWidth() / 2), 5)
+    wait("the menu to go", function() return top() == menu end)
+    if reader() and reader().document then fail("a tap outside the menu opened the book") end
+
+    tap_widget(menu.row_buttons[row])
+    wait("the menu to remove from", is_named("YaknigiBookMenu"))
+    UIManager:forceRePaint()
+    local cards_before = #menu.item_table
+    local removed_before = count("removed")
+    tap_widget(top().rows.remove_library)
+    wait("the question", is_named("ConfirmBox"))
+    UIManager:forceRePaint()
+    shot("64-remove-confirm")
+    answer(top(), true)
+    wait("the book to leave the library", function() return #menu.item_table == cards_before - 1 end)
+    if count("removed") ~= removed_before + 1 then fail("Yandex was not told") end
+    if mock_get("/test/removed").removed[removed_before + 1] ~= gone.uuid then fail("another book was removed") end
+    UIManager:forceRePaint()
+    shot("65-removed")
+
+    -- A book to save again, for the memory to have it.
+    local keep = menu.rows[1]
+    tap_widget(menu.row_buttons[keep])
+    wait("the menu to save from", is_named("YaknigiBookMenu"))
+    UIManager:forceRePaint()
+    tap_widget(top().rows.save)
+    wait("the kept book to be saved", function() return menu.book_status(keep) == "whole" end, 60)
+    local keep_dir = books .. "/" .. keep.card.book.uuid
+
+    -- The memory: by default everything but the saved books.
+    tap_widget(menu.tab_cells.settings)
+    settings = wait("the settings", is_named("YaknigiSettings")) and top()
+    settings.rows.clear_cache.callback()
+    wait("what things take", function() return settings.cache.sizes and settings.cache.sizes.books_count end)
+    if settings.cache.sizes.books_count < 1 or settings.cache.sizes.books <= 0 then fail("the saved book is not counted") end
+    if settings.cache.picks.books then fail("the saved books go by default") end
+    UIManager:forceRePaint()
+    shot("66-clear-cache")
+    local covers = require("datastorage"):getDataDir() .. "/yaknigi/covers"
+    tap_widget(settings.clear_button)
+    wait("the clearing", function() return settings.cache.freed end)
+    if not exists(keep_dir .. "/book.epub") then fail("clearing took the saved book") end
+    if not exists(require("datastorage"):getDataDir() .. "/cache/cr3cache") then
+        fail("clearing took the engine's directory")
+    end
+    if not exists(covers) then fail("clearing took the covers' directory") end
+    wait("what things now take", function() return settings.cache.sizes and settings.cache.sizes.books_count end)
+    UIManager:forceRePaint()
+    shot("67-cleared")
+
+    -- And with the saved books, after asking.
+    tap_widget(settings.cache_rows.books)
+    if not settings.cache.picks.books then fail("the switch of the saved books") end
+    settings.cache.freed = nil
+    tap_widget(settings.clear_button)
+    wait("the question about saved books", is_named("ConfirmBox"))
+    if exists(keep_dir .. "/book.epub") == false then fail("cleared before asking") end
+    answer(top(), true)
+    wait("the books to go", function() return settings.cache.freed end)
+    if exists(keep_dir .. "/book.epub") then fail("the saved book stayed") end
+    if not exists(keep_dir .. "/manifest.json") then fail("the saved book's place went with it") end
+
+    -- A book opens after all that.
+    menu = to_library()
+    menu:openShelf("all")
+    wait("the shelf after clearing", function() return #menu.rows > 0 end)
+    wait("the book's mark to go", function() return not menu.book_status(keep) end)
+    menu:onMenuSelect(menu.rows[1])
+    wait("a book to open after clearing", function()
+        return reader() and reader().document and top().name == "ReaderUI"
+    end)
+    UIManager:forceRePaint()
+    shot("68-open-after-clearing")
+    reader():onHome()
+    wait("the library at last", function() return top().item_table and top() end)
+    UIManager:forceRePaint()
+    tap_widget(top().tab_cells.settings)
+    wait("the settings at last", is_named("YaknigiSettings"))
+    UIManager:forceRePaint()
+    if top().pages then
+        for _ = 2, top().pages do
+            tap_widget(top().pager_next)
+            UIManager:forceRePaint()
+        end
+    end
+end
+
 local function script()
     local plugin = require("apps/filemanager/filemanager").instance.yaknigi
     if not plugin then fail("plugin is not loaded") end
@@ -1443,6 +1632,8 @@ local function script()
         UIManager:forceRePaint()
     end
     shot("55-settings-last-page")
+    test_books_and_memory(settings)
+    settings = top()
     local f = io.open(OUT .. "/PASS", "w")
     f:write("ok\n")
     f:close()
@@ -1464,7 +1655,7 @@ function Driver:init()
         local ok, err = coroutine.resume(co)
         if not ok then fail(err) end
     end)
-    UIManager:scheduleIn(300, function() fail("the whole test timed out") end)
+    UIManager:scheduleIn(420, function() fail("the whole test timed out") end)
     logger.info("yaknigi test driver armed")
 end
 

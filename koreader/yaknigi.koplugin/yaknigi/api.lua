@@ -234,6 +234,14 @@ function Api:add_book(book_uuid)
     return drop_nulls(card)
 end
 
+--- Takes a book out of the library. A card already gone is as good as taken out.
+function Api:remove_card(card_uuid)
+    local status, body = self.http:request("DELETE", API_BASE .. "/profile/library_cards/" .. encode(card_uuid),
+        self:headers())
+    if status == 200 or status == 204 or status == 404 then return true end
+    return status_error(status, body)
+end
+
 --- Returns the library card to read a found book by. The library here may be behind the
 -- phone's, so Yandex is asked first; a book is added only if it is neither there already
 -- nor out of the reader's reach, as it would then sit in the library unreadable.

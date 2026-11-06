@@ -25,6 +25,8 @@ local Settings = require("yaknigi/settings")
 local Status = require("yaknigi/status")
 local TextPanel = require("yaknigi/textpanel")
 
+local HERE = debug.getinfo(1, "S").source:match("^@(.*)/[^/]*$") or "."
+
 local Chrome = InputContainer:extend{
     name = "YaknigiChrome",
     ui = nil,
@@ -112,7 +114,7 @@ function Chrome:build()
         function() self:after(function() UIManager:show(Notes:new{ ui = ui, shell = self.shell }) end) end)
     self.search_button = Kit.action(IconWidget:new{ icon = "appbar.search", width = icon, height = icon }, "Поиск", cell,
         function() self:after(function() ui.search:onShowFulltextSearchInput() end) end)
-    self.text_button = Kit.action(Kit.text("Aa", 26, { bold = true }), "Текст", cell,
+    self.text_button = Kit.action(IconWidget:new{ file = HERE .. "/icons/text.svg", width = icon, height = icon }, "Текст", cell,
         function() self:after(function() UIManager:show(TextPanel:new{ ui = ui, shell = self.shell }) end) end)
 
     -- The same tap as on the page: a tap on the progress shows the next thing.

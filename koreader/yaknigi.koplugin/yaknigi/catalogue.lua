@@ -86,4 +86,11 @@ function Catalogue.mark_added(item, card)
     item.card = card
 end
 
+--- The book has left the library: it is again a book found, and its card is no more.
+function Catalogue.mark_removed(item)
+    item.in_library = nil
+    item.mandatory = nil
+    item.card.uuid = nil
+end
+
 return Catalogue

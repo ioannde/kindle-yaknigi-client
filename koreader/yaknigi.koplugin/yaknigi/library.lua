@@ -40,6 +40,9 @@ local function retry_label(message, width)
     }
 end
 
+local HERE = debug.getinfo(1, "S").source:match("^@(.*)/[^/]*$") or "."
+local ROW_BUTTON_W, ROW_ICON = 64, 32
+
 local Library = InputContainer:extend{
     name = "YaknigiLibrary",
     covers_fullscreen = true,
@@ -58,6 +61,10 @@ local Library = InputContainer:extend{
     on_feed = nil, -- function(state): asks for the next of the feed
     load_feed = nil, -- function(): the feed as it was saved, for showing at once
     on_covers = nil, -- function(cards): gets the covers that are missing
+    on_book_menu = nil, -- function(item): what can be done with a book
+    on_add = nil, -- function(item): puts a book found into the library
+    on_save = nil, -- function(item): saves a book on the device
+    book_status = nil, -- function(item): "saving", "whole" or nil
 }
 
 function Library:init()
@@ -151,11 +158,39 @@ end
 
 Library.cover_box = cover_box
 
+--- The picture at the right of a row, and what a tap on it does. A book of the library has its
+-- menu; a book found is added, then saved, and then has its menu too.
+function Library:rowButton(item, height)
+    if not item.card then return nil end
+    local status = self.book_status and self.book_status(item)
+    local name, file, action
+    local function menu() self.on_book_menu(item) end
+    if item.adding or status == "saving" then
+        file, action = "wait", function() end
+    elseif not item.found then
+        file, action = "dots", menu
+    elseif status == "whole" then
+        name, action = "check", menu
+    elseif self:inLibrary(item) or item.in_library then
+        file, action = "cloud.down", function() self.on_save(item) end
+    else
+        name, action = "plus", function() self.on_add(item) end
+    end
+    return Kit.icon_button(name, height, action, {
+        width = Kit.px(ROW_BUTTON_W),
+        edge = "right",
+        icon_size = Kit.px(ROW_ICON),
+        file = file and (HERE .. "/icons/" .. file .. ".svg") or nil,
+    })
+end
+
 function Library:row(item, width, height)
     local cover_h = height - Kit.px(16)
     local cover_w = math.floor(cover_h * 2 / 3)
     local gap = Kit.px(14)
-    local text_w = width - cover_w - gap
+    local button = self:rowButton(item, height)
+    local left_w = button and width - Kit.px(ROW_BUTTON_W) or width
+    local text_w = left_w - cover_w - gap
     local lines = VerticalGroup:new{ align = "left",
         title_box(item.title or item.text, text_w, 19, 2),
     }
@@ -172,10 +207,10 @@ function Library:row(item, width, height)
         lines[#lines + 1] = Kit.gap(Kit.px(4))
         lines[#lines + 1] = Kit.text(table.concat(state, " · "), 15, { color = Blitbuffer.COLOR_DARK_GRAY })
     end
-    return Kit.Tappable:new{
+    local row = Kit.Tappable:new{
         callback = function() self:onMenuSelect(item) end,
         CenterContainer:new{
-            dimen = Geom:new{ w = width, h = height },
+            dimen = Geom:new{ w = left_w, h = height },
             HorizontalGroup:new{ align = "center",
                 cover_box(item, cover_w, cover_h),
                 HorizontalSpan:new{ width = gap },
@@ -183,6 +218,10 @@ function Library:row(item, width, height)
             },
         },
     }
+    if not button then return row end
+    self.row_buttons[item] = button
+    -- Side by side: a tap on the picture is not a tap on the book.
+    return HorizontalGroup:new{ align = "center", row, button }
 end
 
 --- This book as it stands in the library, if it does.
@@ -515,6 +554,7 @@ function Library:build()
     local home, in_feed = view == "home", view == "feed"
     local top_level = home or in_feed or view == "catalogue"
     self.rows, self.strips, self.shelf_rows = {}, {}, {}
+    self.row_buttons = {}
     self.owned = nil
     self.feed_sections, self.feed_strips = nil, nil
     self.total_pages = 1

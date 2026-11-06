@@ -25,6 +25,7 @@ local BookCard = InputContainer:extend{
     covers_fullscreen = true,
     item = nil,
     on_read = nil,
+    owned = nil, -- in the library already: nothing will come of reading it but reading
 }
 
 function BookCard:init()
@@ -87,7 +88,8 @@ function BookCard:init()
         self.read_button,
         CenterContainer:new{
             dimen = Geom:new{ w = inner, h = note_h },
-            Kit.text("Книга появится в вашей библиотеке", 15, { color = Blitbuffer.COLOR_DARK_GRAY, max_width = inner }),
+            Kit.text(self.owned and "" or "Книга появится в вашей библиотеке", 15,
+                { color = Blitbuffer.COLOR_DARK_GRAY, max_width = inner }),
         },
     }
 

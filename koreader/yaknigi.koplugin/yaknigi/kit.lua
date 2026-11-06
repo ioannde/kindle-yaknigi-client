@@ -241,7 +241,7 @@ end
 -- ("left" or "right") at opts.margin from that edge of the box. opts.width narrows the box.
 function Kit.icon_button(name, side, callback, opts)
     opts = opts or {}
-    local icon = Kit.px(ICON)
+    local icon = opts.icon_size or Kit.px(ICON)
     local width = opts.width or side
     local ink = INK[name] or NO_INK
     local left, right = math.floor(ink.left * icon + 0.5), math.floor(ink.right * icon + 0.5)
@@ -261,7 +261,7 @@ function Kit.icon_button(name, side, callback, opts)
             height = side,
             dx = dx,
             dy = math.floor((side - (icon - top - bottom)) / 2) - top,
-            IconWidget:new{ icon = name, width = icon, height = icon },
+            IconWidget:new{ icon = not opts.file and name or nil, file = opts.file, width = icon, height = icon },
         },
     }
 end

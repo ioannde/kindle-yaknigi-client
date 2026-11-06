@@ -360,6 +360,14 @@ class Handler(BaseHTTPRequestHandler):
         self.server.added.append(book)
         self.reply_json(200, {"library_card": self.added_card(book)})
 
+    def do_DELETE(self):
+        match = re.search(r"/profile/library_cards/([^/]+)$", self.path)
+        if self.headers.get("Auth-Token") != "mock-token" or not match:
+            self.reply(401, b"")
+            return
+        self.server.removed.append(match.group(1))
+        self.reply(204, b"")
+
     def do_PUT(self):
         length = int(self.headers.get("Content-Length", 0))
         form = parse_qs(self.rfile.read(length).decode(), keep_blank_values=True)
@@ -456,6 +464,8 @@ class Handler(BaseHTTPRequestHandler):
         elif url.path == "/test/fail_search":
             self.server.fail_search = int(query["n"][0])
             self.reply(200, b"")
+        elif url.path == "/test/removed":
+            self.reply_json(200, {"removed": self.server.removed})
         elif url.path == "/test/added":
             self.reply_json(200, {"added": self.server.added})
         elif url.path == "/challenge":
@@ -493,9 +503,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             page = int(query.get("page", ["1"])[0])
             start = (page - 1) * 10
-            everything = BOOKS + len(self.server.added)
-            cards = [self.card(i) if i < BOOKS else self.added_card(self.server.added[i - BOOKS])
-                     for i in range(start, min(start + 10, everything))]
+            everything = [self.card(i) for i in range(BOOKS)] + [self.added_card(u) for u in self.server.added]
+            everything = [c for c in everything if c["uuid"] not in self.server.removed]
+            cards = everything[start:start + 10]
             self.reply_json(200, {"library_cards": cards})
         elif url.path.startswith("/cover/"):
             if self.headers.get("Auth-Token"):
@@ -543,6 +553,7 @@ if __name__ == "__main__":
     server.card_updates = {}
     server.fail_writes = 0
     server.added = []
+    server.removed = []
     server.fail_search = 0
     server.fail_showcase = 0
     server.fail_card = 0

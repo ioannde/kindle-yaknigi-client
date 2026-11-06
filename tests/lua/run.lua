@@ -394,5 +394,23 @@ eq(Session.has_words('<html><head><title>Обложка</title></head><body><img
 eq(Session.has_words("<html><body><p>Он шёл по улице.</p></body></html>"), true, "a text")
 eq(Session.start_of(3), "/body/DocFragment[3]", "where a fragment starts")
 
+-- What can be cleared off the device
+package.preload["libs/libkoreader-lfs"] = function() return {} end
+local Storage = require("yaknigi/storage")
+for name, want in pairs{ files = true, ["book.epub"] = true, state = true, priority = true,
+    ["book.epub.build123"] = true, ["fragment.tmp"] = true, ["manifest.json"] = false, card = false,
+    server_cfi = false, to_send = false, sent = false, news = false, checked = false, ["book.sdr"] = false } do
+    eq(Storage.is_text_of_book(name), want, "text of a book: " .. name)
+end
+eq(Storage.is_leftover("add.result3"), true, "an answer nobody came for")
+eq(Storage.is_leftover("library.json"), false, "the library stays")
+eq(Storage.is_leftover("feed.json"), false, "the feed stays")
+eq(Storage.size_text(0), "0 КБ", "nothing")
+eq(Storage.size_text(340 * 1024), "340 КБ", "kilobytes")
+eq(Storage.size_text(math.floor(3.4 * 1024 * 1024)), "3,4 МБ", "a decimal comma")
+eq(Storage.size_text(12 * 1024 * 1024), "12 МБ", "megabytes")
+eq(Storage.size_text(5 * 1024 * 1024), "5 МБ", "no empty decimal")
+eq(Storage.size_text(math.floor(1.4 * 1024 * 1024 * 1024)), "1,4 ГБ", "gigabytes")
+
 print(("%d passed, %d failed"):format(passed, failed))
 os.exit(failed == 0 and 0 or 1)

@@ -9,6 +9,7 @@ local DataStorage = require("datastorage")
 local DocSettings = require("docsettings")
 local InfoMessage = require("ui/widget/infomessage")
 local InputDialog = require("ui/widget/inputdialog")
+local Notification = require("ui/widget/notification")
 local LuaSettings = require("luasettings")
 local NetworkMgr = require("ui/network/manager")
 local QRMessage = require("ui/widget/qrmessage")
@@ -30,6 +31,8 @@ local Feed = require("yaknigi/feed")
 local Library = require("yaknigi/library")
 local Prefs = require("yaknigi/prefs")
 local Settings = require("yaknigi/settings")
+local BookMenu = require("yaknigi/bookmenu")
+local Storage = require("yaknigi/storage")
 local Shelves = require("yaknigi/shelves")
 local Session = require("yaknigi/session")
 local Shell = require("yaknigi/shell")
@@ -45,6 +48,10 @@ local CATALOGUE_RESULT = ROOT .. "/catalogue.result"
 local FEED_CACHE = ROOT .. "/feed.json"
 local FEED_RESULT = ROOT .. "/feed.result"
 local TAKE_RESULT = ROOT .. "/take.result"
+local ADD_RESULT = ROOT .. "/add.result"
+local SAVE_RESULT = ROOT .. "/save.result"
+local REMOVE_RESULT = ROOT .. "/remove.result"
+local STORAGE_RESULT = ROOT .. "/storage.result"
 os.execute("mkdir -p '" .. BOOKS .. "' '" .. COVERS .. "'")
 
 -- The app mode shows the library instead of the file manager, and leaves with it.
@@ -59,6 +66,12 @@ local library_place = {}
 local shown_library = nil
 local catalogue_requests = 0
 local feed_requests = 0
+local add_requests = 0
+local remove_requests = 0
+local save_requests = 0
+local storage_requests = 0
+-- The books being saved on the device, by book id.
+local saving = {}
 
 -- KOReader quits when its last screen closes, which its own Exit and any failure to open
 -- something would do. Only "Закрыть приложение" should end the app: go back to the library.
@@ -386,6 +399,7 @@ function Yaknigi:showSettings()
     UIManager:show(Settings:new{
         ui = self.ui,
         on_sign_out = saved_token() and function() self:signOut() end or nil,
+        storage = self:storageActions(),
         on_close_app = function()
             if self.library then self.library:onClose() end
         end,
@@ -425,6 +439,14 @@ function Yaknigi:showLibrary(quiet)
         end,
         on_refresh = function() self:refreshLibrary(true) end,
         on_settings = function() self:showSettings() end,
+        on_book_menu = function(item) self:showBookMenu(item) end,
+        on_add = function(item) self:addFound(item) end,
+        on_save = function(item) self:saveFound(item) end,
+        book_status = function(item)
+            local id = item.card and item.card.book and item.card.book.uuid
+            if id and saving[id] then return "saving" end
+            if item.card and is_whole(item.card) then return "whole" end
+        end,
     }
     self.library = library
     shown_library = library
@@ -694,7 +716,8 @@ end
 -- Opening what was found -------------------------------------------------------
 
 function Yaknigi:ownedCard(book_uuid)
-    for _, item in ipairs(self.library and self.library.item_table or {}) do
+    local library = shown_library or self.library
+    for _, item in ipairs(library and library.item_table or {}) do
         local book = item.card and item.card.book
         if book and book.uuid == book_uuid then return item.card end
     end
@@ -760,16 +783,7 @@ function Yaknigi:pollTake(item, screen, wait, pid)
             if screen then UIManager:close(screen) end
             Catalogue.mark_added(item, result.card)
             -- So that the library has it now, whatever becomes of opening it.
-            local cards = read_json(LIBRARY_CACHE) or {}
-            local known = false
-            for _, card in ipairs(cards) do
-                known = known or card.uuid == result.card.uuid
-            end
-            if not known then
-                table.insert(cards, 1, result.card)
-                write_json(LIBRARY_CACHE, cards)
-            end
-            self.library:switchItemTable(nil, self:libraryItems(cards))
+            self:rememberCard(result.card)
             self:openCard(result.card)
         elseif kind == "auth" then
             if screen then UIManager:close(screen) end
@@ -783,6 +797,379 @@ function Yaknigi:pollTake(item, screen, wait, pid)
             message("Яндекс Книги не дали открыть эту книгу.", 3)
         end
     end)
+end
+
+--- A new card goes into the library's list at once, and the screen shows it.
+function Yaknigi:rememberCard(card)
+    local cards = read_json(LIBRARY_CACHE) or {}
+    local known = false
+    for _, mine in ipairs(cards) do
+        known = known or mine.uuid == card.uuid
+    end
+    if not known then
+        table.insert(cards, 1, card)
+        write_json(LIBRARY_CACHE, cards)
+    end
+    self:showCards(cards)
+end
+
+--- What the library shows, from the list as it now is.
+function Yaknigi:showCards(cards)
+    if shown_library then shown_library:switchItemTable(nil, self:libraryItems(cards or read_json(LIBRARY_CACHE) or {})) end
+end
+
+--- A word at the top of the screen, that goes by itself and does not get in the way.
+local function toast(text)
+    UIManager:show(Notification:new{ text = text })
+end
+
+local function quoted(title)
+    return "«" .. (title or "Книга") .. "»"
+end
+
+--- Puts a book found into the library, without opening it. then(card) goes on from there.
+function Yaknigi:addFound(item, after)
+    NetworkMgr:runWhenOnline(function()
+        if item.adding then return end
+        item.adding = true
+        if shown_library then shown_library:refreshScreen() end
+        add_requests = add_requests + 1
+        local path = ADD_RESULT .. add_requests
+        local token, uuid = saved_token(), item.card.book.uuid
+        local pid = ffiutil.runInSubProcess(function()
+            local api = Api.new(token)
+            local card, kind = api:card_for_reading(uuid)
+            api:close()
+            write_json(path, { kind = kind or "ok", card = card })
+            os.exit(0)
+        end)
+        if not pid then
+            item.adding = nil
+            if shown_library then shown_library:refreshScreen() end
+            message(error_text("http"), 3)
+            return
+        end
+        self:pollAdd(item, path, pid, after)
+    end)
+end
+
+function Yaknigi:pollAdd(item, path, pid, after)
+    UIManager:scheduleIn(0.2, function()
+        if not ffiutil.isSubProcessDone(pid) then
+            self:pollAdd(item, path, pid, after)
+            return
+        end
+        item.adding = nil
+        local result = read_json(path) or {}
+        os.remove(path)
+        local kind = result.kind or "network"
+        if kind == "ok" and result.card then
+            local title = item.title
+            Catalogue.mark_added(item, result.card)
+            self:rememberCard(result.card)
+            if after then
+                after(result.card)
+            else
+                toast(quoted(title) .. " в библиотеке")
+            end
+            return
+        end
+        if shown_library then shown_library:refreshScreen() end
+        if kind == "auth" then
+            save_token(nil)
+            self:showLibrary()
+        elseif kind == "denied" then
+            message("Эта книга недоступна по вашей подписке.", 3)
+        elseif kind == "network" then
+            message(error_text(kind), 3)
+        else
+            message("Яндекс Книги не дали добавить эту книгу.", 3)
+        end
+    end)
+end
+
+--- Saves a book of the feed or the search: it may yet have no card here.
+function Yaknigi:saveFound(item)
+    local uuid = item.card.book.uuid
+    local card = self:ownedCard(uuid) or (item.card.uuid and item.card)
+    if card then
+        self:saveBook(card)
+    else
+        self:addFound(item, function(new_card) self:saveBook(new_card) end)
+    end
+end
+
+--- Gets all of a book for reading with no network, in a process of its own. A book being read
+-- has one at it already, which is left to finish.
+function Yaknigi:saveBook(card)
+    local id = card.book and card.book.uuid
+    if not id or saving[id] or is_whole(card) then return end
+    NetworkMgr:runWhenOnline(function()
+        if saving[id] then return end
+        local state = workers[id] or {}
+        workers[id] = state
+        local path
+        if not (state.pid and not ffiutil.isSubProcessDone(state.pid)) then
+            save_requests = save_requests + 1
+            path = SAVE_RESULT .. save_requests
+            state.pid = Background.save(BOOKS, id, saved_token(), path)
+            if not state.pid then
+                message(error_text("http"), 3)
+                return
+            end
+        end
+        local entry = { pid = state.pid }
+        saving[id] = entry
+        self:showCards()
+        self:pollSave(id, entry, card, path)
+    end)
+end
+
+function Yaknigi:pollSave(id, entry, card, path)
+    UIManager:scheduleIn(POLL_SECONDS, function()
+        if not ffiutil.isSubProcessDone(entry.pid) then
+            self:pollSave(id, entry, card, path)
+            return
+        end
+        if path then os.remove(path) end
+        -- Stopped by clearing the device: there is nothing to tell.
+        if saving[id] ~= entry then return end
+        saving[id] = nil
+        -- Over a book being read it can wait: the library will show it.
+        if shown_library then
+            local title = card.book.title
+            if is_whole(card) then
+                toast(quoted(title) .. " сохранена на устройстве")
+            else
+                message("Не удалось сохранить " .. quoted(title) .. ".", 3)
+            end
+            self:showCards()
+        end
+    end)
+end
+
+--- Stops what is downloading books: their files are about to go.
+local function stop_workers(only_id)
+    local function ask(pid)
+        if ffiutil.isSubProcessDone(pid) then return end
+        UIManager:scheduleIn(1, function() ask(pid) end)
+    end
+    for id, state in pairs(workers) do
+        if not only_id or id == only_id then
+            if state.pid and not ffiutil.isSubProcessDone(state.pid) then
+                ffiutil.terminateSubProcess(state.pid)
+                ask(state.pid)
+            end
+            workers[id] = nil
+            saving[id] = nil
+        end
+    end
+end
+
+--- Takes a book's text off the device. The place in it stays, as do its notes.
+function Yaknigi:removeFromDevice(card)
+    local id = card.book.uuid
+    stop_workers(id)
+    local dir = book_dir(card)
+    if dir then Storage.remove_book(dir) end
+    self:showCards()
+end
+
+--- Takes a book out of the library, in Yandex's as well.
+function Yaknigi:removeFromLibrary(card)
+    NetworkMgr:runWhenOnline(function()
+        local wait = InfoMessage:new{ text = "Удаляю " .. quoted(card.book.title) .. "…" }
+        UIManager:show(wait)
+        remove_requests = remove_requests + 1
+        local path = REMOVE_RESULT .. remove_requests
+        local token, uuid = saved_token(), card.uuid
+        local pid = ffiutil.runInSubProcess(function()
+            local api = Api.new(token)
+            local ok, kind = api:remove_card(uuid)
+            api:close()
+            write_json(path, { kind = ok and "ok" or kind or "network" })
+            os.exit(0)
+        end)
+        if not pid then
+            UIManager:close(wait)
+            message(error_text("http"), 3)
+            return
+        end
+        self:pollRemove(card, wait, path, pid)
+    end)
+end
+
+function Yaknigi:pollRemove(card, wait, path, pid)
+    UIManager:scheduleIn(0.2, function()
+        if not ffiutil.isSubProcessDone(pid) then
+            self:pollRemove(card, wait, path, pid)
+            return
+        end
+        UIManager:close(wait)
+        local result = read_json(path) or {}
+        os.remove(path)
+        local kind = result.kind or "network"
+        if kind == "auth" then
+            save_token(nil)
+            self:showLibrary()
+            return
+        elseif kind ~= "ok" then
+            message(kind == "network" and error_text(kind) or "Яндекс Книги не дали удалить эту книгу.", 3)
+            return
+        end
+        local cards = {}
+        for _, mine in ipairs(read_json(LIBRARY_CACHE) or {}) do
+            if mine.uuid ~= card.uuid then cards[#cards + 1] = mine end
+        end
+        write_json(LIBRARY_CACHE, cards)
+        self:removeFromDevice(card)
+        -- Where it was found it can be added again.
+        if shown_library then
+            local function forget(items)
+                for _, item in ipairs(items) do
+                    if item.card and item.card.book and item.card.book.uuid == card.book.uuid then
+                        Catalogue.mark_removed(item)
+                    end
+                end
+            end
+            if shown_library.catalogue then forget(shown_library.catalogue.items) end
+            if shown_library.feed then forget(Feed.items(shown_library.feed)) end
+        end
+        self:showCards(cards)
+        toast(quoted(card.book.title) .. " удалена из библиотеки")
+    end)
+end
+
+--- What can be done with a book. Reading is a tap on the book itself.
+function Yaknigi:showBookMenu(item)
+    local uuid = item.card.book.uuid
+    local card = self:ownedCard(uuid) or item.card
+    local function read()
+        if card.uuid then self:openCard(card) else self:openFound(item) end
+    end
+    local entries = { {
+        key = "about",
+        text = "О книге",
+        icon = "info",
+        action = function()
+            local screen
+            screen = BookCard:new{
+                item = {
+                    title = item.title,
+                    authors = item.authors,
+                    cover = item.cover,
+                    annotation = item.annotation or card.book.annotation,
+                },
+                owned = card.uuid ~= nil,
+                on_read = function()
+                    UIManager:close(screen)
+                    read()
+                end,
+            }
+            UIManager:show(screen)
+        end,
+    } }
+    if saving[uuid] then
+        entries[#entries + 1] = { key = "saving", text = "Сохраняю…", file = "wait", disabled = true }
+    elseif is_whole(card) then
+        entries[#entries + 1] = { key = "remove_device", text = "Удалить с устройства", file = "cloud.off",
+            action = function() self:removeFromDevice(card) end }
+    else
+        entries[#entries + 1] = { key = "save", text = "Сохранить на устройство", file = "cloud.down",
+            action = function() self:saveBook(card) end }
+    end
+    if card.uuid then
+        entries[#entries + 1] = { key = "remove_library", text = "Удалить из библиотеки", file = "trash",
+            action = function()
+                UIManager:show(ConfirmBox:new{
+                    text = "Удалить " .. quoted(item.title) .. " из библиотеки? Она исчезнет и в приложении на телефоне.",
+                    ok_text = "Удалить",
+                    ok_callback = function() self:removeFromLibrary(card) end,
+                })
+            end }
+    end
+    self.book_menu = BookMenu:new{ title = item.title, authors = item.authors, entries = entries }
+    UIManager:show(self.book_menu)
+end
+
+-- Memory ----------------------------------------------------------------------
+
+local function storage_paths()
+    return {
+        cache = DataStorage:getDataDir() .. "/cache",
+        root = ROOT,
+        books = BOOKS,
+        covers = COVERS,
+        keep_cover = G_reader_settings:readSetting("yaknigi_last_cover"),
+    }
+end
+
+--- Runs work in a process of its own, and gives what it returns to done.
+local function in_background(work, done)
+    storage_requests = storage_requests + 1
+    local path = STORAGE_RESULT .. storage_requests
+    local pid = ffiutil.runInSubProcess(function()
+        local ok, value = pcall(work)
+        write_json(path, { value = ok and value or nil })
+        os.exit(0)
+    end)
+    if not pid then
+        done(nil)
+        return
+    end
+    local function wait()
+        if not ffiutil.isSubProcessDone(pid) then
+            UIManager:scheduleIn(0.2, wait)
+            return
+        end
+        local result = read_json(path) or {}
+        os.remove(path)
+        done(result.value)
+    end
+    UIManager:scheduleIn(0.2, wait)
+end
+
+--- What the settings can do about the memory. Only from the library, with no book open: the
+-- engine has the open book's layout in use, and its text.
+function Yaknigi:storageActions()
+    return {
+        measure = function(done)
+            local paths = storage_paths()
+            in_background(function() return Storage.measure(paths) end, function(sizes)
+                done(sizes or {})
+            end)
+        end,
+        clear = function(picks, done)
+            if picks.partial or picks.books then stop_workers() end
+            if picks.covers and self.covers_pids then
+                self:reapCovers(Covers.stop(self.covers_pids))
+                self.covers_pids, self.covers_queue = nil, nil
+            end
+            local paths = storage_paths()
+            in_background(function() return Storage.clear(paths, picks) end, function(freed)
+                -- KOReader's own clearing does this: it remembers what it has put there.
+                if picks.junk then require("cache").cached = {} end
+                self:afterClearing(picks)
+                done(freed or 0)
+            end)
+        end,
+    }
+end
+
+--- What is shown stands on what has just gone.
+function Yaknigi:afterClearing(picks)
+    local cards = read_json(LIBRARY_CACHE) or {}
+    self:showCards(cards)
+    if not picks.covers or not shown_library then return end
+    local function look(items)
+        for _, item in ipairs(items) do
+            item.cover = item.card and Covers.find(COVERS, item.card) or nil
+        end
+    end
+    if shown_library.catalogue then look(shown_library.catalogue.items) end
+    if shown_library.feed then look(Feed.items(shown_library.feed)) end
+    shown_library:refreshScreen()
+    self:fetchCovers(cards)
 end
 
 local function saved_fragment(path)

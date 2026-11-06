@@ -8,6 +8,7 @@ local ffi = require("ffi")
 local ffiutil = require("ffi/util")
 local logger = require("logger")
 local Api = require("yaknigi/api")
+local Store = require("yaknigi/store")
 
 pcall(ffi.cdef, "int nice(int); int getppid(void);")
 
@@ -86,6 +87,35 @@ function Background.start(store, token, around, document)
             end
         end
         os.exit(0)
+    end)
+end
+
+--- Saves a whole book for reading without the network, with nobody reading it: the first
+-- opening lays it out. Writes { kind } to result. Returns the pid, or nil.
+function Background.save(root, id, token, result)
+    return ffiutil.runInSubProcess(function()
+        pcall(function() ffi.C.nice(10) end)
+        local function finish(kind)
+            local f = io.open(result, "wb")
+            if f then
+                f:write(kind)
+                f:close()
+            end
+            os.exit(0)
+        end
+        local store = Store.open(root, id)
+        if not store then finish("http") end
+        local api = Api.new(token)
+        if not store.manifest then
+            local manifest, kind = api:manifest(id)
+            if not manifest then finish(kind or "network") end
+            if not store:set_manifest(manifest) then finish("disk") end
+        end
+        local whole = Background.fetch_all(store, api, 1)
+        api:close()
+        if not whole then finish("network") end
+        if not store:build() then finish("disk") end
+        finish("ok")
     end)
 end
 
