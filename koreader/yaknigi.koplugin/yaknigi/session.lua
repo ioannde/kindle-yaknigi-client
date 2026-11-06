@@ -122,7 +122,11 @@ function Session.remember(store, card, moved)
         os.remove(dir .. "/sent")
         os.remove(dir .. "/to_send")
     end
-    if type(card.cfi) ~= "string" then return end
+    if type(card.cfi) ~= "string" then
+        -- Yandex has no position yet. The first to appear is news, unless sent from here.
+        if not read_file(dir .. "/server_cfi") then write_file(dir .. "/server_cfi", "") end
+        return
+    end
     write_file(dir .. "/server_cfi", card.cfi)
     local sent = sent_positions(dir)
     if sent[#sent] == Cfi.start(card.cfi) then os.remove(dir .. "/sent") end
