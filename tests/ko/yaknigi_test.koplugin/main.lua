@@ -1071,6 +1071,7 @@ local function test_books_and_memory(settings)
     if not exists(keep_dir .. "/manifest.json") then fail("the saved book's place went with it") end
 
     -- A book opens after all that.
+    wait("the second word about what was freed to go", function() return top() == settings end)
     menu = to_library()
     menu:openShelf("all")
     wait("the shelf after clearing", function() return #menu.rows > 0 end)
