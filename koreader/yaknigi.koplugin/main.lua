@@ -26,6 +26,7 @@ local Catalogue = require("yaknigi/catalogue")
 local Covers = require("yaknigi/covers")
 local Cfi = require("yaknigi/cfi")
 local Crypt = require("yaknigi/crypt")
+local Feed = require("yaknigi/feed")
 local Library = require("yaknigi/library")
 local Prefs = require("yaknigi/prefs")
 local Settings = require("yaknigi/settings")
@@ -41,6 +42,8 @@ local COVERS = ROOT .. "/covers"
 local LIBRARY_CACHE = ROOT .. "/library.json"
 local LIBRARY_RESULT = ROOT .. "/library.result"
 local CATALOGUE_RESULT = ROOT .. "/catalogue.result"
+local FEED_CACHE = ROOT .. "/feed.json"
+local FEED_RESULT = ROOT .. "/feed.result"
 local TAKE_RESULT = ROOT .. "/take.result"
 os.execute("mkdir -p '" .. BOOKS .. "' '" .. COVERS .. "'")
 
@@ -54,6 +57,7 @@ local library_place = {}
 -- The library on the screen, for answers that arrive after the reader was opened and left.
 local shown_library = nil
 local catalogue_requests = 0
+local feed_requests = 0
 
 -- KOReader quits when its last screen closes, which its own Exit and any failure to open
 -- something would do. Only "Закрыть приложение" should end the app: go back to the library.
@@ -292,24 +296,28 @@ function Yaknigi:scheduleCoverPoll(cards)
         if not self.library then return end
         local library = self.library
         local done = ffiutil.isSubProcessDone(self.covers_pid)
-        local in_catalogue = library.view == "catalogue"
+        local view = library.view
+        local apart = view == "catalogue" or view == "feed" or view == "feed_section"
+        -- Only what is on the screen is worth redrawing it.
+        local shown = {}
+        for _, item in ipairs(library.rows or {}) do shown[item] = true end
         local changed = false
-        for _, item in ipairs(library.item_table or {}) do
-            if not item.cover then
-                item.cover = Covers.find(COVERS, item.card)
-                if item.cover and not in_catalogue then changed = true end
+        local function look(item, matters)
+            -- Also a preview in the place of a smaller cover from before.
+            local cover = Covers.find(COVERS, item.card)
+            if cover and cover ~= item.cover then
+                item.cover = cover
+                if matters then changed = true end
             end
         end
+        for _, item in ipairs(library.item_table or {}) do
+            look(item, not apart or item == library.dock_item)
+        end
         if library.catalogue then
-            local shown = {}
-            for _, item in ipairs(library.rows or {}) do shown[item] = true end
-            for _, item in ipairs(library.catalogue.items) do
-                if not item.cover then
-                    item.cover = Covers.find(COVERS, item.card)
-                    -- Only what is on the screen is worth redrawing it.
-                    if item.cover and in_catalogue and shown[item] then changed = true end
-                end
-            end
+            for _, item in ipairs(library.catalogue.items) do look(item, shown[item]) end
+        end
+        if library.feed then
+            for _, item in ipairs(Feed.items(library.feed)) do look(item, shown[item]) end
         end
         if changed then library:refreshScreen() end
         if not done then
@@ -328,15 +336,23 @@ function Yaknigi:signOut()
         ok_callback = function()
             save_token(nil)
             library_place = {}
+            os.remove(FEED_CACHE)
             self:showLibrary()
         end,
     })
 end
 
+--- The settings as a tab of the library.
 function Yaknigi:showSettings()
     UIManager:show(Settings:new{
         ui = self.ui,
         on_sign_out = saved_token() and function() self:signOut() end or nil,
+        on_close_app = function()
+            if self.library then self.library:onClose() end
+        end,
+        on_tab = function(id)
+            if self.library then self.library:selectTab(id) end
+        end,
     })
 end
 
@@ -358,6 +374,9 @@ function Yaknigi:showLibrary(quiet)
             if item.found then self:openFound(item) else self:openCard(item.card) end
         end,
         on_catalogue = function(state) self:askCatalogue(state) end,
+        on_feed = function(state) self:askFeed(state) end,
+        load_feed = function() return self:savedFeed() end,
+        on_covers = function(cards) self:fetchCovers(cards) end,
         close_callback = function()
             UIManager:close(library)
             self.library = nil
@@ -383,6 +402,18 @@ function Yaknigi:showLibrary(quiet)
             library:refreshScreen()
             local cards = Catalogue.cards(library.catalogue.items)
             UIManager:nextTick(function() self:fetchCovers(cards) end)
+        end
+        if library.feed then
+            for _, item in ipairs(Feed.items(library.feed)) do
+                item.cover = Covers.find(COVERS, item.card)
+            end
+            library:refreshScreen()
+            if library.view == "feed_section" then
+                local cards = Catalogue.cards(library.section.items)
+                UIManager:nextTick(function() self:fetchCovers(cards) end)
+            end
+            -- Coming back to the feed: left for a book before it got here, it is asked anew.
+            if library.view == "feed" then UIManager:nextTick(function() library:askForMore() end) end
         end
     else
         UIManager:nextTick(function() self:showLogin() end)
@@ -522,6 +553,107 @@ function Yaknigi:pollCatalogue(state, pid, path)
     end)
 end
 
+-- Feed ------------------------------------------------------------------------
+
+local function feed_error(kind)
+    if kind == "network" then return "Нет связи с Яндекс Книгами." end
+    return "Рекомендации сейчас не открываются."
+end
+
+--- The feed as saved last time, for it to be there at once: the first thing asked is its start.
+function Yaknigi:savedFeed()
+    local state = Feed.from_saved(read_json(FEED_CACHE))
+    for _, item in ipairs(Feed.items(state)) do
+        item.cover = Covers.find(COVERS, item.card)
+    end
+    return state
+end
+
+--- Gets what comes next of the feed, in a forked process as all slow requests.
+function Yaknigi:askFeed(state)
+    if state.loading then return end
+    local has_something = #state.sections > 0
+    local function start()
+        local cursor = Feed.start(state)
+        if not cursor then return end
+        feed_requests = feed_requests + 1
+        local path = FEED_RESULT .. feed_requests
+        local token, uuid = saved_token(), state.uuid
+        local pid = ffiutil.runInSubProcess(function()
+            local api = Api.new(token)
+            -- Which feed to show is asked once; Yandex has only ever had the one.
+            uuid = uuid or api:root_showcase() or Feed.ROOT
+            local answer, kind = api:showcase(uuid, cursor)
+            api:close()
+            if answer then
+                write_json(path, { kind = "ok", uuid = uuid, sections = Feed.sections(answer.page), cursor = answer.cursor or "" })
+            else
+                write_json(path, { kind = kind or "network" })
+            end
+            os.exit(0)
+        end)
+        if pid then
+            self:pollFeed(state, pid, path)
+        else
+            Feed.fail(state, feed_error("http"))
+        end
+    end
+    if NetworkMgr:isOnline() then
+        start()
+    elseif has_something then
+        -- What was saved is there to look at, and nothing is worth a question about the Wi-Fi.
+        return
+    else
+        Feed.fail(state, feed_error("network"))
+        NetworkMgr:runWhenOnline(start)
+    end
+end
+
+function Yaknigi:pollFeed(state, pid, path)
+    UIManager:scheduleIn(0.3, function()
+        if not ffiutil.isSubProcessDone(pid) then
+            self:pollFeed(state, pid, path)
+            return
+        end
+        local result = read_json(path) or {}
+        os.remove(path)
+        local library = shown_library
+        local current = library and library.feed == state
+        if result.kind == "auth" then
+            Feed.fail(state, feed_error("http"))
+            if current then
+                save_token(nil)
+                library_place = {}
+                if self.library == library then self:showLibrary() end
+            end
+            return
+        end
+        if result.kind ~= "ok" then
+            Feed.fail(state, feed_error(result.kind or "network"))
+            if current and library.view == "feed" then library:refreshScreen() end
+            return
+        end
+        local first_page = state.asked == ""
+        state.uuid = result.uuid
+        local new = Feed.add(state, result.sections, result.cursor)
+        if first_page then
+            write_json(FEED_CACHE, { uuid = state.uuid, sections = state.sections, cursor = state.cursor })
+        end
+        -- The same books as before, in new tables.
+        for _, item in ipairs(Feed.items(state)) do
+            item.cover = item.cover or Covers.find(COVERS, item.card)
+        end
+        if not current then return end
+        if library.view == "feed" then
+            library:refreshScreen()
+            library:askForMore() -- a page may have held nothing to read here
+        end
+        if self.library == library then self:fetchCovers(Feed.cards(new, 5)) end
+    end)
+end
+
+-- Opening what was found -------------------------------------------------------
+
 function Yaknigi:ownedCard(book_uuid)
     for _, item in ipairs(self.library and self.library.item_table or {}) do
         local book = item.card and item.card.book
@@ -633,7 +765,8 @@ function Yaknigi:openCard(card)
             return
         end
         Session.opening_here(store, card, moved)
-        self:showBook(store)
+        -- Never read here nor anywhere: past the cover, as a book being read for the first time.
+        self:showBook(store, not has_local and Session.start_of(Session.first_text_on_disk(store) or 1) or nil)
         return
     end
     NetworkMgr:runWhenOnline(function() self:loadAndOpen(card, store) end)
@@ -646,7 +779,7 @@ function Yaknigi:loadAndOpen(card, store)
 
     local api = Api.new(saved_token())
     local fragment = store and saved_fragment(store.epub)
-    local result, stubs, xpointer, target = Session.prepare(BOOKS, api, card, fragment)
+    local result, stubs, xpointer, target, text_start = Session.prepare(BOOKS, api, card, fragment)
     api:close()
     UIManager:close(wait)
     if not result then
@@ -660,10 +793,10 @@ function Yaknigi:loadAndOpen(card, store)
         end
         return
     end
-    self:showBook(result, xpointer, target, stubs)
+    self:showBook(result, xpointer, target, stubs, text_start)
 end
 
-function Yaknigi:showBook(store, xpointer, target, stubs)
+function Yaknigi:showBook(store, xpointer, target, stubs, text_start)
     if self.library then
         UIManager:close(self.library)
         self.library = nil
@@ -673,6 +806,7 @@ function Yaknigi:showBook(store, xpointer, target, stubs)
     local state = workers[store.id]
     state.target = target or state.target
     state.stubs = stubs or {}
+    state.text_start = text_start or state.text_start
     self:applyTextDefaults(store.epub)
     local ReaderUI = require("apps/reader/readerui")
     ReaderUI:showReader(store.epub, nil, false, nil, function(ui)
@@ -839,6 +973,16 @@ function Yaknigi:poll()
     end
     local needed = fragment and (state.stubs[fragment] and fragment
         or state.stubs[fragment + 1] and fragment + 1)
+    -- Paged back to the cover, which came after the book had opened: put it in, once.
+    if fragment and not needed and state.text_start and fragment < state.text_start and not state.front_built then
+        local pictures = store:pictures_of(store.paths[fragment])
+        local arrived = #pictures > 0
+        for _, p in ipairs(pictures) do arrived = arrived and store:has(p) end
+        if arrived then
+            state.front_built = true
+            needed = fragment
+        end
+    end
     if needed then
         if store:has(store.paths[needed]) then
             local started = os.time()

@@ -7,6 +7,7 @@ local FrameContainer = require("ui/widget/container/framecontainer")
 local Geom = require("ui/geometry")
 local GestureRange = require("ui/gesturerange")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
+local HorizontalSpan = require("ui/widget/horizontalspan")
 local IconWidget = require("ui/widget/iconwidget")
 local InputContainer = require("ui/widget/container/inputcontainer")
 local LeftContainer = require("ui/widget/container/leftcontainer")
@@ -255,6 +256,19 @@ function Kit.icon_button(name, side, callback, opts)
             IconWidget:new{ icon = name, width = icon, height = icon },
         },
     }
+end
+
+--- The current value and a chevron, for a row that leads on. Returns them and how much empty
+-- room the drawing of the chevron leaves at its right, to go past the row's margin by.
+function Kit.value_and_chevron(value)
+    local icon = Kit.px(28)
+    local group = HorizontalGroup:new{ align = "center" }
+    if value then
+        group[1] = Kit.text(value, 16, { color = Blitbuffer.COLOR_DARK_GRAY })
+        group[2] = HorizontalSpan:new{ width = Kit.px(6) }
+    end
+    group[#group + 1] = IconWidget:new{ icon = "chevron.right", width = icon, height = icon }
+    return group, Kit.icon_right_room("chevron.right", icon)
 end
 
 --- ‹ page / pages ›. on_turn gets -1 or 1. Returns the row and both arrows.

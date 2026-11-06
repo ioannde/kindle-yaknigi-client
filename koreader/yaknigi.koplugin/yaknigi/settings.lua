@@ -1,4 +1,4 @@
--- The app's settings, from the library's menu and from the panels over a book. Laid out as
+-- The app's settings, a tab of the library and a screen from the panels over a book. Laid out as
 -- the system's own: a list of rows under headings, a switch or the current value at the right
 -- of each, and a row with choices opening a screen of its own. It turns page by swipes when
 -- it does not fit the screen.
@@ -25,6 +25,7 @@ local Screen = Device.screen
 local Kit = require("yaknigi/kit")
 local Prefs = require("yaknigi/prefs")
 local Status = require("yaknigi/status")
+local Tabs = require("yaknigi/tabs")
 
 local ROW_H, HEADING_H, BAR_H, PAGER_H = 60, 46, 56, 56
 
@@ -33,6 +34,8 @@ local Settings = InputContainer:extend{
     covers_fullscreen = true,
     ui = nil, -- the file manager's or the reader's
     on_sign_out = nil,
+    on_close_app = nil,
+    on_tab = nil, -- function(id): as a tab of the library, with the tabs at the bottom
     body_height = nil, -- how much room the list has; the rest of the screen unless given
     all_rows = nil, -- also the rows that this device has no use for
 }
@@ -111,6 +114,13 @@ function Settings:entries()
             UIManager:nextTick(self.on_sign_out)
         end }
     end
+    if self.on_close_app then
+        heading("Приложение")
+        list[#list + 1] = { key = "close_app", title = "Закрыть приложение", action = function()
+            self:close()
+            UIManager:nextTick(self.on_close_app)
+        end }
+    end
     return list
 end
 
@@ -146,18 +156,6 @@ function Settings:row(title, right, right_room, callback)
     return Kit.Tappable:new{ callback = callback, content }
 end
 
---- The current value and a chevron, for a row that leads on.
-local function value_and_chevron(value)
-    local icon = Kit.px(28)
-    local group = HorizontalGroup:new{ align = "center" }
-    if value then
-        group[1] = Kit.text(value, 16, { color = Blitbuffer.COLOR_DARK_GRAY })
-        group[2] = HorizontalSpan:new{ width = Kit.px(6) }
-    end
-    group[#group + 1] = IconWidget:new{ icon = "chevron.right", width = icon, height = icon }
-    return group, Kit.icon_right_room("chevron.right", icon)
-end
-
 --- Rows of the list: { height, widget }.
 function Settings:mainRows()
     local W = self.dimen.w
@@ -179,7 +177,7 @@ function Settings:mainRows()
         else
             local widget
             if entry.labels then
-                local right, room = value_and_chevron(entry.labels[entry.selected])
+                local right, room = Kit.value_and_chevron(entry.labels[entry.selected])
                 widget = self:row(entry.title, right, room, function() self:open(entry) end)
             elseif entry.action then
                 widget = self:row(entry.title, nil, nil, entry.action)
@@ -258,30 +256,50 @@ function Settings:build()
     local bar_h = Kit.px(BAR_H)
     local choice = self.choice
     local title = choice and choice.title or "Настройки"
-    self.back = Kit.icon_button("chevron.left", bar_h, function()
-        if self.choice then
-            self.choice = nil
-            self.page = self.list_page or 1
-            self:changed()
-        else
-            self:close()
-        end
-    end, { edge = "left", margin = Kit.px(16), width = Kit.px(56) })
-    local header = VerticalGroup:new{ align = "left",
-        Status:new{ width = W },
-        OverlapGroup:new{
+    local top_tab = self.on_tab and not choice
+    self.back = nil
+    local header_row
+    if top_tab then
+        local box = Geom:new{ w = W, h = bar_h }
+        header_row = LeftContainer:new{ dimen = box,
+            HorizontalGroup:new{ align = "center",
+                HorizontalSpan:new{ width = Kit.px(16) },
+                Kit.text(title, 28, { bold = true, max_width = W - 2 * Kit.px(16) }),
+            },
+        }
+    else
+        self.back = Kit.icon_button("chevron.left", bar_h, function()
+            if self.choice then
+                self.choice = nil
+                self.page = self.list_page or 1
+                self:changed()
+            else
+                self:close()
+            end
+        end, { edge = "left", margin = Kit.px(16), width = Kit.px(56) })
+        header_row = OverlapGroup:new{
             dimen = Geom:new{ w = W, h = bar_h },
             allow_mirroring = false,
             CenterContainer:new{ dimen = Geom:new{ w = W, h = bar_h },
                 Kit.text(title, 20, { bold = true, max_width = W - 2 * Kit.px(64) }) },
             self.back,
-        },
+        }
+    end
+    local header = VerticalGroup:new{ align = "left",
+        Status:new{ width = W },
+        header_row,
         Kit.line(W),
     }
     local header_h = header:getSize().h
+    local tabs_h = 0
+    local tab_bar
+    if self.on_tab then
+        tabs_h = Tabs.height()
+        tab_bar, self.tab_cells = Tabs.bar(W, "settings", function(id) self:selectTab(id) end)
+    end
 
     local rows = choice and self:choiceRows(choice) or self:mainRows()
-    local room = self.body_height or self.dimen.h - header_h
+    local room = self.body_height or self.dimen.h - header_h - tabs_h
     local pages = paginate(rows, room)
     if #pages > 1 then
         pages = paginate(rows, room - Kit.px(PAGER_H))
@@ -305,10 +323,26 @@ function Settings:build()
             self:turn(delta)
         end)
         frame[#frame + 1] = FrameContainer:new{ bordersize = 0, padding = 0,
-            overlap_offset = { 0, self.dimen.h - pager_h }, pager }
+            overlap_offset = { 0, self.dimen.h - tabs_h - pager_h }, pager }
+    end
+    if tab_bar then
+        frame[#frame + 1] = FrameContainer:new{ bordersize = 0, padding = 0,
+            overlap_offset = { 0, self.dimen.h - tabs_h }, tab_bar }
     end
     if self[1] then self[1]:free() end
     self[1] = FrameContainer:new{ background = Blitbuffer.COLOR_WHITE, bordersize = 0, padding = 0, frame }
+end
+
+--- Its own tab goes back to the top of the list, any other leaves this screen for it.
+function Settings:selectTab(id)
+    if id == "settings" then
+        self.choice = nil
+        self.page = 1
+        self:changed()
+    else
+        self:close()
+        self.on_tab(id)
+    end
 end
 
 --- A row with choices opens them on a screen of their own.

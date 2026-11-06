@@ -95,8 +95,15 @@ eq(Prefs.progress_text("percent", at, true), "70% книги", "percent, long")
 eq(Prefs.progress_text("page", at), "723", "page")
 eq(Prefs.progress_text("page", at, true), "Страница 723", "page, long")
 eq(Prefs.progress_text("page_of", at), "723 из 1023", "page of pages")
-eq(Prefs.progress_text("chapter", at), "До конца главы: 9 стр. · 75%", "chapter")
-eq(Prefs.progress_text("book", at), "До конца книги: 300 стр. · 29%", "book")
+do
+    local left, right = Prefs.progress_text("chapter", at)
+    eq(left, "До конца главы: 9 стр.", "chapter")
+    eq(right, "75%", "chapter's share, to the other side")
+    left, right = Prefs.progress_text("book", at)
+    eq(left, "До конца книги: 300 стр.", "book")
+    eq(right, "29%", "book's share, to the other side")
+    eq(select(2, Prefs.progress_text("percent", at)), nil, "percent has one part")
+end
 for _, format in ipairs(Prefs.PROGRESS) do
     eq(Prefs.progress_text(format, { ratio = 0.5 }), "50%", "no pages yet: " .. format)
 end
@@ -311,6 +318,81 @@ local marked = Catalogue.item(found_book("m"))
 Catalogue.mark_added(marked, { uuid = "real" })
 eq(marked.card.uuid, "real", "the real card after adding")
 eq(marked.mandatory, "в библиотеке", "marked after adding")
+
+-- The feed
+local Feed = require("yaknigi/feed")
+local function feed_section(name, typename, count, entry_type)
+    local page = {}
+    for i = 1, count do
+        local book = found_book(name .. i)
+        book.__typename = entry_type or "TextBook"
+        page[i] = book
+    end
+    return { __typename = typename or "SimpleSection", name = name, items = { page = page } }
+end
+local sections = Feed.sections({
+    feed_section("Featured post", "FeaturedSection", 5),
+    feed_section("аудио", nil, 5, "Audiobook"),
+    feed_section("мало", nil, 2),
+    feed_section("книги", nil, 4),
+    { __typename = "SimpleSection", items = { page = {} } },
+    "не таблица",
+})
+eq(#sections, 1, "only sections with books to read")
+eq(sections[1].name, "книги", "the section's name")
+eq(#sections[1].items, 4, "its books")
+eq(#Feed.sections(nil), 0, "no page")
+local dup = feed_section("д", nil, 3)
+dup.items.page[2] = dup.items.page[1]
+eq(#Feed.sections({ dup }), 0, "repeats do not count")
+local feed = Feed.new()
+eq(Feed.start(feed), "", "the feed starts at its start")
+eq(Feed.start(feed), nil, "one request at a time")
+Feed.add(feed, sections, "20")
+eq(feed.finished, false, "there is more")
+eq(Feed.start(feed), "20", "the next page")
+Feed.fail(feed, "нет")
+eq(feed.failed, "нет", "a failure is kept")
+eq(Feed.start(feed), "20", "and tried again")
+eq(feed.failed, nil, "and forgotten")
+Feed.add(feed, sections, "")
+eq(#feed.sections, 2, "added")
+eq(feed.finished, true, "the last page")
+eq(Feed.start(feed), nil, "nothing after the last page")
+Feed.renew(feed)
+eq(Feed.start(feed), "", "asked anew from the start")
+eq(#feed.sections, 2, "what is shown stays meanwhile")
+Feed.add(feed, sections, "20")
+eq(#feed.sections, 1, "the start replaces")
+local endless = Feed.new()
+for i = 1, 3 do
+    Feed.start(endless)
+    Feed.add(endless, {}, tostring(i * 20))
+end
+eq(endless.finished, true, "pages of nothing do not go on for ever")
+Feed.start(Feed.new())
+local same = Feed.new()
+Feed.start(same)
+Feed.add(same, sections, "20")
+Feed.start(same)
+Feed.add(same, sections, "20")
+eq(same.finished, true, "a cursor that goes nowhere ends it")
+local saved = Feed.from_saved({ sections = sections, cursor = "20", uuid = "u" })
+eq(saved.stale, true, "what was saved is asked again")
+eq(saved.uuid, "u", "with the same feed")
+eq(Feed.start(saved), "", "from the start")
+eq(#Feed.from_saved(nil).sections, 0, "nothing saved")
+eq(#Feed.from_saved({ sections = "x" }).sections, 0, "something odd saved")
+eq(#Feed.cards(sections, 2), 2, "the row's covers")
+eq(#Feed.cards(sections), 4, "all covers")
+eq(#Feed.items(feed), 4, "all books")
+
+-- A page with words on it
+package.preload["yaknigi/store"] = function() return {} end -- only the pure part is tried here
+local Session = require("yaknigi/session")
+eq(Session.has_words('<html><head><title>Обложка</title></head><body><img src="c.jpg" alt="Обложка"/></body></html>'), false, "a picture only")
+eq(Session.has_words("<html><body><p>Он шёл по улице.</p></body></html>"), true, "a text")
+eq(Session.start_of(3), "/body/DocFragment[3]", "where a fragment starts")
 
 print(("%d passed, %d failed"):format(passed, failed))
 os.exit(failed == 0 and 0 or 1)

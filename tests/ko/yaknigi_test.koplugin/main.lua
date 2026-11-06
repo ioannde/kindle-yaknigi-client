@@ -604,10 +604,10 @@ local function test_reading_screen()
     if doc:getCurrentPage() ~= cur then fail("a tap on the progress turned the page") end
     if tap_progress() ~= tostring(cur) then fail("page: " .. line()) end
     if tap_progress() ~= ("%d из %d"):format(cur, count) then fail("page of pages: " .. line()) end
-    if not tap_progress():match("^До конца главы: %d+ стр%. · %d+%%$") then fail("chapter: " .. line()) end
+    if not tap_progress():match("^До конца главы: %d+ стр%. %d+%%$") then fail("chapter: " .. line()) end
     say("the page says:", line())
     shot("18b-progress-chapter")
-    if not tap_progress():find("До конца книги: " .. (count - cur) .. " стр. · ", 1, true) then fail("book: " .. line()) end
+    if not tap_progress():find("До конца книги: " .. (count - cur) .. " стр. ", 1, true) then fail("book: " .. line()) end
     say("the page says:", line())
     if not tap_progress():match("^%d+%%$") then fail("percent again: " .. line()) end
     if doc:getCurrentPage() ~= cur then fail("tapping the progress turned the page") end
@@ -875,7 +875,6 @@ local function script()
     local store = plugin_r.store
     if not store then fail("no store in the reader") end
     if store:is_whole() then fail("book is already whole: nothing went to the background") end
-    if not store:cover_file() then fail("the book opened before its cover came") end
     local pages_skeleton = reader().document:getPageCount()
 
     -- The rest arrives in the background and the reader swaps to it.
@@ -1001,17 +1000,18 @@ local function script()
     menu = library_with(21)
     if menu.view ~= "all" or menu.query ~= "номер 0" then fail("the library forgot where it was") end
 
-    -- All of Yandex's books, from the first screen. A failure can be tried again.
+    -- All of Yandex's books, from their tab. A failure can be tried again.
     menu:goHome()
+    UIManager:forceRePaint()
     mock_get("/test/fail_search?n=1")
-    tap_widget(menu.search_button)
+    tap_widget(menu.tab_cells.search)
     wait("the catalogue's box", function() return menu.search_box and UIManager:isWidgetShown(menu.search_box) end)
-    if menu.search_box.hint ~= "Поиск по всем книгам" then fail("search from home: " .. menu.search_box.hint) end
+    if menu.search_box.hint ~= "Поиск по всем книгам" then fail("search on its tab: " .. menu.search_box.hint) end
     -- Nothing typed: the button waits for something to look for.
     tap_widget(menu.search_box.find_button)
-    if not menu.search_box or menu.view ~= "home" then fail("searched for nothing") end
+    if not menu.search_box or menu.query then fail("searched for nothing") end
     search("достоевский")
-    if menu.view ~= "catalogue" then fail("search from home is not in the catalogue: " .. menu.view) end
+    if menu.view ~= "catalogue" then fail("the search tab is not the catalogue: " .. menu.view) end
     wait("the search to fail", function() return menu.retry_button end)
     UIManager:forceRePaint()
     shot("20-catalogue-failed")
@@ -1138,8 +1138,9 @@ local function script()
     wait("the box after the cross", function() return menu.search_box end)
     menu.search_box:dismiss()
     UIManager:forceRePaint()
-    tap_widget(menu.back_button)
-    if menu.view ~= "home" then fail("the way back from the catalogue") end
+    if menu.back_button then fail("the search tab has a way back") end
+    tap_widget(menu.tab_cells.library)
+    if menu.view ~= "home" then fail("the library's tab from the catalogue") end
     -- A shelf still searches only itself.
     menu:openShelf("finished")
     tap_widget(menu.search_bar)
@@ -1148,12 +1149,110 @@ local function script()
     shot("44-search-box-aligned")
     menu.search_box:dismiss()
 
-    -- The settings from the library, with the strip above them, and the way out of the account.
-    menu:showMenu()
+    -- The book being read, docked above the tabs.
+    menu:goHome()
     UIManager:forceRePaint()
-    shot("45-library-menu")
-    UIManager:close(top())
-    menu.on_settings()
+    shot("48-library-dock")
+    if menu.refresh_button == nil then fail("no way to refresh the library") end
+    local docked = menu.dock_item
+    if not docked then fail("nothing in the dock") end
+    for _, item in ipairs(menu.rows) do
+        if item == docked then fail("the docked book is in the strip too") end
+    end
+    local docked_id = docked.card.book.uuid
+    tap_widget(menu.dock_widget)
+    wait("the docked book to open", function()
+        return reader() and reader().document and top().name == "ReaderUI"
+            and reader().document.file:find("/" .. docked_id .. "/", 1, true)
+    end)
+    reader():onHome()
+    menu = library_with(22)
+    UIManager:forceRePaint()
+
+    -- The feed, on its tab: only what can be read here, and a failure can be tried again.
+    mock_get("/test/fail_showcase?n=1")
+    tap_widget(menu.tab_cells.feed)
+    if menu.view ~= "feed" then fail("the feed's tab: " .. menu.view) end
+    wait("the feed to fail", function() return menu.retry_button end)
+    UIManager:forceRePaint()
+    shot("49-feed-failed")
+    tap_widget(menu.retry_button)
+    wait("the feed", function() return menu.feed_sections and #menu.feed_sections > 0 end)
+    wait("the feed's covers", function()
+        for _, item in ipairs(menu.rows) do
+            if not item.cover then return false end
+        end
+        return #menu.rows > 0
+    end)
+    UIManager:forceRePaint()
+    shot("50-feed")
+    local names = {}
+    for _, section in ipairs(menu.feed.sections) do names[#names + 1] = section.name end
+    if table.concat(names, ",") ~= "Новинки,Популярное,Классика,Детективы" then
+        fail("the feed's sections: " .. table.concat(names, ","))
+    end
+    if menu.feed.sections[1].items[1].card.book.uuid ~= "found5" then fail("the first of the feed") end
+    tap_widget(menu.next_button)
+    wait("the next of the feed", function() return #menu.feed.sections == 7 and menu.feed.finished end)
+    UIManager:forceRePaint()
+    if menu.total_pages ~= 3 then fail("the feed's pages: " .. menu.total_pages) end
+    shot("51-feed-page-2")
+    -- Away and back, the feed is where it was; its tab from itself goes to the start.
+    tap_widget(menu.tab_cells.library)
+    UIManager:forceRePaint()
+    tap_widget(menu.tab_cells.feed)
+    if menu.view ~= "feed" or menu.page ~= 2 then fail("the feed lost its page: " .. menu.page) end
+    UIManager:forceRePaint()
+    tap_widget(menu.tab_cells.feed)
+    if menu.page ~= 1 then fail("the feed's tab did not go to its start") end
+    UIManager:forceRePaint()
+    -- A section as a list. What is in the library says so.
+    tap_widget(menu.feed_sections[2])
+    if menu.view ~= "feed_section" or menu.section.name ~= "Популярное" then fail("no section") end
+    wait("the section's covers", function()
+        for _, item in ipairs(menu.rows) do
+            if not item.cover then return false end
+        end
+        return #menu.rows > 0
+    end)
+    UIManager:forceRePaint()
+    shot("52-feed-section")
+    tap_widget(menu.back_button)
+    if menu.view ~= "feed" then fail("the way back from a section") end
+    UIManager:forceRePaint()
+
+    -- A book from the feed opens at its text, with the picture before it a page back.
+    tap_widget(menu.feed_sections[1])
+    UIManager:forceRePaint()
+    local with_cover
+    for _, item in ipairs(menu.section.items) do
+        if item.card.book.uuid == "found7" then with_cover = item end
+    end
+    if not with_cover then fail("the book with a picture is not in the feed") end
+    menu:onMenuSelect(with_cover)
+    wait("the feed's book card", is_named("YaknigiBookCard"))
+    UIManager:forceRePaint()
+    tap_widget(top().read_button)
+    wait("the feed's book to open", function()
+        return reader() and reader().document and top().name == "ReaderUI"
+            and reader().document.file:find("/found7/", 1, true)
+    end)
+    if fragment() ~= 2 then fail("the book did not open at its text: " .. tostring(fragment())) end
+    UIManager:forceRePaint()
+    shot("53-opened-at-text")
+    reader().rolling:onGotoViewRel(-1)
+    UIManager:forceRePaint()
+    wait("the picture a page back", function() return fragment() == 1 end)
+    shot("54-cover-a-page-back")
+    reader():onHome()
+    menu = library_with(23)
+    if menu.view ~= "feed_section" then fail("the section was forgotten: " .. menu.view) end
+    UIManager:forceRePaint()
+    tap_widget(menu.tab_cells.library)
+    UIManager:forceRePaint()
+
+    -- The settings, a tab like the others, and the way out of the account.
+    tap_widget(menu.tab_cells.settings)
     UIManager:forceRePaint()
     local settings = top()
     if settings.name ~= "YaknigiSettings" then fail("no settings from the library") end
@@ -1167,13 +1266,26 @@ local function script()
     UIManager:setDirty(settings, "ui")
     shot("47-settings-wifi-off")
     NetworkMgr.isWifiOn = wifi_on
-    tap_widget(settings.back)
+    if settings.back then fail("the settings' tab has a way back") end
+    UIManager:forceRePaint()
+    tap_widget(settings.tab_cells.library)
     wait("the library after the settings", function() return top() == menu end)
+    if menu.view ~= "home" then fail("the library's tab from the settings: " .. menu.view) end
+    UIManager:forceRePaint()
+    tap_widget(menu.tab_cells.settings)
+    settings = top()
+    UIManager:forceRePaint()
+    for _ = 2, settings.pages do
+        tap_widget(settings.pager_next)
+        UIManager:forceRePaint()
+    end
+    shot("55-settings-last-page")
     local f = io.open(OUT .. "/PASS", "w")
     f:write("ok\n")
     f:close()
     say("PASS")
-    menu:onClose()
+    -- The app ends where it says so, and the run would not end if it did not.
+    tap_widget(settings.rows.close_app)
 end
 
 function Driver:init()

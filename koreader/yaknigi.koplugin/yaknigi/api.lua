@@ -81,6 +81,10 @@ local PROGRESS_UPDATED = "mutation ProgressUpdated($textbookProgresses: [Textboo
 
 local SEARCH = "query Search($query: SearchParamsInput!) { search(query: $query) { page { __typename ...searchSnippetAudioBookFragment ...searchSnippetTextBookFragment ...searchSnippetComicBookFragment ...searchSnippetTextSerialFragment ...bookshelfFragment ...personFragment ...publisherFragment ...seriesFragment ...topicFragment ...userFragment } cursor rankedFilter { filterType } misspell { correctedText correctionType } } }  fragment coverFragment on Cover { url ratio backgroundColorHex }  fragment personFragment on Person { avatar { __typename ...coverFragment } name uuid worksCount roles }  fragment bookFragment on Book { annotation name cover { __typename ...coverFragment } uuid initUuid authors { __typename ...personFragment } editorAnnotation }  fragment publisherFragment on Publisher { avatar { __typename ...coverFragment } name uuid worksCount }  fragment publisherBookFragment on Book { publisher { __typename ...publisherFragment } }  fragment translatorsBookFragment on Book { translators { __typename ...personFragment } }  fragment topicsBookFragment on Book { topics { name totalBook uuid } }  fragment subscriptionLevelsFragment on Book { subscriptionLevels }  fragment snippetBookFragment on Book { __typename ...bookFragment ...publisherBookFragment ...translatorsBookFragment ...topicsBookFragment ...subscriptionLevelsFragment }  fragment narratorsAudioBookFragment on AudioBook { narrators { __typename ...personFragment } }  fragment progressFragment on Progress { finished inLibrary progress isPublic }  fragment progressAudioBookFragment on AudioBook { progress { __typename ...progressFragment } }  fragment listenersCountAudioBookFragment on AudioBook { listenersCount }  fragment subscriptionsFragment on Availability { subscriptions { types } }  fragment ageRestrictionFragment on Availability { ageRestriction { name value } }  fragment snippetAudioBookFragment on AudioBook { __typename book { __typename ...snippetBookFragment } ...narratorsAudioBookFragment ...progressAudioBookFragment ...listenersCountAudioBookFragment availability { __typename ...subscriptionsFragment ...ageRestrictionFragment } }  fragment bookTagsFragment on Book { tags { name value } }  fragment searchSnippetAudioBookFragment on AudioBook { __typename ...snippetAudioBookFragment book { __typename ...bookTagsFragment } }  fragment progressTextBookFragment on TextBook { progress { __typename ...progressFragment } }  fragment readersCountTextBookFragment on TextBook { readersCount }  fragment snippetTextBookFragment on TextBook { __typename book { __typename ...snippetBookFragment } availability { __typename ...subscriptionsFragment ...ageRestrictionFragment } ...progressTextBookFragment ...readersCountTextBookFragment }  fragment searchSnippetTextBookFragment on TextBook { __typename ...snippetTextBookFragment book { __typename ...bookTagsFragment } }  fragment progressComicBookFragment on ComicBook { progress { __typename ...progressFragment } }  fragment readersCountComicBookFragment on ComicBook { readersCount }  fragment snippetComicBookFragment on ComicBook { __typename book { __typename ...snippetBookFragment } ...progressComicBookFragment ...readersCountComicBookFragment availability { __typename ...subscriptionsFragment ...ageRestrictionFragment } }  fragment searchSnippetComicBookFragment on ComicBook { __typename ...snippetComicBookFragment book { __typename ...bookTagsFragment } }  fragment textSerialFragment on TextSerial { availability { __typename ...ageRestrictionFragment } book { __typename ...bookFragment } }  fragment episodesTextSerialFragment on TextSerial { episodes { total } }  fragment readersCountTextSerialFragment on TextSerial { readersCount }  fragment snippetTextSerialFragment on TextSerial { __typename book { __typename ...snippetBookFragment } availability { __typename ...subscriptionsFragment ...ageRestrictionFragment } ...textSerialFragment ...episodesTextSerialFragment ...readersCountTextSerialFragment }  fragment searchSnippetTextSerialFragment on TextSerial { __typename ...snippetTextSerialFragment book { __typename ...bookTagsFragment } }  fragment userFragment on User { avatar { __typename ...coverFragment } name uuid followersCount login }  fragment bookshelfFragment on Bookshelf { cover { __typename ...coverFragment } name uuid user { __typename ...userFragment } posts { total } followersCount description }  fragment seriesFragment on Series { authors { __typename ...personFragment } cover { __typename ...coverFragment } name uuid items { followersCount total } }  fragment topicFragment on Topic { name slug totalBook uuid parent { name slug totalBook uuid } }"
 
+local SHOWCASE = "query Showcase($showcaseParamsInput: ShowcaseParamsInput!, $showcaseItemsCursor: String!, $sectionItemsCursor: String = \"\" ) { showcase(params: $showcaseParamsInput) { __typename ...fragmentShowcase ...childrenFragmentShowcase ...parentsFragmentShowcase items(cursor: $showcaseItemsCursor) { page { __typename ...featuredSectionFragment ...notificationFragment ...shelvesSectionFragment ...simpleSectionFragment ...statisticsSectionFragment ...topSectionFragment ...seriesSectionFragment ...ratingSectionFragment } cursor } } }  fragment fragmentShowcase on Showcase { name uuid availableFilters }  fragment childrenFragmentShowcase on Showcase { children { __typename ...fragmentShowcase } }  fragment parentsFragmentShowcase on Showcase { parents { __typename ...fragmentShowcase } }  fragment ageRestrictionFragment on Availability { ageRestriction { name value } }  fragment coverFragment on Cover { url ratio backgroundColorHex }  fragment personFragment on Person { avatar { __typename ...coverFragment } name uuid worksCount roles }  fragment bookFragment on Book { annotation name cover { __typename ...coverFragment } uuid initUuid authors { __typename ...personFragment } editorAnnotation }  fragment audioBookFragment on AudioBook { availability { __typename ...ageRestrictionFragment } book { __typename ...bookFragment } }  fragment comicBookFragment on ComicBook { availability { __typename ...ageRestrictionFragment } book { __typename ...bookFragment } }  fragment textBookFragment on TextBook { availability { __typename ...ageRestrictionFragment } book { __typename ...bookFragment } }  fragment textSerialFragment on TextSerial { availability { __typename ...ageRestrictionFragment } book { __typename ...bookFragment } }  fragment notificationFragment on Notification { consumer notificationPayloadId payload templateId feedbackToken }  fragment featuredSectionFragment on FeaturedSection { items(cursor: $sectionItemsCursor) { cursor page { __typename ...audioBookFragment ...comicBookFragment ...textBookFragment ...textSerialFragment ...notificationFragment } } name uuid }  fragment userFragment on User { avatar { __typename ...coverFragment } name uuid followersCount login }  fragment bookshelfFragment on Bookshelf { cover { __typename ...coverFragment } name uuid user { __typename ...userFragment } posts { total } followersCount description }  fragment shelvesSectionFragment on ShelvesSection { items(cursor: $sectionItemsCursor) { cursor page { __typename ...bookshelfFragment } } name uuid }  fragment seriesFragment on Series { authors { __typename ...personFragment } cover { __typename ...coverFragment } name uuid items { followersCount total } }  fragment simpleSectionFragment on SimpleSection { availableFilters items(cursor: $sectionItemsCursor) { cursor page { __typename ...audioBookFragment ...comicBookFragment ...textBookFragment ...textSerialFragment ...seriesFragment } } name uuid }  fragment statisticsSectionFragment on StatisticsSection { daysReadingInMonth updatedAt name uuid }  fragment topSectionFragment on TopSection { items(cursor: $sectionItemsCursor) { cursor page { __typename ...audioBookFragment ...comicBookFragment ...textBookFragment ...textSerialFragment } } name uuid }  fragment seriesSectionFragment on SeriesSection { items(cursor: $sectionItemsCursor) { cursor page { __typename ...seriesFragment } } name uuid }  fragment ratingSectionFragment on RatingSection { items(cursor: $sectionItemsCursor) { cursor page { __typename ...audioBookFragment ...comicBookFragment ...textBookFragment ...textSerialFragment } } name uuid }"
+
+local ROOT_SHOWCASES = "query RootShowcases($rootShowcaseParamsInput: RootShowcaseParamsInput!) { rootShowcases(params: $rootShowcaseParamsInput) { children { __typename ...fragmentShowcase ...childrenFragmentShowcase ...parentsFragmentShowcase } notification { __typename ...notificationFragment } } }  fragment fragmentShowcase on Showcase { name uuid availableFilters }  fragment childrenFragmentShowcase on Showcase { children { __typename ...fragmentShowcase } }  fragment parentsFragmentShowcase on Showcase { parents { __typename ...fragmentShowcase } }  fragment notificationFragment on Notification { consumer notificationPayloadId payload templateId feedbackToken }"
+
 --- Tells Yandex where the book is being read. Takes two requests, as in the phone app:
 -- ProgressUpdated moves the position that other devices see; the library card holds the
 -- percentage and the time of reading, and ignores the position it is sent.
@@ -168,6 +172,52 @@ function Api:search(text, cursor)
     if type(found) ~= "table" or type(found.page) ~= "table" then return nil, "http", "no results" end
     drop_nulls(found)
     return { page = found.page, cursor = found.cursor }
+end
+
+-- The parts of the phone app's feeds that are the same for each request of them.
+local function graphql_data(self, name, query, variables)
+    local status, body = self.http:request("POST", GRAPHQL_URL, self:headers("application/json"), json.encode({
+        operationName = name,
+        query = query,
+        variables = variables,
+    }))
+    if status ~= 200 then return status_error(status, body) end
+    local ok, answer = pcall(json.decode, body)
+    if not ok or type(answer) ~= "table" or (answer.errors and answer.errors ~= json.null) then
+        logger.warn("yaknigi: Yandex refused", name, ok and type(answer) == "table" and type(answer.errors) == "table"
+            and answer.errors[1] and answer.errors[1].message)
+        return nil, "http", "graphql"
+    end
+    if type(answer.data) ~= "table" then return nil, "http", "no data" end
+    return drop_nulls(answer.data)
+end
+
+--- The id of the feed to show, nil if Yandex does not say.
+function Api:root_showcase()
+    local data, kind, detail = graphql_data(self, "RootShowcases", ROOT_SHOWCASES,
+        { rootShowcaseParamsInput = { notificationFilters = json.array{} } })
+    if not data then return nil, kind, detail end
+    local root = data.rootShowcases
+    local first = type(root) == "table" and type(root.children) == "table" and root.children[1]
+    return type(first) == "table" and type(first.uuid) == "string" and first.uuid or nil
+end
+
+--- One page of a feed. Returns { page = its sections, cursor = where the next page starts }.
+function Api:showcase(uuid, cursor)
+    local data, kind, detail = graphql_data(self, "Showcase", SHOWCASE, {
+        showcaseParamsInput = {
+            contentFilter = json.array{},
+            isSearch = false,
+            notificationFilters = json.array{},
+            uuid = uuid,
+        },
+        showcaseItemsCursor = cursor or "",
+    })
+    if not data then return nil, kind, detail end
+    local showcase = data.showcase
+    local items = type(showcase) == "table" and showcase.items
+    if type(items) ~= "table" or type(items.page) ~= "table" then return nil, "http", "no sections" end
+    return { page = items.page, cursor = items.cursor }
 end
 
 --- Puts a book into the library, visible to others as those added on the phone are.

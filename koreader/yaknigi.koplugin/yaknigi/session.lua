@@ -8,8 +8,51 @@ local Session = {}
 -- A chapter's first pictures, enough for its first page. The rest come in the background.
 local PICTURES_BEFORE_OPENING = 3
 
---- Returns the store ready to be opened, the stubs, and the xpointer to jump to (or
--- nil to stay at the saved position; the reader then asks, if Yandex has another).
+-- A book starts with its cover and at times a picture more, each a page of its own.
+local FRONT_PAGES_AT_MOST = 4
+
+--- Whether a chapter has anything to read, rather than only a picture.
+function Session.has_words(html)
+    local body = html:match("<[Bb][Oo][Dd][Yy].-(>.*)$") or html
+    body = body:gsub("<!%-%-.-%-%->", " "):gsub("<[^>]*>", " "):gsub("&[#%w]+;", " "):gsub("\194\160", " ")
+    return body:find("[%w\128-\255]") ~= nil
+end
+
+--- The first fragment of those on disk with something to read, nil if none of the first are
+-- or some are still to come.
+function Session.first_text_on_disk(store)
+    for i = 1, math.min(FRONT_PAGES_AT_MOST, #store.paths) do
+        local html = store:read(store.paths[i])
+        if not html then return nil end
+        if Session.has_words(html) then return i end
+    end
+    return 1
+end
+
+--- Where a book opened for the first time starts: past its cover, as in Yandex's app. Gets
+-- the first chapters, which are what is read first anyway. Returns nil, kind, detail on failure.
+function Session.find_first_text(store, api)
+    for i = 1, math.min(FRONT_PAGES_AT_MOST, #store.paths) do
+        local p = store.paths[i]
+        if not store:has(p) then
+            local data, kind, detail = api:content(store.manifest.document_uuid, p)
+            if not data then return nil, kind, detail end
+            local ok, err = store:write(p, data)
+            if not ok then return nil, "disk", err end
+        end
+        if Session.has_words(store:read(p) or "") then return i end
+    end
+    return 1
+end
+
+--- The place of a fragment, for the reader to go to; nil for the very start.
+function Session.start_of(fragment)
+    return fragment > 1 and ("/body/DocFragment[%d]"):format(fragment) or nil
+end
+
+--- Returns the store ready to be opened, the stubs, the xpointer to jump to (or nil to stay
+-- at the saved position; the reader then asks, if Yandex has another), the fragment, and
+-- for a book opened for the first time the fragment its text starts at.
 -- On failure returns nil, kind, detail.
 -- local_fragment is where the saved position is, if the book was read here before.
 function Session.prepare(root, api, card, local_fragment)
@@ -30,6 +73,13 @@ function Session.prepare(root, api, card, local_fragment)
     local target = use_server
         and store:fragment_of_spine_index(Cfi.spine_index(card.cfi))
         or local_fragment or 1
+    local text_start
+    if not use_server and not local_fragment then
+        local kind, detail
+        text_start, kind, detail = Session.find_first_text(store, api)
+        if not text_start then return nil, kind, detail end
+        target = text_start
+    end
 
     -- Stylesheets, this chapter and the next must be there before the first page.
     local wanted = {}
@@ -51,11 +101,11 @@ function Session.prepare(root, api, card, local_fragment)
         end
     end
 
-    -- A page without its picture stays blank, as the first page does without the cover. The
-    -- book opens all the same if they cannot be had: they will be tried again in the background.
-    local pictures = { store.cover }
+    -- A page without its picture stays blank. The book opens all the same if they cannot be
+    -- had: they will be tried again in the background, the cover the first of them.
+    local pictures = {}
     for _, p in ipairs(store:pictures_of(store.paths[target])) do
-        if #pictures >= PICTURES_BEFORE_OPENING + (store.cover and 1 or 0) then break end
+        if #pictures >= PICTURES_BEFORE_OPENING then break end
         pictures[#pictures + 1] = p
     end
     for _, p in ipairs(pictures) do
@@ -73,6 +123,8 @@ function Session.prepare(root, api, card, local_fragment)
     local xpointer
     if use_server then
         xpointer = Cfi.to_xpointer(card.cfi, target, store:read(store.paths[target]))
+    elseif text_start then
+        xpointer = Session.start_of(text_start)
     end
     local stubs, err = store:build()
     if not stubs then return nil, "disk", err end
@@ -81,7 +133,7 @@ function Session.prepare(root, api, card, local_fragment)
     else
         Session.opening_here(store, card, moved)
     end
-    return store, stubs, xpointer, target
+    return store, stubs, xpointer, target, text_start
 end
 
 --- For a book already on disk: the xpointer of Yandex's newer position.

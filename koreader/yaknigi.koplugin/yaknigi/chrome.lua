@@ -11,7 +11,9 @@ local HorizontalGroup = require("ui/widget/horizontalgroup")
 local HorizontalSpan = require("ui/widget/horizontalspan")
 local IconWidget = require("ui/widget/iconwidget")
 local InputContainer = require("ui/widget/container/inputcontainer")
+local LeftContainer = require("ui/widget/container/leftcontainer")
 local OverlapGroup = require("ui/widget/overlapgroup")
+local RightContainer = require("ui/widget/container/rightcontainer")
 local UIManager = require("ui/uimanager")
 local VerticalGroup = require("ui/widget/verticalgroup")
 local logger = require("logger")
@@ -114,12 +116,28 @@ function Chrome:build()
         function() self:after(function() UIManager:show(TextPanel:new{ ui = ui, shell = self.shell }) end) end)
 
     -- The same tap as on the page: a tap on the progress shows the next thing.
+    local progress_left, progress_right = self.shell:progressText(true)
+    local progress_box = Geom:new{ w = inner, h = Kit.px(36) }
+    local progress_shown
+    if progress_right then
+        local right = Kit.text(progress_right, 15, { color = Blitbuffer.COLOR_DARK_GRAY })
+        progress_shown = OverlapGroup:new{
+            dimen = progress_box:copy(),
+            allow_mirroring = false,
+            LeftContainer:new{ dimen = progress_box:copy(),
+                Kit.text(progress_left, 15, { color = Blitbuffer.COLOR_DARK_GRAY,
+                    max_width = inner - right:getSize().w - Kit.px(12) }) },
+            RightContainer:new{ dimen = progress_box:copy(), right },
+        }
+    else
+        progress_shown = CenterContainer:new{
+            dimen = progress_box,
+            Kit.text(progress_left, 15, { color = Blitbuffer.COLOR_DARK_GRAY, max_width = inner }),
+        }
+    end
     self.progress_label = Kit.Tappable:new{
         callback = function() self:nextProgress() end,
-        CenterContainer:new{
-            dimen = Geom:new{ w = inner, h = Kit.px(36) },
-            Kit.text(self.shell:progressText(true), 15, { color = Blitbuffer.COLOR_DARK_GRAY, max_width = inner }),
-        },
+        progress_shown,
     }
     self.bottom_panel = Kit.Sheet:new{ width = W, edge = "bottom",
         Kit.panel(W, VerticalGroup:new{ align = "center",

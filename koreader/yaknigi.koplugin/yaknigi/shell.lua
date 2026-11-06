@@ -4,6 +4,7 @@
 local Device = require("device")
 local Event = require("ui/event")
 local Geom = require("ui/geometry")
+local TextWidget = require("ui/widget/textwidget")
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
 local Screen = Device.screen
 
@@ -59,7 +60,34 @@ function Shell:install()
     local shell = self
     ui.view.footer.getBookProgress = function() return shell:progress() end
     -- KOReader puts a symbol before the number, whichever prefix style is chosen.
-    ui.view.footer.genFooterText = function() return shell:progressText() end
+    local footer = ui.view.footer
+    footer.genFooterText = function()
+        local left, right = shell:progressText()
+        return right and (left .. " " .. right) or left
+    end
+    -- Two parts stand at the two sides of the page, in line with its text. Its paint is
+    -- replaced on this reader's footer alone, and the text it measures stays as it was.
+    local container = footer.text_container
+    local paint_text = container.paintTo
+    container.paintTo = function(this, bb, x, y)
+        local left, right = shell:progressText()
+        if not right then return paint_text(this, bb, x, y) end
+        local margins = ui.document.configurable.h_page_margins
+        local margin = Kit.px(margins and margins[1] or 20)
+        local function put(text, at_right)
+            local widget = TextWidget:new{
+                text = text,
+                face = footer.footer_text_face,
+                bold = footer.settings.text_font_bold,
+            }
+            local size = widget:getSize()
+            widget:paintTo(bb, at_right and Screen:getWidth() - margin - size.w or margin,
+                y + math.floor((this.dimen.h - size.h) / 2))
+            widget:free()
+        end
+        put(left)
+        put(right, true)
+    end
     for _, id in ipairs(HIGHLIGHT_BUTTONS_REMOVED) do
         ui.highlight:removeFromHighlightDialog(id)
     end
@@ -134,7 +162,7 @@ function Shell:registerZone()
         {
             id = "yaknigi_progress",
             ges = "tap",
-            screen_zone = { ratio_x = 0.2, ratio_y = 1 - footer_h / H, ratio_w = 0.6, ratio_h = footer_h / H },
+            screen_zone = { ratio_x = 0, ratio_y = 1 - footer_h / H, ratio_w = 1, ratio_h = footer_h / H },
             overrides = { "tap_forward", "tap_backward", "yaknigi_center", "yaknigi_back_rest", "readerfooter_tap" },
             handler = function()
                 self:nextProgress()

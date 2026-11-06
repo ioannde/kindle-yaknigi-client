@@ -54,10 +54,8 @@ function Status:paintTo(bb, x, y)
         widget:free()
         return size.w
     end
-    -- The time in the middle, what the device is up to at the right.
-    local time = Kit.text(os.date("%H:%M"), 13)
-    put(os.date("%H:%M"), x + math.floor((self.width - time:getSize().w) / 2))
-    time:free()
+    -- The time in the left corner, what the device is up to at the right.
+    put(os.date("%H:%M"), x + pad)
     if Device:hasBattery() then
         local powerd = Device:getPowerDevice()
         local level = powerd:getCapacity()

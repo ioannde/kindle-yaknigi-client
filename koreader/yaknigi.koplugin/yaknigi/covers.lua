@@ -27,23 +27,49 @@ local function readable(path)
     return f ~= nil
 end
 
---- Path of the cover of a card, nil until it has arrived.
+-- A library's picture: sharp at the size of a cell, and a fifth of the weight of the big
+-- one. What the screen shows on its way to sleep is fetched by itself, on opening a book.
+local PREVIEW = ".preview"
+
+--- The same picture at the other size Yandex keeps it in; a url without one stays as it is.
+local function preview_url(url)
+    return (url:gsub("%-%a+(%.%w+%??[^/]*)$", "-large%1"))
+end
+
+local function find_preview(base)
+    for _, ext in ipairs { ".jpg", ".png" } do
+        if readable(base .. PREVIEW .. ext) then return base .. PREVIEW .. ext end
+    end
+end
+
+--- Path of the cover of a card, nil until it has arrived. A smaller one from before
+-- previews does until its preview comes.
 function Covers.find(root, card)
     local base = base_path(root, card)
     if not base then return nil end
+    local preview = find_preview(base)
+    if preview then return preview end
     for _, ext in ipairs { ".jpg", ".png" } do
         if readable(base .. ext) then return base .. ext end
     end
     return nil
 end
 
--- The small picture if there is one, and the big one if it fails.
+-- The preview, and failing it whatever the card has, without asking for one picture twice.
 local function cover_urls(card)
     local cover = card.book and card.book.cover
-    local urls = {}
+    local urls, seen = {}, {}
+    local function add(url)
+        if type(url) == "string" and not seen[url] then
+            seen[url] = true
+            urls[#urls + 1] = url
+        end
+    end
     if type(cover) == "table" then
-        if type(cover.small) == "string" then urls[#urls + 1] = cover.small end
-        if type(cover.large) == "string" then urls[#urls + 1] = cover.large end
+        local any = cover.small or cover.large
+        if type(any) == "string" then add(preview_url(any)) end
+        add(cover.small)
+        add(cover.large)
     end
     return urls
 end
@@ -93,7 +119,7 @@ function Covers.fetch(root, cards)
     local wanted = {}
     for _, card in ipairs(cards) do
         local base, urls = base_path(root, card), cover_urls(card)
-        if base and #urls > 0 and not Covers.find(root, card) then
+        if base and #urls > 0 and not find_preview(base) then
             wanted[#wanted + 1] = { base = base, urls = urls }
         end
     end
@@ -110,7 +136,10 @@ function Covers.fetch(root, cards)
                     if f then
                         f:write(body)
                         f:close()
-                        os.rename(item.base .. ".tmp", item.base .. ext)
+                        os.rename(item.base .. ".tmp", item.base .. PREVIEW .. ext)
+                        -- The smaller picture from before previews is of no more use.
+                        os.remove(item.base .. ".jpg")
+                        os.remove(item.base .. ".png")
                     end
                     break
                 end

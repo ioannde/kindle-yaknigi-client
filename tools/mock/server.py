@@ -63,6 +63,20 @@ BIG_CONTAINER = (
 # Chapter 31 (zero-based 30), second-level: div > p number 3, as the app's CFI points.
 BIG_CFI = "/6/62!,/2/4/2/6/1:7,/2/4/2/6/1:9"
 CHAPTER_DELAY = 0.1
+# Its spine starts with a page that is only a picture, as real books' do.
+COVER_PAGE_BOOK = "found7"
+COVER_PAGE_OPF = (
+    b'<package><metadata><dc:title>Mock</dc:title></metadata><manifest>'
+    b'<item id="p" href="cover.png" media-type="image/png"/>'
+    b'<item id="t" href="title.xhtml" media-type="application/xhtml+xml"/>'
+    b'<item id="a" href="a.html" media-type="application/xhtml+xml"/>'
+    b'<item id="b" href="b.html" media-type="application/xhtml+xml"/>'
+    b'</manifest><spine><itemref idref="t"/><itemref idref="a"/><itemref idref="b"/></spine></package>'
+)
+COVER_PAGE = ('<?xml version="1.0" encoding="utf-8"?><html xmlns="http://www.w3.org/1999/xhtml"><head><title>t</title></head>'
+              '<body><img src="cover.png" alt="cover"/></body></html>')
+SHOWCASE = 'query Showcase($showcaseParamsInput: ShowcaseParamsInput!, $showcaseItemsCursor: String!, $sectionItemsCursor: String = "" ) { showcase(params: $showcaseParamsInput) { __typename ...fragmentShowcase ...childrenFragmentShowcase ...parentsFragmentShowcase items(cursor: $showcaseItemsCursor) { page { __typename ...featuredSectionFragment ...notificationFragment ...shelvesSectionFragment ...simpleSectionFragment ...statisticsSectionFragment ...topSectionFragment ...seriesSectionFragment ...ratingSectionFragment } cursor } } }  fragment fragmentShowcase on Showcase { name uuid availableFilters }  fragment childrenFragmentShowcase on Showcase { children { __typename ...fragmentShowcase } }  fragment parentsFragmentShowcase on Showcase { parents { __typename ...fragmentShowcase } }  fragment ageRestrictionFragment on Availability { ageRestriction { name value } }  fragment coverFragment on Cover { url ratio backgroundColorHex }  fragment personFragment on Person { avatar { __typename ...coverFragment } name uuid worksCount roles }  fragment bookFragment on Book { annotation name cover { __typename ...coverFragment } uuid initUuid authors { __typename ...personFragment } editorAnnotation }  fragment audioBookFragment on AudioBook { availability { __typename ...ageRestrictionFragment } book { __typename ...bookFragment } }  fragment comicBookFragment on ComicBook { availability { __typename ...ageRestrictionFragment } book { __typename ...bookFragment } }  fragment textBookFragment on TextBook { availability { __typename ...ageRestrictionFragment } book { __typename ...bookFragment } }  fragment textSerialFragment on TextSerial { availability { __typename ...ageRestrictionFragment } book { __typename ...bookFragment } }  fragment notificationFragment on Notification { consumer notificationPayloadId payload templateId feedbackToken }  fragment featuredSectionFragment on FeaturedSection { items(cursor: $sectionItemsCursor) { cursor page { __typename ...audioBookFragment ...comicBookFragment ...textBookFragment ...textSerialFragment ...notificationFragment } } name uuid }  fragment userFragment on User { avatar { __typename ...coverFragment } name uuid followersCount login }  fragment bookshelfFragment on Bookshelf { cover { __typename ...coverFragment } name uuid user { __typename ...userFragment } posts { total } followersCount description }  fragment shelvesSectionFragment on ShelvesSection { items(cursor: $sectionItemsCursor) { cursor page { __typename ...bookshelfFragment } } name uuid }  fragment seriesFragment on Series { authors { __typename ...personFragment } cover { __typename ...coverFragment } name uuid items { followersCount total } }  fragment simpleSectionFragment on SimpleSection { availableFilters items(cursor: $sectionItemsCursor) { cursor page { __typename ...audioBookFragment ...comicBookFragment ...textBookFragment ...textSerialFragment ...seriesFragment } } name uuid }  fragment statisticsSectionFragment on StatisticsSection { daysReadingInMonth updatedAt name uuid }  fragment topSectionFragment on TopSection { items(cursor: $sectionItemsCursor) { cursor page { __typename ...audioBookFragment ...comicBookFragment ...textBookFragment ...textSerialFragment } } name uuid }  fragment seriesSectionFragment on SeriesSection { items(cursor: $sectionItemsCursor) { cursor page { __typename ...seriesFragment } } name uuid }  fragment ratingSectionFragment on RatingSection { items(cursor: $sectionItemsCursor) { cursor page { __typename ...audioBookFragment ...comicBookFragment ...textBookFragment ...textSerialFragment } } name uuid }'
+ROOT_SHOWCASES = 'query RootShowcases($rootShowcaseParamsInput: RootShowcaseParamsInput!) { rootShowcases(params: $rootShowcaseParamsInput) { children { __typename ...fragmentShowcase ...childrenFragmentShowcase ...parentsFragmentShowcase } notification { __typename ...notificationFragment } } }  fragment fragmentShowcase on Showcase { name uuid availableFilters }  fragment childrenFragmentShowcase on Showcase { children { __typename ...fragmentShowcase } }  fragment parentsFragmentShowcase on Showcase { parents { __typename ...fragmentShowcase } }  fragment notificationFragment on Notification { consumer notificationPayloadId payload templateId feedbackToken }'
 PROGRESS_UPDATED = ("mutation ProgressUpdated($textbookProgresses: [TextbookProgressUpdatedInput!], $textSerialProgresses: [TextSerialProgressUpdatedInput!], $audiobookProgresses: [AudiobookProgressUpdatedInput!], $comicbookProgresses: [ComicbookProgressUpdatedInput!]) { progressUpdated(textbookProgresses: $textbookProgresses, textSerialProgresses: $textSerialProgresses, audiobookProgresses: $audiobookProgresses, comicbookProgresses: $comicbookProgresses) { value } }")
 SEARCH = ("query Search($query: SearchParamsInput!) { search(query: $query) { page { __typename ...searchSnippetAudioBookFragment ...searchSnippetTextBookFragment ...searchSnippetComicBookFragment ...searchSnippetTextSerialFragment ...bookshelfFragment ...personFragment ...publisherFragment ...seriesFragment ...topicFragment ...userFragment } cursor rankedFilter { filterType } misspell { correctedText correctionType } } }  fragment coverFragment on Cover { url ratio backgroundColorHex }  fragment personFragment on Person { avatar { __typename ...coverFragment } name uuid worksCount roles }  fragment bookFragment on Book { annotation name cover { __typename ...coverFragment } uuid initUuid authors { __typename ...personFragment } editorAnnotation }  fragment publisherFragment on Publisher { avatar { __typename ...coverFragment } name uuid worksCount }  fragment publisherBookFragment on Book { publisher { __typename ...publisherFragment } }  fragment translatorsBookFragment on Book { translators { __typename ...personFragment } }  fragment topicsBookFragment on Book { topics { name totalBook uuid } }  fragment subscriptionLevelsFragment on Book { subscriptionLevels }  fragment snippetBookFragment on Book { __typename ...bookFragment ...publisherBookFragment ...translatorsBookFragment ...topicsBookFragment ...subscriptionLevelsFragment }  fragment narratorsAudioBookFragment on AudioBook { narrators { __typename ...personFragment } }  fragment progressFragment on Progress { finished inLibrary progress isPublic }  fragment progressAudioBookFragment on AudioBook { progress { __typename ...progressFragment } }  fragment listenersCountAudioBookFragment on AudioBook { listenersCount }  fragment subscriptionsFragment on Availability { subscriptions { types } }  fragment ageRestrictionFragment on Availability { ageRestriction { name value } }  fragment snippetAudioBookFragment on AudioBook { __typename book { __typename ...snippetBookFragment } ...narratorsAudioBookFragment ...progressAudioBookFragment ...listenersCountAudioBookFragment availability { __typename ...subscriptionsFragment ...ageRestrictionFragment } }  fragment bookTagsFragment on Book { tags { name value } }  fragment searchSnippetAudioBookFragment on AudioBook { __typename ...snippetAudioBookFragment book { __typename ...bookTagsFragment } }  fragment progressTextBookFragment on TextBook { progress { __typename ...progressFragment } }  fragment readersCountTextBookFragment on TextBook { readersCount }  fragment snippetTextBookFragment on TextBook { __typename book { __typename ...snippetBookFragment } availability { __typename ...subscriptionsFragment ...ageRestrictionFragment } ...progressTextBookFragment ...readersCountTextBookFragment }  fragment searchSnippetTextBookFragment on TextBook { __typename ...snippetTextBookFragment book { __typename ...bookTagsFragment } }  fragment progressComicBookFragment on ComicBook { progress { __typename ...progressFragment } }  fragment readersCountComicBookFragment on ComicBook { readersCount }  fragment snippetComicBookFragment on ComicBook { __typename book { __typename ...snippetBookFragment } ...progressComicBookFragment ...readersCountComicBookFragment availability { __typename ...subscriptionsFragment ...ageRestrictionFragment } }  fragment searchSnippetComicBookFragment on ComicBook { __typename ...snippetComicBookFragment book { __typename ...bookTagsFragment } }  fragment textSerialFragment on TextSerial { availability { __typename ...ageRestrictionFragment } book { __typename ...bookFragment } }  fragment episodesTextSerialFragment on TextSerial { episodes { total } }  fragment readersCountTextSerialFragment on TextSerial { readersCount }  fragment snippetTextSerialFragment on TextSerial { __typename book { __typename ...snippetBookFragment } availability { __typename ...subscriptionsFragment ...ageRestrictionFragment } ...textSerialFragment ...episodesTextSerialFragment ...readersCountTextSerialFragment }  fragment searchSnippetTextSerialFragment on TextSerial { __typename ...snippetTextSerialFragment book { __typename ...bookTagsFragment } }  fragment userFragment on User { avatar { __typename ...coverFragment } name uuid followersCount login }  fragment bookshelfFragment on Bookshelf { cover { __typename ...coverFragment } name uuid user { __typename ...userFragment } posts { total } followersCount description }  fragment seriesFragment on Series { authors { __typename ...personFragment } cover { __typename ...coverFragment } name uuid items { followersCount total } }  fragment topicFragment on Topic { name slug totalBook uuid parent { name slug totalBook uuid } }")
 FOUND = 60
@@ -272,6 +286,46 @@ class Handler(BaseHTTPRequestHandler):
             "cursor": f"{start // FOUND_PAGE + 1},{end}" if end < FOUND else "",
         }}})
 
+    def showcase(self, variables):
+        asked = variables.get("showcaseParamsInput") or {}
+        if self.server.fail_showcase > 0:
+            self.server.fail_showcase -= 1
+            self.reply(500, b"")
+            return
+        if (asked.get("uuid") != "EKSEfw9w" or asked.get("contentFilter") != []
+                or asked.get("notificationFilters") != [] or asked.get("isSearch") is not False):
+            print("bad Showcase:", variables, flush=True)
+            self.reply_json(200, {"errors": [{"message": "bad input"}], "data": None})
+            return
+
+        def text(i):  # the feed says nothing of the library
+            found = self.found(i)
+            return {"__typename": "TextBook", "availability": found["availability"], "book": found["book"]}
+
+        def section(name, books, kind="SimpleSection"):
+            return {"__typename": kind, "name": name, "items": {"cursor": "20", "page": books}}
+
+        def row(name, start):
+            return section(name, [text(i) for i in range(start, start + 6)])
+
+        audio = [{"__typename": "Audiobook", "availability": {}, "book": {"uuid": f"audio{i}", "name": f"Аудио {i}"}}
+                 for i in range(6)]
+        cursor = variables.get("showcaseItemsCursor")
+        if cursor == "":
+            page = [section("Featured post 1", [text(i) for i in range(30, 36)], "FeaturedSection"),
+                    section("Только послушать", audio), row("Новинки", 5), row("Популярное", 0),
+                    row("Классика", 11), section("Мало книг", [text(20)]), row("Детективы", 21)]
+            following = "20"
+        elif cursor == "20":
+            page = [row("Фантастика", 27), row("Нон-фикшн", 33), row("Поэзия", 39)]
+            following = ""
+        else:
+            print("bad Showcase cursor:", variables, flush=True)
+            self.reply_json(200, {"errors": [{"message": "bad cursor"}], "data": None})
+            return
+        self.reply_json(200, {"data": {"showcase": {"name": "Яндекс Книги", "uuid": asked["uuid"], "children": [],
+                                                    "items": {"page": page, "cursor": following}}}})
+
     def added_card(self, uuid):
         i = int(uuid.replace("found", ""))
         return {"uuid": f"added{i}", "state": "pending", "progress": 0, "cfi": None, "public": True,
@@ -320,6 +374,12 @@ class Handler(BaseHTTPRequestHandler):
         # The real server takes only queries on its whitelist, to the letter.
         if body.get("operationName") == "Search" and body["query"] == SEARCH:
             self.search(body["variables"])
+            return
+        if body.get("operationName") == "Showcase" and body["query"] == SHOWCASE:
+            self.showcase(body["variables"])
+            return
+        if body.get("operationName") == "RootShowcases" and body["query"] == ROOT_SHOWCASES:
+            self.reply_json(200, {"data": {"rootShowcases": {"children": [{"name": "Яндекс Книги", "uuid": "EKSEfw9w"}]}}})
             return
         if body["query"] != PROGRESS_UPDATED:
             self.reply_json(200, {"errors": [{"message": "Whitelist: query not found"}]})
@@ -376,6 +436,9 @@ class Handler(BaseHTTPRequestHandler):
             spine, inner = query["cfi"][0].split("!")
             chapter_number = int(spine.split("/")[-1]) // 2 - 1
             self.reply_json(200, {"text": text_at(big_chapter(f"OEBPS/c{chapter_number}.html"), inner)})
+        elif url.path == "/test/fail_showcase":
+            self.server.fail_showcase = int(query["n"][0])
+            self.reply(200, b"ok")
         elif url.path == "/test/fail_search":
             self.server.fail_search = int(query["n"][0])
             self.reply(200, b"")
@@ -428,7 +491,9 @@ class Handler(BaseHTTPRequestHandler):
         elif "serial" in url.path:
             self.reply(404, b"")
         elif url.path.endswith("/metadata/v4"):
-            if self.server.big:
+            if f"/{COVER_PAGE_BOOK}/" in url.path:
+                self.reply_json(200, {"document_uuid": "d1", "opf": encrypted(COVER_PAGE_OPF), "container": encrypted(CONTAINER)})
+            elif self.server.big:
                 self.reply_json(200, {"document_uuid": "d1", "opf": encrypted(BIG_OPF),
                                       "container": encrypted(BIG_CONTAINER), "ncx": encrypted(BIG_NCX)})
             else:
@@ -437,7 +502,14 @@ class Handler(BaseHTTPRequestHandler):
             self.reply_json(200, {"secret": base64.b64encode(KEY).decode()})
         elif url.path.endswith("/content"):
             path = query["path"][0]
-            if not self.server.big:
+            if f"/{COVER_PAGE_BOOK}/" in url.path:
+                if path.endswith(".png"):
+                    self.reply(200, cover_png(5))
+                elif path.endswith("title.xhtml"):
+                    self.reply(200, COVER_PAGE.encode())
+                else:
+                    self.reply(200, chapter(path).encode())
+            elif not self.server.big:
                 self.reply(200, chapter(path).encode())
             elif path.endswith(".css"):
                 self.reply(200, b"p { margin: 0; }")
@@ -458,6 +530,7 @@ if __name__ == "__main__":
     server.fail_writes = 0
     server.added = []
     server.fail_search = 0
+    server.fail_showcase = 0
     server.fail_card = 0
     server.chapter_delay = CHAPTER_DELAY
     server.big = len(sys.argv) > 2 and sys.argv[2] == "koreader"
