@@ -1,0 +1,24 @@
+name: ko-bench
+on:
+  push:
+    paths: ['tools/ko-bench/**', '.github/workflows/ko-bench.yml']
+  workflow_dispatch:
+jobs:
+  crengine:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch KOReader
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download v2026.07.1 -R koreader/koreader -p 'koreader-linux-x86_64-v2026.07.1.tar.xz' -O ko.tar.xz
+          mkdir ko && tar xf ko.tar.xz -C ko
+          find ko -maxdepth 3 -name luajit
+      - name: Run
+        run: |
+          python3 tools/ko-bench/gen_epub.py "$PWD/books"
+          ls -la books
+          cd "$(dirname "$(find "$GITHUB_WORKSPACE/ko" -maxdepth 3 -name luajit | head -1)")"
+          ./luajit "$GITHUB_WORKSPACE/tools/ko-bench/bench.lua" "$GITHUB_WORKSPACE/books" /tmp/cr3cache
