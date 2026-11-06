@@ -126,7 +126,7 @@ function TextPanel:build()
     rows[#rows + 1] = Kit.gap(Kit.px(14))
 
     local half = math.floor((inner - Kit.px(16)) / 2)
-    self.spacing = Kit.segments({ "Плотно", "Обычно", "Свободно" }, nearest(self.LINE_SPACING, config.line_spacing), half,
+    self.spacing = Kit.segments({ "Плотный", "Обычный", "Широкий" }, nearest(self.LINE_SPACING, config.line_spacing), half,
         function(i) self:setLineSpacing(self.LINE_SPACING[i]) end)
     local margin = config.h_page_margins and config.h_page_margins[1] or 20
     self.margins = Kit.segments({ "Узкие", "Обычные", "Широкие" }, nearest(self.MARGINS, margin), half,

@@ -33,6 +33,10 @@ function Shell:install()
 
     local shell = self
     ui.view.footer.getBookProgress = function() return shell:progress() end
+    -- KOReader puts a symbol before the number, whichever prefix style is chosen.
+    ui.view.footer.genFooterText = function()
+        return ("%d%%"):format(math.floor(shell:progress() * 100 + 0.5))
+    end
     for _, id in ipairs(HIGHLIGHT_BUTTONS_REMOVED) do
         ui.highlight:removeFromHighlightDialog(id)
     end
