@@ -24,7 +24,6 @@ local Kit = {}
 
 function Kit.px(n) return Screen:scaleBySize(n) end
 -- Corners of what lies on the page and of what holds a picture.
-function Kit.sheet_radius() return Kit.px(16) end
 function Kit.cover_radius() return Kit.px(6) end
 function Kit.face(size) return Font:getFace("cfont", size) end
 
@@ -72,7 +71,7 @@ local function corner_inset(radius, row)
     return radius - math.floor(math.sqrt(radius * radius - dy * dy) + 0.5)
 end
 
--- A panel lying over the page, its free edge rounded and the page showing past the corners.
+-- A panel lying over the page, square, with a thin line along its free edge.
 -- edge: "top" or "bottom", the side of the screen it stands at.
 local Sheet = WidgetContainer:extend{ width = nil, edge = "bottom" }
 
@@ -86,25 +85,10 @@ end
 
 function Sheet:paintTo(bb, x, y)
     self.dimen.x, self.dimen.y = x, y
-    local w, h, r = self.dimen.w, self.dimen.h, Kit.sheet_radius()
-    local at_bottom = self.edge == "bottom"
-    local white, ink = Blitbuffer.COLOR_WHITE, Blitbuffer.COLOR_DARK_GRAY
-    bb:paintRect(x, at_bottom and y + r or y, w, h - r, white)
+    local w, h = self.dimen.w, self.dimen.h
     local line = Kit.px(1)
-    local before = r
-    for i = 0, r - 1 do
-        local row = at_bottom and y + i or y + h - 1 - i
-        local inset = corner_inset(r, i)
-        bb:paintRect(x + inset, row, w - 2 * inset, 1, white)
-        if i < line then
-            bb:paintRect(x + inset, row, w - 2 * inset, 1, ink)
-        else
-            local run = math.max(1, before - inset) + line - 1
-            bb:paintRect(x + inset, row, run, 1, ink)
-            bb:paintRect(x + w - inset - run, row, run, 1, ink)
-        end
-        before = inset
-    end
+    bb:paintRect(x, y, w, h, Blitbuffer.COLOR_WHITE)
+    bb:paintRect(x, self.edge == "bottom" and y or y + h - line, w, line, Blitbuffer.COLOR_DARK_GRAY)
     self[1]:paintTo(bb, x, y)
 end
 
