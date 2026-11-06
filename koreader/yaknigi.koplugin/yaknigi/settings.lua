@@ -253,7 +253,8 @@ end
 
 function Settings:build()
     local W = self.dimen.w
-    local bar_h = Kit.px(BAR_H)
+    -- As a tab it stands in line with the library's header.
+    local bar_h = Kit.px(self.on_tab and 60 or BAR_H)
     local choice = self.choice
     local title = choice and choice.title or "Настройки"
     local top_tab = self.on_tab and not choice
