@@ -14,6 +14,34 @@ env:
   TC_SHA256: d08d3a5cbbaa184cc0cc2279df1d64a71656ab2c1e0223cae324b8d30c8d73e0
 
 jobs:
+  host-sanitizers:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y meson ninja-build pkg-config libcurl4-openssl-dev libcjson-dev \
+            zlib1g-dev libfreetype-dev libssl-dev fonts-dejavu-core python3-opencv
+
+      - name: Build with AddressSanitizer and UBSan
+        run: |
+          meson setup build-san -Db_sanitize=address,undefined -Db_lundef=false
+          ninja -C build-san
+
+      - name: Run the tests
+        env:
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+          YB_TEST_FONT: /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
+        run: meson test -C build-san --print-errorlogs
+
+      - name: Run the app against the mock server
+        env:
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: python3 tools/mock/sim_test.py build-san/yb-sim /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
+
   kindlehf:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -54,7 +82,7 @@ jobs:
 
       - name: Check the binaries link only to glibc
         run: |
-          for b in yb-probe yb-smoke; do
+          for b in yb-app yb-probe yb-smoke; do
             needed=$("$TC-readelf" -d "build-kindle/$b" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p')
             echo "$b needs:" $needed
             echo "$b newest glibc symbol:" $("$TC-readelf" -V "build-kindle/$b" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1)
@@ -77,19 +105,20 @@ jobs:
 
       - name: Package the KUAL extension
         run: |
-          ext=package/extensions/yaknigi-probe
+          ext=package/extensions/yaknigi
           mkdir -p "$ext"
-          cp kual/yaknigi-probe/* "$ext/"
+          cp kual/yaknigi/* "$ext/"
+          "$TC-strip" -o "$ext/yb-app" build-kindle/yb-app
           "$TC-strip" -o "$ext/yb-probe" build-kindle/yb-probe
-          "$TC-strip" -o "$ext/yb-smoke" build-kindle/yb-smoke
           curl -fsSL --retry 3 -o "$ext/cacert.pem" https://curl.se/ca/cacert.pem
           cp /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf "$ext/"
+          cp /usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf "$ext/"
           cp /usr/share/doc/fonts-dejavu-core/copyright "$ext/DejaVu-LICENSE.txt"
           cp LICENSE "$ext/"
           ls -l "$ext"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: yaknigi-probe-kindlehf
+          name: yaknigi-kindlehf
           path: package
           if-no-files-found: error

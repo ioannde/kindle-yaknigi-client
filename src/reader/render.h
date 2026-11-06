@@ -27,4 +27,16 @@ typedef struct {
 yb_pos yb_render_page(yb_font *font, yb_canvas *c, const yb_document *doc,
                       yb_pos start, int *done);
 
+/* Same, for a page of w x h pixels with `reserve_bottom` pixels kept free for a
+ * footer. With c == NULL only the layout runs, which is how pages get counted. */
+yb_pos yb_render_page_ex(yb_font *font, yb_canvas *c, int w, int h,
+                         const yb_document *doc, yb_pos start,
+                         int reserve_bottom, int *done);
+
+/* Interface text. */
+int  yb_font_line_height(const yb_font *f);
+int  yb_font_ascender(const yb_font *f);
+int  yb_font_text_width(yb_font *f, const char *text);
+void yb_font_draw_text(yb_font *f, yb_canvas *c, int x, int baseline, const char *text);
+
 #endif /* YB_READER_RENDER_H */

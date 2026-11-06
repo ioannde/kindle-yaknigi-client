@@ -21,6 +21,9 @@ struct yb_touch {
     int fd;
     int max_x, max_y;
     int x, y;
+    int start_x, start_y;
+    int need_start_x, need_start_y;
+    int slot;
     int down;
 };
 
@@ -99,40 +102,91 @@ static long now_ms(void) {
     return (long)ts.tv_sec * 1000L + ts.tv_nsec / 1000000L;
 }
 
-int yb_touch_wait_tap(yb_touch *t, int timeout_ms, int *x, int *y) {
-    long deadline = now_ms() + timeout_ms;
+void yb_touch_set_grab(yb_touch *t, int grabbed) {
+    if (ioctl(t->fd, EVIOCGRAB, grabbed ? 1 : 0) != 0)
+        YB_WARN("input: grab change failed: %s", strerror(errno));
+    t->down = 0;
+    t->slot = 0;
+}
+
+static yb_touch_result lifted_gesture(const yb_touch *t) {
+    int dx = t->x - t->start_x;
+    int dy = t->y - t->start_y;
+    int min_swipe = t->max_x / 8;
+    if (abs(dx) >= min_swipe && abs(dx) > abs(dy))
+        return dx < 0 ? YB_TOUCH_SWIPE_LEFT : YB_TOUCH_SWIPE_RIGHT;
+    return YB_TOUCH_TAP;
+}
+
+yb_touch_result yb_touch_wait(yb_touch *t, int extra_fd, int timeout_ms, int *x, int *y) {
+    long deadline = timeout_ms < 0 ? 0 : now_ms() + timeout_ms;
     for (;;) {
         struct input_event ev;
         ssize_t n = read(t->fd, &ev, sizeof(ev));
         if (n == (ssize_t)sizeof(ev)) {
             int lifted = 0;
             if (ev.type == EV_ABS) {
-                if (ev.code == ABS_MT_POSITION_X || ev.code == ABS_X) t->x = ev.value;
-                else if (ev.code == ABS_MT_POSITION_Y || ev.code == ABS_Y) t->y = ev.value;
-                else if (ev.code == ABS_MT_TRACKING_ID) {
-                    if (ev.value >= 0) t->down = 1;
-                    else lifted = t->down;
+                if (ev.code == ABS_MT_SLOT) {
+                    t->slot = ev.value;
+                } else if (t->slot != 0) {
+                    /* Only the first finger counts. */
+                } else if (ev.code == ABS_MT_POSITION_X || ev.code == ABS_X) {
+                    t->x = ev.value;
+                    if (t->need_start_x) { t->start_x = ev.value; t->need_start_x = 0; }
+                } else if (ev.code == ABS_MT_POSITION_Y || ev.code == ABS_Y) {
+                    t->y = ev.value;
+                    if (t->need_start_y) { t->start_y = ev.value; t->need_start_y = 0; }
+                } else if (ev.code == ABS_MT_TRACKING_ID) {
+                    if (ev.value >= 0) {
+                        t->down = 1;
+                        t->need_start_x = t->need_start_y = 1;
+                    } else {
+                        lifted = t->down;
+                    }
                 }
             } else if (ev.type == EV_KEY && ev.code == BTN_TOUCH) {
-                if (ev.value) t->down = 1;
-                else lifted = t->down;
+                if (ev.value) {
+                    if (!t->down) t->need_start_x = t->need_start_y = 1;
+                    t->down = 1;
+                } else {
+                    lifted = t->down;
+                }
             }
             if (lifted) {
                 t->down = 0;
+                /* A touch whose coordinates did not change reports none. */
+                if (t->need_start_x) t->start_x = t->x;
+                if (t->need_start_y) t->start_y = t->y;
+                t->need_start_x = t->need_start_y = 0;
                 *x = t->x;
                 *y = t->y;
-                return 1;
+                return lifted_gesture(t);
             }
             continue;
         }
         if (n < 0 && errno != EAGAIN && errno != EINTR) {
             YB_ERR("input: read failed: %s", strerror(errno));
-            return -1;
+            return YB_TOUCH_ERROR;
         }
 
-        long left = deadline - now_ms();
-        if (left <= 0) return 0;
-        struct pollfd p = { .fd = t->fd, .events = POLLIN };
-        if (poll(&p, 1, (int)left) < 0 && errno != EINTR) return -1;
+        int wait_ms = -1;
+        if (timeout_ms >= 0) {
+            long left = deadline - now_ms();
+            if (left <= 0) return YB_TOUCH_TIMEOUT;
+            wait_ms = (int)left;
+        }
+        struct pollfd p[2] = {
+            { .fd = t->fd, .events = POLLIN },
+            { .fd = extra_fd, .events = POLLIN }, /* poll ignores a negative fd */
+        };
+        if (poll(p, 2, wait_ms) < 0 && errno != EINTR) return YB_TOUCH_ERROR;
+        if (p[1].revents) return YB_TOUCH_OTHER_FD;
     }
+}
+
+int yb_touch_wait_tap(yb_touch *t, int timeout_ms, int *x, int *y) {
+    yb_touch_result r = yb_touch_wait(t, -1, timeout_ms, x, y);
+    if (r == YB_TOUCH_TIMEOUT) return 0;
+    if (r == YB_TOUCH_ERROR) return -1;
+    return 1;
 }

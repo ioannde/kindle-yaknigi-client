@@ -1,7 +1,7 @@
 #!/bin/sh
 # Device check. Writes probe.log next to this script and then returns to the
 # Kindle home screen. Runs from /tmp, because /mnt/us may not allow execution.
-DIR=/mnt/us/extensions/yaknigi-probe
+DIR=/mnt/us/extensions/yaknigi
 LOG="$DIR/probe.log"
 
 # KUAL closes first and redraws the screen, so let it finish.

@@ -1,0 +1,18 @@
+{
+  "items": [
+    {
+      "name": "Яндекс Книги",
+      "priority": 0,
+      "action": "/bin/sh",
+      "params": "/mnt/us/extensions/yaknigi/run.sh",
+      "exitmenu": true
+    },
+    {
+      "name": "Яндекс Книги: проверка устройства",
+      "priority": 1,
+      "action": "/bin/sh",
+      "params": "/mnt/us/extensions/yaknigi/probe.sh",
+      "exitmenu": true
+    }
+  ]
+}

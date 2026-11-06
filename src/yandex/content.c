@@ -154,6 +154,11 @@ static int load_manifest(const char *token, const char *book_uuid,
 }
 
 int yb_content_load_book(const char *token, const char *book_uuid, yb_document *out) {
+    return yb_content_load_book_ex(token, book_uuid, out, NULL, NULL);
+}
+
+int yb_content_load_book_ex(const char *token, const char *book_uuid, yb_document *out,
+                            yb_content_progress_fn progress, void *ctx) {
     yb_document_init(out);
     if (!book_uuid || !*book_uuid) return -1;
 
@@ -196,6 +201,7 @@ int yb_content_load_book(const char *token, const char *book_uuid, yb_document *
             yb_html_to_blocks(html, out);
             chapters++;
             free(html);
+            if (progress) progress(ctx, i + 1, nhrefs);
         } else {
             YB_ERR("content: chapter %zu/%zu failed: %s", i + 1, nhrefs, hrefs[i]);
             free(html);

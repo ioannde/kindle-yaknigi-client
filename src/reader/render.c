@@ -9,12 +9,18 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define YB_ADVANCE_CACHE 1024
+
 struct yb_font {
     FT_Library lib;
     FT_Face    face;
     int        px;
     int        line_height;
     int        ascender;
+    /* Layout measures the same characters over and over, and asking FreeType
+     * each time makes counting a book's pages far too slow on the device. */
+    unsigned   cached_cp[YB_ADVANCE_CACHE];
+    short      cached_adv[YB_ADVANCE_CACHE];
 };
 
 yb_font *yb_font_load(const char *path, int px_size) {
@@ -58,17 +64,25 @@ static unsigned utf8_next(const char **p, const char *end) {
     return cp;
 }
 
+static int advance_of(yb_font *f, unsigned cp) {
+    /* Slot 0 starts out zeroed, so code point 0 is never treated as cached. */
+    unsigned slot = cp % YB_ADVANCE_CACHE;
+    if (cp && f->cached_cp[slot] == cp) return f->cached_adv[slot];
+    int adv = 0;
+    if (FT_Load_Char(f->face, cp, FT_LOAD_DEFAULT) == 0)
+        adv = (int)(f->face->glyph->advance.x >> 6);
+    f->cached_cp[slot] = cp;
+    f->cached_adv[slot] = (short)adv;
+    return adv;
+}
+
 /* measure callback for the wrapper */
 static int measure_cb(void *ctx, const char *text, size_t len) {
     yb_font *f = ctx;
     const char *p = text;
     const char *end = text + len;
     int w = 0;
-    while (p < end) {
-        unsigned cp = utf8_next(&p, end);
-        if (FT_Load_Char(f->face, cp, FT_LOAD_DEFAULT) == 0)
-            w += (int)(f->face->glyph->advance.x >> 6);
-    }
+    while (p < end) w += advance_of(f, utf8_next(&p, end));
     return w;
 }
 
@@ -95,15 +109,32 @@ static void draw_line(yb_font *f, yb_canvas *c, int x, int baseline,
     }
 }
 
+int yb_font_line_height(const yb_font *f) { return f->line_height; }
+int yb_font_ascender(const yb_font *f) { return f->ascender; }
+
+int yb_font_text_width(yb_font *f, const char *text) {
+    return measure_cb(f, text, strlen(text));
+}
+
+void yb_font_draw_text(yb_font *f, yb_canvas *c, int x, int baseline, const char *text) {
+    draw_line(f, c, x, baseline, text, strlen(text));
+}
+
 yb_pos yb_render_page(yb_font *font, yb_canvas *c, const yb_document *doc,
                       yb_pos start, int *done) {
+    return yb_render_page_ex(font, c, c->w, c->h, doc, start, 0, done);
+}
+
+yb_pos yb_render_page_ex(yb_font *font, yb_canvas *c, int w, int h,
+                         const yb_document *doc, yb_pos start,
+                         int reserve_bottom, int *done) {
     if (done) *done = 0;
-    yb_canvas_clear(c, 0xFF);
+    if (c) yb_canvas_clear(c, 0xFF);
 
     int margin = font->px;                 /* ~1em margins */
-    int max_w = c->w - 2 * margin;
+    int max_w = w - 2 * margin;
     int x0 = margin;
-    int y_limit = c->h - margin;
+    int y_limit = h - margin - reserve_bottom;
     int top = margin;
     int drew = 0;
 
@@ -129,7 +160,7 @@ yb_pos yb_render_page(yb_font *font, yb_canvas *c, const yb_document *doc,
                 return (yb_pos){ b, resume_off };
             }
             int baseline = top + font->ascender;
-            draw_line(font, c, x0, baseline, blk->text + lines[li].off, lines[li].len);
+            if (c) draw_line(font, c, x0, baseline, blk->text + lines[li].off, lines[li].len);
             drew = 1;
             top += font->line_height;
         }

@@ -47,4 +47,30 @@ yb_auth_status yb_auth_poll_token(const char *client_id,
  * 0 if rejected, -1 on transport error. */
 int yb_auth_test_token(const char *token);
 
+/* Authorization code login with PKCE. This is what the distributed client
+ * uses: unlike the device flow above, whose /token step demands a client
+ * secret, it needs no secret, so none has to ship in the binary.
+ *
+ * The user opens the URL on a phone, signs in, and types the code Yandex shows
+ * into the Kindle. */
+#define YB_PKCE_VERIFIER_LEN 64
+
+/* RFC 7636 S256: base64url(SHA-256(verifier)), no padding. `challenge` holds
+ * at least 44 bytes. Returns 0 on success. */
+int yb_pkce_challenge(const char *verifier, char *challenge);
+
+/* Fills `verifier` (YB_PKCE_VERIFIER_LEN + 1 bytes) with random characters.
+ * Returns 0 on success. */
+int yb_pkce_new_verifier(char *verifier);
+
+/* Returns the malloc'd sign-in URL. */
+char *yb_auth_pkce_url(const char *client_id, const char *challenge);
+
+/* Exchanges the typed code. YB_AUTH_OK sets *token_out and, when the server
+ * sent one, *refresh_out (both malloc'd). YB_AUTH_DENIED means the code was not
+ * accepted, YB_AUTH_ERROR means the request itself failed. */
+yb_auth_status yb_auth_exchange_code(const char *client_id, const char *code,
+                                     const char *verifier,
+                                     char **token_out, char **refresh_out);
+
 #endif /* YB_YANDEX_AUTH_H */

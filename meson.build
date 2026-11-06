@@ -46,7 +46,11 @@ core_sources = files(
   'src/reader/document.c',
   'src/reader/layout.c',
   'src/reader/render.c',
+  'src/reader/pages.c',
   'src/platform/display.c',
+  'src/storage/book_cache.c',
+  'src/app/app.c',
+  'src/third_party/qrcodegen.c',
 )
 
 yb_deps = [libcurl_dep, cjson_dep, zlib_dep, freetype_dep, crypto_dep, libm_dep]
@@ -75,10 +79,23 @@ executable('yb-render', 'src/tools/render.c',
   install : false,
 )
 
+# sim: runs the whole app on the host with scripted input, saving each screen.
+executable('yb-sim', 'src/tools/sim.c',
+  dependencies : yb_dep,
+  install : false,
+)
+
 # probe: first on-device check of the screen, touch input and HTTPS.
 if get_option('kindle')
   executable('yb-probe',
     'src/tools/probe.c',
+    'src/platform/display_fbink.c',
+    'src/platform/input_evdev.c',
+    dependencies : [yb_dep, dependency('fbink')],
+    install : false,
+  )
+  executable('yb-app',
+    'src/app/main_kindle.c',
     'src/platform/display_fbink.c',
     'src/platform/input_evdev.c',
     dependencies : [yb_dep, dependency('fbink')],
@@ -89,7 +106,7 @@ endif
 # --- tests ------------------------------------------------------------------
 test_inc = include_directories('src', 'tests')
 
-foreach t : ['test_buf', 'test_url', 'test_models', 'test_zip', 'test_layout', 'test_base64', 'test_opf', 'test_crypto', 'test_epub']
+foreach t : ['test_buf', 'test_url', 'test_models', 'test_zip', 'test_layout', 'test_base64', 'test_opf', 'test_crypto', 'test_epub', 'test_pkce', 'test_pages', 'test_book_cache']
   exe = executable(t, 'tests/' + t + '.c',
     include_directories : test_inc,
     dependencies : yb_dep,

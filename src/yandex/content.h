@@ -18,4 +18,9 @@
  * Uses only the user's own legal access (their token). */
 int yb_content_load_book(const char *token, const char *book_uuid, yb_document *out);
 
+/* Same, calling `progress` after each chapter. */
+typedef void (*yb_content_progress_fn)(void *ctx, size_t done, size_t total);
+int yb_content_load_book_ex(const char *token, const char *book_uuid, yb_document *out,
+                            yb_content_progress_fn progress, void *ctx);
+
 #endif /* YB_YANDEX_CONTENT_H */
