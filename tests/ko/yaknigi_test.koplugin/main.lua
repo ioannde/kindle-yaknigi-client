@@ -542,7 +542,7 @@ local function test_reading_screen()
     local said_title = false
     for _, text in ipairs(said) do
         if text:find("epub", 1, true) or text:find("Opening", 1, true) then fail("opening says: " .. text) end
-        said_title = said_title or text:find("Открываю Книга номер 0", 1, true) ~= nil
+        said_title = said_title or text:find("Открываю «Книга номер 0»", 1, true) ~= nil
     end
     if not said_title then fail("opening does not name the book") end
     reader().rolling:onGotoXPointer("/body/DocFragment[31]")
@@ -675,6 +675,56 @@ local function test_reading_screen()
         UIManager.refresh_counted = counted
         if mode ~= "partial" then fail("the clock's refresh is " .. tostring(mode)) end
         if region.w > W / 4 then fail("the clock flashes " .. region.w .. " wide") end
+    end
+
+    -- Links: a note opens over the page and a tap closes it; a link leading to another page
+    -- offers the way back, until the reader has read on from there.
+    do
+        local start = reader().document:getCurrentPage()
+        local doc = reader().document
+        local note, far
+        for fragment = 4, 8 do
+            reader().rolling:onGotoXPointer("/body/DocFragment[" .. fragment .. "]")
+            UIManager:forceRePaint()
+            for _, link in ipairs(doc:getPageLinks() or {}) do
+                if link.section and link.section:find("n5", 1, true) then note = link
+                elseif link.section then far = link end
+            end
+            if note then break end
+        end
+        if not note or not far then fail("the mock's links are not on the page") end
+        local function tap_link(link)
+            tap_at((link.start_x + link.end_x) / 2, (link.start_y + link.end_y) / 2)
+        end
+        local page = doc:getCurrentPage()
+        local shell = reader().yaknigi.shell
+        tap_link(note)
+        wait("the note", function() return top().html ~= nil end)
+        if not top().html:find("Текст сноски", 1, true) then fail("the wrong note: " .. top().html:sub(1, 80)) end
+        UIManager:forceRePaint()
+        shot("19-footnote")
+        tap_at(W / 2, H / 4)
+        wait("the note to close", is_named("ReaderUI"), 5)
+        if doc:getCurrentPage() ~= page then fail("the note has moved the page") end
+
+        tap_link(far)
+        wait("the link", function() return doc:getCurrentPage() ~= page end)
+        UIManager:forceRePaint()
+        if not shell:linkBackShown() then fail("no way back from a link") end
+        shot("19-link-back")
+        local box = shell.link_back_box
+        tap_at(box.x + box.w / 2, box.y + box.h / 2)
+        wait("the way back", function() return doc:getCurrentPage() == page end)
+        UIManager:forceRePaint()
+        if shell:linkBackShown() then fail("the way back is still offered") end
+
+        tap_link(far)
+        wait("the link again", function() return doc:getCurrentPage() ~= page end)
+        reader():handleEvent(Event:new("GotoPage", doc:getCurrentPage() + 5))
+        UIManager:forceRePaint()
+        if shell:linkBackShown() then fail("the way back is offered long after") end
+        reader():handleEvent(Event:new("GotoPage", start))
+        UIManager:forceRePaint()
     end
 
     -- The table of contents: ours, opened where the reader is, and it goes where it is told.

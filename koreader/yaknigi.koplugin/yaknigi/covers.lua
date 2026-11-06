@@ -6,6 +6,9 @@ local Net = require("yaknigi/net")
 
 pcall(ffi.cdef, "int nice(int);")
 
+local logger = require("logger")
+local socket = require("socket")
+
 local Covers = {}
 
 -- KOReader recognises an image by its file name, so the name has to match the content.
@@ -27,13 +30,16 @@ local function readable(path)
     return f ~= nil
 end
 
--- A library's picture: sharp at the size of a cell, and a fifth of the weight of the big
--- one. What the screen shows on its way to sleep is fetched by itself, on opening a book.
+-- A library's picture: 300 pixels wide is more than a cell has, at a third of the weight of
+-- the next size. What the screen shows on its way to sleep is fetched by itself, on opening a book.
 local PREVIEW = ".preview"
+-- Most of a picture's time is waiting for the server, so two go at more than twice the speed
+-- of what a screen asks for. More would spend the device's one core on the TLS handshakes.
+local WORKERS = 2
 
 --- The same picture at the other size Yandex keeps it in; a url without one stays as it is.
 local function preview_url(url)
-    return (url:gsub("%-%a+(%.%w+%??[^/]*)$", "-large%1"))
+    return (url:gsub("%-%a+(%.%w+%??[^/]*)$", "-small%1"))
 end
 
 local function find_preview(base)
@@ -113,19 +119,10 @@ function Covers.fetch_best(root, uuid, urls)
     end)
 end
 
---- Downloads what is missing. The covers' host gets no token. Returns the pid, or nil
--- when there is nothing to do.
-function Covers.fetch(root, cards)
-    local wanted = {}
-    for _, card in ipairs(cards) do
-        local base, urls = base_path(root, card), cover_urls(card)
-        if base and #urls > 0 and not find_preview(base) then
-            wanted[#wanted + 1] = { base = base, urls = urls }
-        end
-    end
-    if #wanted == 0 then return nil end
+local function download(wanted)
     return ffiutil.runInSubProcess(function()
         pcall(function() ffi.C.nice(10) end)
+        local started = socket.gettime()
         local http = Http.new(Net.connect)
         for _, item in ipairs(wanted) do
             for _, url in ipairs(item.urls) do
@@ -146,8 +143,45 @@ function Covers.fetch(root, cards)
             end
         end
         http:close()
+        logger.info("yaknigi: covers:", #wanted, "in", socket.gettime() - started, "s")
         os.exit(0)
     end)
+end
+
+--- Downloads what is missing, in the order asked. The covers' host gets no token. Returns
+-- the pids; empty when there is nothing to do.
+function Covers.fetch(root, cards)
+    local shares = {}
+    local count = 0
+    for _, card in ipairs(cards) do
+        local base, urls = base_path(root, card), cover_urls(card)
+        if base and #urls > 0 and not find_preview(base) then
+            local share = count % WORKERS + 1
+            shares[share] = shares[share] or {}
+            table.insert(shares[share], { base = base, urls = urls })
+            count = count + 1
+        end
+    end
+    local pids = {}
+    for _, wanted in ipairs(shares) do
+        pids[#pids + 1] = download(wanted)
+    end
+    return pids
+end
+
+--- True when none of the pids is running. Asking is also what ends a finished process.
+function Covers.done(pids)
+    local done = true
+    for _, pid in ipairs(pids) do
+        if not ffiutil.isSubProcessDone(pid) then done = false end
+    end
+    return done
+end
+
+--- Stops the pids. Returns those to ask about until they are gone.
+function Covers.stop(pids)
+    for _, pid in ipairs(pids) do ffiutil.terminateSubProcess(pid) end
+    return pids
 end
 
 return Covers

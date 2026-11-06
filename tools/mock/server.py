@@ -113,6 +113,12 @@ def big_chapter(path):
                     f" хвост {i} {PARAGRAPH} &amp; {PARAGRAPH}</p>\n<!-- a > b --><br/>")
         return f"<p>{start} {PARAGRAPH * 4}</p>\n"
     paragraphs = "".join(paragraph(i) for i in range(30))
+    if number == 5:
+        # A note on the page and a link to another chapter, as there are in real books.
+        paragraphs = ('<p>Текст со сноской<a id="r5" href="#n5" role="doc-noteref">[1]</a> '
+                      'и <a id="x5" href="c8.html">переход в другую главу</a>.</p>\n'
+                      + paragraphs
+                      + '<aside id="n5" role="doc-footnote"><p>Текст сноски.</p></aside>\n')
     return (
         '<?xml version="1.0" encoding="utf-8"?><html xmlns="http://www.w3.org/1999/xhtml">'
         f'<head><title>Глава {number}</title><link rel="stylesheet" href="s.css"/></head>'

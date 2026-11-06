@@ -156,6 +156,11 @@ function Prefs.init()
     if G_reader_settings:hasNot("swipe_animations") then
         G_reader_settings:saveSetting("swipe_animations", true)
     end
+    -- A note opens over the page and a tap closes it, as there is no back button to return with.
+    if G_reader_settings:hasNot("footnote_link_in_popup") then
+        G_reader_settings:saveSetting("footnote_link_in_popup", true)
+        G_reader_settings:saveSetting("link_prefer_footnote", true)
+    end
     -- Not in settings.reader.lua: a change there would replace everything the reader has chosen.
     G_reader_settings:saveSetting("copt_t_page_margin", Prefs.PAGE_TOP_MARGIN)
     Prefs.apply_sleep_screen()

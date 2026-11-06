@@ -786,6 +786,12 @@ function Library:turn(delta)
     self:build()
     UIManager:setDirty(self, "partial")
     self:askForMore()
+    -- This page's covers before those of the pages not being looked at.
+    local missing = {}
+    for _, item in ipairs(self.rows or {}) do
+        if item.card and not item.cover then missing[#missing + 1] = item.card end
+    end
+    if #missing > 0 then self.on_covers(missing) end
 end
 
 function Library:onSwipe(_, ges)

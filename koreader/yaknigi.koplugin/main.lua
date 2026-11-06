@@ -50,6 +50,7 @@ os.execute("mkdir -p '" .. BOOKS .. "' '" .. COVERS .. "'")
 -- The app mode shows the library instead of the file manager, and leaves with it.
 local APP_MODE = os.getenv("YAKNIGI_APP") == "1"
 local POLL_SECONDS = 2
+local COVER_POLL_SECONDS = 1
 -- Wi-Fi takes a while to come back after sleep. Pauses between tries to reach Yandex.
 local WAKE_RETRY_SECONDS = { 5, 15, 30 }
 -- Which screen of the library was open, for coming back to it from a book.
@@ -119,7 +120,7 @@ end
 
 local function opening_text(card)
     local title = card and card.book and card.book.title
-    return title and title ~= "" and ("Открываю " .. title) or "Открываю…"
+    return title and title ~= "" and ("Открываю «" .. title .. "»") or "Открываю…"
 end
 
 -- What the reader says while the book is opened: the title, where KOReader says the file's path.
@@ -305,22 +306,37 @@ end
 
 function Yaknigi:fetchCovers(cards)
     if not NetworkMgr:isOnline() then return end
-    if self.covers_pid and not ffiutil.isSubProcessDone(self.covers_pid) then
-        -- One at a time. What was asked for meanwhile goes next.
-        self.covers_waiting = self.covers_waiting or {}
-        for _, card in ipairs(cards) do table.insert(self.covers_waiting, card) end
-        return
+    -- What was asked last is what is being looked at: it goes first, and all that was under
+    -- way starts again behind it. A library's covers must not hold up a search's.
+    local queue, seen = {}, {}
+    for _, list in ipairs { cards, self.covers_queue or {} } do
+        for _, card in ipairs(list) do
+            local id = card.book and card.book.uuid
+            if id and not seen[id] then
+                seen[id] = true
+                queue[#queue + 1] = card
+            end
+        end
     end
-    self.covers_pid = Covers.fetch(COVERS, cards)
-    if self.covers_pid then self:scheduleCoverPoll(cards) end
+    self.covers_queue = queue
+    if self.covers_pids then self:reapCovers(Covers.stop(self.covers_pids)) end
+    self.covers_pids = Covers.fetch(COVERS, queue)
+    if #self.covers_pids > 0 then self:scheduleCoverPoll(self.covers_pids) end
+end
+
+--- A stopped process stays until it has been asked about.
+function Yaknigi:reapCovers(pids)
+    if Covers.done(pids) then return end
+    UIManager:scheduleIn(COVER_POLL_SECONDS, function() self:reapCovers(pids) end)
 end
 
 -- Shows covers as they arrive, without touching the screen when none did.
-function Yaknigi:scheduleCoverPoll(cards)
-    UIManager:scheduleIn(POLL_SECONDS, function()
-        if not self.library then return end
+function Yaknigi:scheduleCoverPoll(pids)
+    UIManager:scheduleIn(COVER_POLL_SECONDS, function()
+        -- Others have taken over from these.
+        if pids ~= self.covers_pids or not self.library then return end
         local library = self.library
-        local done = ffiutil.isSubProcessDone(self.covers_pid)
+        local done = Covers.done(pids)
         local view = library.view
         local apart = view == "catalogue" or view == "feed" or view == "feed_section"
         -- Only what is on the screen is worth redrawing it.
@@ -345,12 +361,10 @@ function Yaknigi:scheduleCoverPoll(cards)
             for _, item in ipairs(Feed.items(library.feed)) do look(item, shown[item]) end
         end
         if changed then library:refreshScreen() end
-        if not done then
-            self:scheduleCoverPoll(cards)
-        elseif self.covers_waiting then
-            local waiting = self.covers_waiting
-            self.covers_waiting = nil
-            self:fetchCovers(waiting)
+        if done then
+            self.covers_pids, self.covers_queue = nil, nil
+        else
+            self:scheduleCoverPoll(pids)
         end
     end)
 end

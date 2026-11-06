@@ -75,6 +75,32 @@ function Ribbon.paint(bb, x, y)
     end
 end
 
+-- The way back after a link has led away: over the page, above its progress.
+local LinkBack = WidgetContainer:extend{ shell = nil }
+local LINK_BACK_TEXT = "Вернуться к тексту"
+-- This far from where a link has led, the reader has gone on reading from there.
+local LINK_BACK_PAGES = 3
+
+local function link_back_region(footer_h)
+    local text = Kit.text(LINK_BACK_TEXT, 16)
+    local w = text:getSize().w + 2 * Kit.px(20)
+    text:free()
+    local h = Kit.px(44)
+    return Geom:new{ x = math.floor((Screen:getWidth() - w) / 2),
+        y = Screen:getHeight() - footer_h - h - Kit.px(8), w = w, h = h }
+end
+
+function LinkBack:paintTo(bb, x, y)
+    if not self.shell:linkBackShown() then return end
+    local box = self.shell.link_back_box
+    bb:paintRect(x + box.x, y + box.y, box.w, box.h, Blitbuffer.COLOR_WHITE)
+    bb:paintBorder(x + box.x, y + box.y, box.w, box.h, Kit.px(1), Blitbuffer.COLOR_BLACK)
+    local text = Kit.text(LINK_BACK_TEXT, 16)
+    local size = text:getSize()
+    text:paintTo(bb, x + box.x + math.floor((box.w - size.w) / 2), y + box.y + math.floor((box.h - size.h) / 2))
+    text:free()
+end
+
 --- plugin must answer stubs() (a table of fragments) and paths() (the book's chapters).
 function Shell.new(ui, plugin)
     return setmetatable({ ui = ui, plugin = plugin }, Shell)
@@ -128,6 +154,7 @@ function Shell:install()
     for _, id in ipairs(HIGHLIGHT_BUTTONS_REMOVED) do
         ui.highlight:removeFromHighlightDialog(id)
     end
+    self:watchLinks()
     self:registerZone()
     -- Ours wherever it is asked for. KOReader's has its own menu, which is not needed here.
     ui.toc.onShowToc = function()
@@ -138,10 +165,54 @@ function Shell:install()
     dogear.paintTo = function(_, bb, x, y) Ribbon.paint(bb, x, y) end
     dogear.getRefreshRegion = function() return Ribbon.region() end
     ui.view:registerViewModule("yaknigi_clock", Clock:new{})
+    ui.view:registerViewModule("yaknigi_link_back", LinkBack:new{ shell = self })
     -- KOReader's note that the page numbers are being worked out says nothing to a reader.
     ui.view.flipping.getRollingRenderingStateIconWidget = function() return nil end
     ui.view.footer:onUpdateFooter(true)
     self:startClock()
+end
+
+--- A link that has led to another page offers the way back. A note in a chapter still on its
+-- way cannot be shown yet, which is something other than the link being bad.
+function Shell:watchLinks()
+    local ui, link = self.ui, self.ui.link
+    local go = link.onGotoLink
+    link.onGotoLink = function(this, target, ...)
+        local to = target.xpointer
+        if self:hasStubs() and to and not to:match("^%w[%w+%-.]*:")
+                and not ui.document:isXPointerInDocument(to) then
+            require("ui/uimanager"):show(require("ui/widget/infomessage"):new{
+                text = "Эта глава ещё загружается. Попробуйте чуть позже.", timeout = 3 })
+            return true
+        end
+        local stack, page = #this.location_stack, ui.document:getCurrentPage()
+        local result = go(this, target, ...)
+        local now = ui.document:getCurrentPage()
+        if #this.location_stack > stack and now ~= page then
+            self.link_back = { page = now }
+            self:paintLinkBack()
+        end
+        return result
+    end
+end
+
+function Shell:paintLinkBack()
+    require("ui/uimanager"):setDirty(self.ui.view.dialog, "ui", self.link_back_box)
+end
+
+function Shell:linkBackShown()
+    if not self.link_back then return false end
+    if math.abs(self.ui.document:getCurrentPage() - self.link_back.page) > LINK_BACK_PAGES then
+        self.link_back = nil
+        return false
+    end
+    return true
+end
+
+function Shell:goLinkBack()
+    self.link_back = nil
+    self.ui.link:onGoBackLink()
+    self:paintLinkBack()
 end
 
 --- Repaints the time at the top of the page, unless the device sleeps or the page is covered.
@@ -188,7 +259,21 @@ function Shell:registerZone()
     local ui = self.ui
     local W, H = Screen:getWidth(), Screen:getHeight()
     local footer_h = math.max(ui.view.footer:getHeight() + Kit.px(12), Kit.px(44))
+    local back = link_back_region(footer_h)
+    self.link_back_box = back
     ui:registerTouchZones({
+        {
+            id = "yaknigi_link_back",
+            ges = "tap",
+            screen_zone = { ratio_x = back.x / W, ratio_y = back.y / H, ratio_w = back.w / W, ratio_h = back.h / H },
+            overrides = { "tap_link", "readerhighlight_tap", "readerhighlight_tap_select_mode", "yaknigi_bookmark",
+                "yaknigi_progress", "yaknigi_top", "yaknigi_center", "yaknigi_back_rest", "tap_forward", "tap_backward" },
+            handler = function()
+                if not self:linkBackShown() then return nil end
+                self:goLinkBack()
+                return true
+            end,
+        },
         {
             -- A square of a tenth of the width, at the corner where the mark appears.
             id = "yaknigi_bookmark",
