@@ -15,6 +15,7 @@ local ProgressWidget = require("ui/widget/progresswidget")
 local TextBoxWidget = require("ui/widget/textboxwidget")
 local UIManager = require("ui/uimanager")
 local VerticalGroup = require("ui/widget/verticalgroup")
+local logger = require("logger")
 local Screen = Device.screen
 
 local Kit = require("yaknigi/kit")
@@ -181,10 +182,11 @@ function Library:build()
     local items = self.item_table or {}
     local side = Kit.px(56)
 
-    self.close_button = Kit.icon_button("close", side, function() self:onClose() end)
+    -- Nothing that closes the app up here: the way back from a book is in this corner,
+    -- and one tap too many there must not end the session.
     self.menu_button = Kit.icon_button("appbar.menu", side, function() self:showMenu() end)
     local header = HorizontalGroup:new{ align = "center",
-        self.close_button,
+        HorizontalSpan:new{ width = side },
         CenterContainer:new{
             dimen = Geom:new{ w = W - 2 * side, h = L.header_h },
             Kit.text("Яндекс Книги", 20, { bold = true }),
@@ -225,17 +227,9 @@ function Library:build()
         end
     end
 
-    local third = math.floor(inner / 3)
-    self.prev_button = Kit.button(Kit.text("‹", 34), third, L.footer_h, function() self:turn(-1) end)
-    self.next_button = Kit.button(Kit.text("›", 34), third, L.footer_h, function() self:turn(1) end)
-    local pager = HorizontalGroup:new{ align = "center",
-        self.prev_button,
-        CenterContainer:new{
-            dimen = Geom:new{ w = inner - 2 * third, h = L.footer_h },
-            Kit.text(self.page .. " / " .. L.pages, 17),
-        },
-        self.next_button,
-    }
+    local pager
+    pager, self.prev_button, self.next_button = Kit.pager(self.page, L.pages, inner, L.footer_h,
+        function(delta) self:turn(delta) end)
 
     local frame = OverlapGroup:new{
         dimen = self.dimen:copy(),
@@ -247,6 +241,8 @@ function Library:build()
         frame[#frame + 1] = FrameContainer:new{ bordersize = 0, padding = 0,
             overlap_offset = { pad, H - L.footer_h }, pager }
     end
+    -- Covers take memory until freed, and a long session turns many pages.
+    if self[1] then self[1]:free() end
     self[1] = FrameContainer:new{
         background = Blitbuffer.COLOR_WHITE,
         bordersize = 0,
@@ -275,6 +271,7 @@ function Library:turn(delta)
     local page = self.page + delta
     if page < 1 or page > self.total_pages then return end
     self.page = page
+    logger.info("yaknigi: library page", page, "of", self.total_pages)
     self:build()
     UIManager:setDirty(self, "partial")
 end

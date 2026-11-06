@@ -72,7 +72,15 @@ function Tappable:init()
     }
 end
 
+function Tappable:paintTo(bb, x, y)
+    self.painted = true
+    InputContainer.paintTo(self, bb, x, y)
+end
+
 function Tappable:onTapSelect()
+    -- Until it is painted it thinks it is in the corner of the screen, and a tap that
+    -- waited in the queue while the screen was rebuilt would land on the wrong thing.
+    if not self.painted then return end
     self.callback()
     return true
 end
@@ -90,6 +98,22 @@ end
 function Kit.icon_button(name, side, callback)
     local icon = Kit.px(36)
     return Kit.button(IconWidget:new{ icon = name, width = icon, height = icon }, side, side, callback)
+end
+
+--- ‹ page / pages ›. on_turn gets -1 or 1. Returns the row and both arrows.
+function Kit.pager(page, pages, width, height, on_turn)
+    local third = math.floor(width / 3)
+    local prev = Kit.button(Kit.text("‹", 34), third, height, function() on_turn(-1) end)
+    local next_ = Kit.button(Kit.text("›", 34), third, height, function() on_turn(1) end)
+    local row = HorizontalGroup:new{ align = "center",
+        prev,
+        CenterContainer:new{
+            dimen = Geom:new{ w = width - 2 * third, h = height },
+            Kit.text(page .. " / " .. pages, 17),
+        },
+        next_,
+    }
+    return row, prev, next_
 end
 
 --- An icon or short text with a caption beneath, for the panel's bottom row.

@@ -90,6 +90,22 @@ end
 
 local function is_named(name) return function() return top().name == name end end
 
+local function find_item(menu, needle)
+    for _, item in ipairs(menu.item_table) do
+        if item.text:find(needle, 1, true) then return item end
+    end
+    fail("no book " .. needle)
+end
+
+local function open(menu, needle)
+    local t0 = socket.gettime()
+    menu:onMenuSelect(find_item(menu, needle))
+    wait("the reader", function()
+        return reader() and reader().document and top().name == "ReaderUI"
+    end)
+    return socket.gettime() - t0
+end
+
 -- The reading screen, driven by taps at the place a finger would touch.
 local function test_reading_screen()
     local W, H = Screen:getWidth(), Screen:getHeight()
@@ -133,14 +149,84 @@ local function test_reading_screen()
     wait("the panels to close", is_named("ReaderUI"))
     reader().rolling:onGotoXPointer("/body/DocFragment[31]")
 
-    -- Contents.
+    -- Notes: several pages of them, and always a way out.
+    local bookmark = reader().bookmark
+    local start_page = doc:getCurrentPage()
+    for i = 1, 14 do
+        bookmark:toggleBookmark(start_page + i * 2)
+    end
+    local here = doc:getXPointer()
+    reader().annotation:addItem{
+        page = here, pos0 = here, pos1 = here, drawer = "lighten", chapter = "",
+        datetime = "2026-11-06 12:00:00", note = "Заметка к этому месту",
+        text = string.rep("Длинное выделение, которое не помещается в две строки. ", 12),
+    }
+    tap_at(W / 2, H / 2)
+    wait("the panels", is_named("YaknigiChrome"))
+    tap_widget(top().notes_button)
+    wait("the notes", is_named("YaknigiNotes"))
+    local notes = top()
+    shot("19-notes")
+    if notes.pages < 2 then fail("expected notes over pages, got " .. notes.pages) end
+    tap_widget(notes.next_button)
+    if notes.page ~= 2 then fail("the arrow did not turn the notes") end
+    shot("19b-notes-page-2")
+    tap_widget(notes.prev_button)
+    if notes.page ~= 1 then fail("the arrow did not turn the notes back") end
+    tap_widget(notes.back)
+    wait("the page after the notes", is_named("ReaderUI"))
+    if doc:getCurrentPage() ~= start_page then fail("leaving the notes moved the page") end
+
+    -- A tap on a note goes to it; the cross removes it after asking.
+    tap_at(W / 2, H / 2)
+    wait("the panels", is_named("YaknigiChrome"))
+    tap_widget(top().notes_button)
+    wait("the notes", is_named("YaknigiNotes"))
+    notes = top()
+    tap_widget(notes.opens[2]) -- the first is on this very page
+    wait("the page of the note", is_named("ReaderUI"))
+    wait("the jump to the note", function() return doc:getCurrentPage() ~= start_page end)
+    tap_at(W / 2, H / 2)
+    wait("the panels", is_named("YaknigiChrome"))
+    tap_widget(top().notes_button)
+    wait("the notes", is_named("YaknigiNotes"))
+    notes = top()
+    local count = #reader().annotation.annotations
+    tap_widget(notes.removes[1])
+    local box = wait("the question", function() return top().ok_callback and top() end)
+    shot("19c-notes-remove")
+    box.ok_callback()
+    UIManager:close(box)
+    if #reader().annotation.annotations ~= count - 1 then fail("the note was not removed") end
+    wait("the notes again", is_named("YaknigiNotes"))
+    tap_widget(notes.back)
+    wait("the page after the notes", is_named("ReaderUI"))
+    reader().annotation.annotations = {}
+    reader().rolling:onGotoXPointer("/body/DocFragment[31]")
+
+    -- KOReader's own lists, closed by their cross at the top right, as a finger would.
+    local function close_stock(what)
+        wait(what, function() return top().name ~= "YaknigiChrome" and top().name ~= "ReaderUI" end)
+        UIManager:forceRePaint()
+        tap_at(W - 30, 30)
+        UIManager:forceRePaint()
+        wait(what .. " to close", is_named("ReaderUI"), 5)
+    end
     tap_at(W / 2, H / 2)
     wait("the panels", is_named("YaknigiChrome"))
     tap_widget(top().chapter_row)
     wait("the contents", function() return top().name ~= "YaknigiChrome" and top().name ~= "ReaderUI" end)
     shot("14-contents")
-    UIManager:close(top())
-    wait("the page", is_named("ReaderUI"))
+    close_stock("the contents")
+    bookmark:onShowBookmark()
+    close_stock("KOReader's bookmarks")
+
+    -- KOReader's own Exit leaves no screens: that must bring the library, not end the app.
+    reader():handleEvent(Event:new("Exit"))
+    local after_exit = library_with(21)
+    open(after_exit, "Книга номер 0")
+    reader().rolling:onGotoXPointer("/body/DocFragment[31]")
+    doc = reader().document
 
     -- The text panel. Each change must reach the document and stay for other books.
     tap_at(W / 2, H / 2)
@@ -184,22 +270,6 @@ local function test_reading_screen()
     if G_reader_settings:isTrue("night_mode") then fail("night mode did not turn off") end
     tap_at(W / 2, 100)
     wait("the page", is_named("ReaderUI"))
-end
-
-local function find_item(menu, needle)
-    for _, item in ipairs(menu.item_table) do
-        if item.text:find(needle, 1, true) then return item end
-    end
-    fail("no book " .. needle)
-end
-
-local function open(menu, needle)
-    local t0 = socket.gettime()
-    menu:onMenuSelect(find_item(menu, needle))
-    wait("the reader", function()
-        return reader() and reader().document and top().name == "ReaderUI"
-    end)
-    return socket.gettime() - t0
 end
 
 local function script()
@@ -247,9 +317,18 @@ local function script()
         end
         return true
     end)
-    menu:turn(1)
+    tap_widget(menu.next_button)
+    if menu.page ~= 2 then fail("the arrow did not turn the library") end
     shot("03b-library-page-2")
-    menu:turn(-1)
+    tap_widget(menu.next_button)
+    tap_widget(menu.next_button) -- past the end: stays on the last page
+    if menu.page ~= menu.total_pages then fail("library went to page " .. menu.page) end
+    tap_widget(menu.prev_button)
+    tap_widget(menu.prev_button)
+    if menu.page ~= 1 then fail("the arrow did not turn the library back") end
+    tap_at(40, 40) -- the corner of the way back from a book: not a way out of the app
+    UIManager:forceRePaint()
+    if top() ~= menu then fail("a tap in the library's corner closed it") end
     shot("03c-library-covers")
 
     menu:onMenuSelect(find_item(menu, "Сериал"))

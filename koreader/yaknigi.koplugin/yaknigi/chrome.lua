@@ -12,9 +12,11 @@ local InputContainer = require("ui/widget/container/inputcontainer")
 local OverlapGroup = require("ui/widget/overlapgroup")
 local UIManager = require("ui/uimanager")
 local VerticalGroup = require("ui/widget/verticalgroup")
+local logger = require("logger")
 local Screen = Device.screen
 
 local Kit = require("yaknigi/kit")
+local Notes = require("yaknigi/notes")
 local TextPanel = require("yaknigi/textpanel")
 
 local Chrome = InputContainer:extend{
@@ -93,7 +95,7 @@ function Chrome:build()
     local icon = Kit.px(36)
     local bookmarked = ui.bookmark:isPageBookmarked()
     self.notes_button = Kit.action(IconWidget:new{ icon = "bookmark", width = icon, height = icon }, "Заметки", cell,
-        function() self:after(function() ui.bookmark:onShowBookmark() end) end)
+        function() self:after(function() UIManager:show(Notes:new{ ui = ui, shell = self.shell }) end) end)
     self.bookmark_button = Kit.action(IconWidget:new{ icon = bookmarked and "star.full" or "star.empty", width = icon, height = icon },
         bookmarked and "В закладках" or "Закладка", cell, function() self:toggleBookmark() end)
     self.search_button = Kit.action(IconWidget:new{ icon = "appbar.search", width = icon, height = icon }, "Поиск", cell,
@@ -146,6 +148,7 @@ function Chrome:after(action)
 end
 
 function Chrome:goBack()
+    logger.info("yaknigi: back to the library")
     self:dismiss()
     UIManager:nextTick(function() self.ui:onHome() end)
 end

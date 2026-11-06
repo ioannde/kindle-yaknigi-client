@@ -32,11 +32,22 @@ local ROOT = DataStorage:getDataDir() .. "/yaknigi"
 local BOOKS = ROOT .. "/books"
 local COVERS = ROOT .. "/covers"
 local LIBRARY_CACHE = ROOT .. "/library.json"
+local LIBRARY_RESULT = ROOT .. "/library.result"
 os.execute("mkdir -p '" .. BOOKS .. "' '" .. COVERS .. "'")
 
 -- The app mode shows the library instead of the file manager, and leaves with it.
 local APP_MODE = os.getenv("YAKNIGI_APP") == "1"
 local POLL_SECONDS = 2
+
+-- KOReader quits when its last screen closes, which its own Exit and any failure to open
+-- something would do. Only "Закрыть приложение" should end the app: go back to the library.
+if APP_MODE then
+    UIManager._gated_quit = function()
+        logger.warn("yaknigi: no screens left, back to the library")
+        require("apps/reader/readerui"):showFileManager()
+        return false
+    end
+end
 
 -- Survives the ReaderUI being rebuilt on reload. Keyed by book id.
 local workers = {}
@@ -254,6 +265,7 @@ function Yaknigi:showLibrary()
         close_callback = function()
             UIManager:close(library)
             self.library = nil
+            logger.info("yaknigi: closed from the library")
             if APP_MODE then UIManager:quit() end
         end,
         on_refresh = function() self:refreshLibrary(true) end,
@@ -269,32 +281,52 @@ function Yaknigi:showLibrary()
     end
 end
 
+-- The request runs in a forked process: on a slow network it would hold up every tap.
 function Yaknigi:refreshLibrary(tell_failure)
-    local function fetch()
-        local api = Api.new(saved_token())
-        local cards, kind = api:library()
-        api:close()
-        if not cards then
-            if kind == "auth" then
-                save_token(nil)
-                self:showLibrary()
-            elseif tell_failure then
-                message(error_text(kind), 3)
-                if self.library then self.library:setMessage(error_text(kind)) end
-            end
-            return
-        end
-        write_json(LIBRARY_CACHE, cards)
-        if self.library then
-            self.library:switchItemTable(nil, self:libraryItems(cards))
-        end
-        self:fetchCovers(cards)
+    local function start()
+        if self.library_pid and not ffiutil.isSubProcessDone(self.library_pid) then return end
+        os.remove(LIBRARY_RESULT)
+        local token = saved_token()
+        self.library_pid = ffiutil.runInSubProcess(function()
+            local api = Api.new(token)
+            local cards, kind = api:library()
+            api:close()
+            if cards then write_json(LIBRARY_CACHE, cards) end
+            write_json(LIBRARY_RESULT, { kind = kind or "ok" })
+            os.exit(0)
+        end)
+        if self.library_pid then self:pollLibrary(tell_failure) end
     end
     if tell_failure then
-        NetworkMgr:runWhenOnline(fetch)
+        NetworkMgr:runWhenOnline(start)
     elseif NetworkMgr:isOnline() then
-        fetch()
+        start()
     end
+end
+
+function Yaknigi:pollLibrary(tell_failure)
+    UIManager:scheduleIn(0.5, function()
+        if not ffiutil.isSubProcessDone(self.library_pid) then
+            self:pollLibrary(tell_failure)
+            return
+        end
+        -- Left for a book meanwhile, or signed out: the next visit will ask again.
+        if not self.library or not saved_token() then return end
+        local result = read_json(LIBRARY_RESULT) or {}
+        local kind = result.kind or "network"
+        if kind == "ok" then
+            local cards = read_json(LIBRARY_CACHE)
+            if not cards then return end
+            self.library:switchItemTable(nil, self:libraryItems(cards))
+            self:fetchCovers(cards)
+        elseif kind == "auth" then
+            save_token(nil)
+            self:showLibrary()
+        elseif tell_failure then
+            message(error_text(kind), 3)
+            self.library:setMessage(error_text(kind))
+        end
+    end)
 end
 
 local function saved_fragment(path)
@@ -461,6 +493,7 @@ function Yaknigi:poll()
     -- The worker finished and rendered the whole book: switch to it. Its cache makes
     -- this as quick as turning a page, so no need to wait for the reader to be idle.
     if not running and store:is_whole() and reading and next(state.stubs) then
+        logger.info("yaknigi: swapping to the whole book")
         state.stubs = {}
         self.ui:reloadDocument(nil, true)
         return
@@ -475,7 +508,9 @@ function Yaknigi:poll()
         or state.stubs[fragment + 1] and fragment + 1)
     if needed then
         if store:has(store.paths[needed]) then
+            local started = os.time()
             local stubs = store:build()
+            logger.info("yaknigi: rebuilt for a new chapter in about", os.time() - started, "s")
             if stubs then
                 state.stubs = stubs
                 self.ui:reloadDocument(nil, true)
