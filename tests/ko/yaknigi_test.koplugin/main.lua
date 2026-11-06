@@ -950,7 +950,7 @@ local function test_books_and_memory(settings)
         return reader() and reader().document and top().name == "ReaderUI"
             and reader().document.file:find("/" .. id .. "/", 1, true)
     end)
-    reader().rolling:onGotoXPointer("/body/DocFragment[5]/body/p")
+    reader().rolling:onGotoXPointer("/body/DocFragment[5]")
     if fragment() ~= 5 then fail("the jump in the saved book: " .. tostring(fragment())) end
     reader():onHome()
     menu = wait("the results after reading", function()
