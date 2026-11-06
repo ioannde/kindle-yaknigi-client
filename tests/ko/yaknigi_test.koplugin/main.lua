@@ -1257,12 +1257,13 @@ local function script()
         UIManager:forceRePaint()
         local W, H = Screen:getWidth(), Screen:getHeight()
         local dark = 0
-        for y = math.floor(H * 0.08), math.floor(H * 0.9), 8 do
+        -- Below the clock and above the progress. The mock's picture is small, at the top.
+        for y = math.floor(H * 0.03), math.floor(H * 0.9), 8 do
             for x = 0, W - 1, 8 do
                 if Screen.bb:getPixel(x, y):getColor8().a < 200 then dark = dark + 1 end
             end
         end
-        return dark > 100
+        return dark > 50
     end, 40)
     if fragment() ~= 1 then fail("the picture moved the page: " .. tostring(fragment())) end
     shot("54-cover-a-page-back")
