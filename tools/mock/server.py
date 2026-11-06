@@ -66,13 +66,21 @@ CHAPTER_DELAY = 0.1
 # Its spine starts with a page that is only a picture, as real books' do.
 COVER_PAGE_BOOK = "found7"
 COVER_PAGE_OPF = (
-    b'<package><metadata><dc:title>Mock</dc:title></metadata><manifest>'
-    b'<item id="p" href="cover.png" media-type="image/png"/>'
-    b'<item id="t" href="title.xhtml" media-type="application/xhtml+xml"/>'
-    b'<item id="a" href="a.html" media-type="application/xhtml+xml"/>'
-    b'<item id="b" href="b.html" media-type="application/xhtml+xml"/>'
-    b'</manifest><spine><itemref idref="t"/><itemref idref="a"/><itemref idref="b"/></spine></package>'
-)
+    '<package xmlns="http://www.idpf.org/2007/opf" xmlns:dc="http://purl.org/dc/elements/1.1/">'
+    '<metadata><dc:title>Книга с обложкой</dc:title><meta name="cover" content="p"/></metadata><manifest>'
+    '<item id="p" href="cover.png" media-type="image/png"/>'
+    '<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>'
+    '<item id="t" href="title.xhtml" media-type="application/xhtml+xml"/>'
+    '<item id="a" href="first.xhtml" media-type="application/xhtml+xml"/>'
+    '<item id="b" href="second.xhtml" media-type="application/xhtml+xml"/>'
+    '</manifest><spine toc="ncx"><itemref idref="t"/><itemref idref="a"/><itemref idref="b"/></spine></package>'
+).encode()
+COVER_PAGE_NCX = (
+    '<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1"><navMap>'
+    '<navPoint id="n1" playOrder="1"><navLabel><text>Первая глава</text></navLabel><content src="first.xhtml"/></navPoint>'
+    '<navPoint id="n2" playOrder="2"><navLabel><text>Вторая глава</text></navLabel><content src="second.xhtml"/></navPoint>'
+    '</navMap></ncx>'
+).encode()
 COVER_PAGE = ('<?xml version="1.0" encoding="utf-8"?><html xmlns="http://www.w3.org/1999/xhtml"><head><title>t</title></head>'
               '<body><img src="cover.png" alt="cover"/></body></html>')
 SHOWCASE = 'query Showcase($showcaseParamsInput: ShowcaseParamsInput!, $showcaseItemsCursor: String!, $sectionItemsCursor: String = "" ) { showcase(params: $showcaseParamsInput) { __typename ...fragmentShowcase ...childrenFragmentShowcase ...parentsFragmentShowcase items(cursor: $showcaseItemsCursor) { page { __typename ...featuredSectionFragment ...notificationFragment ...shelvesSectionFragment ...simpleSectionFragment ...statisticsSectionFragment ...topSectionFragment ...seriesSectionFragment ...ratingSectionFragment } cursor } } }  fragment fragmentShowcase on Showcase { name uuid availableFilters }  fragment childrenFragmentShowcase on Showcase { children { __typename ...fragmentShowcase } }  fragment parentsFragmentShowcase on Showcase { parents { __typename ...fragmentShowcase } }  fragment ageRestrictionFragment on Availability { ageRestriction { name value } }  fragment coverFragment on Cover { url ratio backgroundColorHex }  fragment personFragment on Person { avatar { __typename ...coverFragment } name uuid worksCount roles }  fragment bookFragment on Book { annotation name cover { __typename ...coverFragment } uuid initUuid authors { __typename ...personFragment } editorAnnotation }  fragment audioBookFragment on AudioBook { availability { __typename ...ageRestrictionFragment } book { __typename ...bookFragment } }  fragment comicBookFragment on ComicBook { availability { __typename ...ageRestrictionFragment } book { __typename ...bookFragment } }  fragment textBookFragment on TextBook { availability { __typename ...ageRestrictionFragment } book { __typename ...bookFragment } }  fragment textSerialFragment on TextSerial { availability { __typename ...ageRestrictionFragment } book { __typename ...bookFragment } }  fragment notificationFragment on Notification { consumer notificationPayloadId payload templateId feedbackToken }  fragment featuredSectionFragment on FeaturedSection { items(cursor: $sectionItemsCursor) { cursor page { __typename ...audioBookFragment ...comicBookFragment ...textBookFragment ...textSerialFragment ...notificationFragment } } name uuid }  fragment userFragment on User { avatar { __typename ...coverFragment } name uuid followersCount login }  fragment bookshelfFragment on Bookshelf { cover { __typename ...coverFragment } name uuid user { __typename ...userFragment } posts { total } followersCount description }  fragment shelvesSectionFragment on ShelvesSection { items(cursor: $sectionItemsCursor) { cursor page { __typename ...bookshelfFragment } } name uuid }  fragment seriesFragment on Series { authors { __typename ...personFragment } cover { __typename ...coverFragment } name uuid items { followersCount total } }  fragment simpleSectionFragment on SimpleSection { availableFilters items(cursor: $sectionItemsCursor) { cursor page { __typename ...audioBookFragment ...comicBookFragment ...textBookFragment ...textSerialFragment ...seriesFragment } } name uuid }  fragment statisticsSectionFragment on StatisticsSection { daysReadingInMonth updatedAt name uuid }  fragment topSectionFragment on TopSection { items(cursor: $sectionItemsCursor) { cursor page { __typename ...audioBookFragment ...comicBookFragment ...textBookFragment ...textSerialFragment } } name uuid }  fragment seriesSectionFragment on SeriesSection { items(cursor: $sectionItemsCursor) { cursor page { __typename ...seriesFragment } } name uuid }  fragment ratingSectionFragment on RatingSection { items(cursor: $sectionItemsCursor) { cursor page { __typename ...audioBookFragment ...comicBookFragment ...textBookFragment ...textSerialFragment } } name uuid }'
@@ -492,7 +500,8 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(404, b"")
         elif url.path.endswith("/metadata/v4"):
             if f"/{COVER_PAGE_BOOK}/" in url.path:
-                self.reply_json(200, {"document_uuid": "d1", "opf": encrypted(COVER_PAGE_OPF), "container": encrypted(CONTAINER)})
+                self.reply_json(200, {"document_uuid": "d1", "opf": encrypted(COVER_PAGE_OPF),
+                                      "container": encrypted(BIG_CONTAINER), "ncx": encrypted(COVER_PAGE_NCX)})
             elif self.server.big:
                 self.reply_json(200, {"document_uuid": "d1", "opf": encrypted(BIG_OPF),
                                       "container": encrypted(BIG_CONTAINER), "ncx": encrypted(BIG_NCX)})
@@ -505,8 +514,9 @@ class Handler(BaseHTTPRequestHandler):
             # This route knows a book by its document, not its uuid: these names are that book's.
             if path.endswith("title.xhtml"):
                 self.reply(200, COVER_PAGE.encode())
-            elif path.endswith(("/a.html", "/b.html")):
-                self.reply(200, chapter(path).encode())
+            elif path.endswith(("first.xhtml", "second.xhtml")):
+                self.reply(200, ('<?xml version="1.0" encoding="utf-8"?><html xmlns="http://www.w3.org/1999/xhtml">'
+                                 f'<head><title>t</title></head><body>{chapter(path)}</body></html>').encode())
             elif not self.server.big:
                 self.reply(200, chapter(path).encode())
             elif path.endswith(".css"):
