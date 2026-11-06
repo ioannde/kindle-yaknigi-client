@@ -4,6 +4,7 @@ local Zip = require("yaknigi/zip")
 local Opf = require("yaknigi/opf")
 local Cfi = require("yaknigi/cfi")
 local Http = require("yaknigi/http")
+local Shelves = require("yaknigi/shelves")
 
 local failed, passed = 0, 0
 local function eq(got, want, name)
@@ -14,6 +15,26 @@ local function eq(got, want, name)
         print(("FAIL %s: got %s, want %s"):format(name, tostring(got), tostring(want)))
     end
 end
+
+-- shelves
+eq(Shelves.of("finished", 40, 50), "finished", "a finished book stays finished")
+eq(Shelves.of("reading", 0), "reading", "reading")
+eq(Shelves.of("pending", 0), "want", "not begun")
+eq(Shelves.of("pending", 0, 3), "reading", "begun here, Yandex still says pending")
+eq(Shelves.of("pending", 12), "reading", "begun elsewhere")
+eq(Shelves.normalize("ЁЖИК Абв-Я Ђ QwE"), "ежик абв-я ђ qwe", "normalize")
+local shelf_items = {
+    { title = "Технофеодализм", authors = "Янис Варуфакис", shelf = "reading", whole = true },
+    { title = "Масса", authors = "Маргарита Ронжина", shelf = "want" },
+    { title = "Ёлки", authors = "", shelf = "finished", whole = true },
+}
+eq(#Shelves.list(shelf_items, "all"), 3, "all")
+eq(#Shelves.list(shelf_items, "device"), 2, "device")
+eq(Shelves.list(shelf_items, "want")[1].title, "Масса", "a shelf")
+eq(#Shelves.list(shelf_items, "all", "ТЕХНО варуфакис"), 1, "words in any field and case")
+eq(#Shelves.list(shelf_items, "all", "елки"), 1, "е finds ё")
+eq(#Shelves.list(shelf_items, "reading", "масса"), 0, "only in this shelf")
+eq(#Shelves.list(shelf_items, "all", "масса варуфакис"), 0, "every word must be there")
 
 -- zip
 eq(Zip.crc32("123456789"), 0xCBF43926, "crc32 check value")

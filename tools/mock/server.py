@@ -202,6 +202,7 @@ class Handler(BaseHTTPRequestHandler):
         card = {
             "uuid": f"card{i}",
             "progress": 1,
+            "state": "reading" if i < 3 else "finished" if 10 <= i < 14 else "pending",
             "book": {
                 "uuid": f"book{i}",
                 "title": "Очень длинное название книги, которое не помещается в одну строку экрана"
@@ -221,7 +222,7 @@ class Handler(BaseHTTPRequestHandler):
         update = self.server.card_updates.get(card["uuid"])
         if update:
             card["progress"] = update["progress"]
-            card["state"] = update["state"]
+            card["state"] = update["state"] or card["state"]
         if i == 3:
             card["book"]["uuid"] = "serial-1"
             card["book"]["title"] = "Сериал"

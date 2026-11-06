@@ -25,6 +25,7 @@ local Covers = require("yaknigi/covers")
 local Cfi = require("yaknigi/cfi")
 local Crypt = require("yaknigi/crypt")
 local Library = require("yaknigi/library")
+local Shelves = require("yaknigi/shelves")
 local Session = require("yaknigi/session")
 local Shell = require("yaknigi/shell")
 local Store = require("yaknigi/store")
@@ -42,6 +43,8 @@ local APP_MODE = os.getenv("YAKNIGI_APP") == "1"
 local POLL_SECONDS = 2
 -- Wi-Fi takes a while to come back after sleep. Pauses between tries to reach Yandex.
 local WAKE_RETRY_SECONDS = { 5, 15, 30 }
+-- Which screen of the library was open, for coming back to it from a book.
+local library_place = {}
 
 -- KOReader quits when its last screen closes, which its own Exit and any failure to open
 -- something would do. Only "Закрыть приложение" should end the app: go back to the library.
@@ -116,6 +119,7 @@ function Yaknigi:showLogin()
     local url = Api.login_url(verifier)
     local dialog
     local function ask_code()
+        G_reader_settings:saveSetting("keyboard_layout", "en") -- the code is in Latin letters
         dialog = InputDialog:new{
             title = "Вход в Яндекс",
             description = "Откройте ссылку из QR-кода на телефоне, войдите и введите код, который там появится.",
@@ -235,6 +239,7 @@ function Yaknigi:libraryItems(cards)
             title = title,
             authors = card_authors(card),
             mandatory = progress and (here or progress > 0) and (math.floor(progress) .. "%") or nil,
+            shelf = Shelves.of(card.state, card.progress, here),
             whole = whole,
             cover = Covers.find(COVERS, card),
             card = card,
@@ -272,6 +277,7 @@ function Yaknigi:signOut()
         text = "Выйти из аккаунта Яндекса?",
         ok_callback = function()
             save_token(nil)
+            library_place = {}
             self:showLibrary()
         end,
     })
@@ -286,6 +292,7 @@ function Yaknigi:showLibrary()
     local library
     library = Library:new{
         item_table = items,
+        place = library_place,
         on_sign_in = not signed_in and function() self:showLogin() end or nil,
         onMenuSelect = function(_library, item) self:openCard(item.card) end,
         close_callback = function()

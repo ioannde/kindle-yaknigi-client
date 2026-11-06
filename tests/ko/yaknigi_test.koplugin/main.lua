@@ -542,6 +542,42 @@ local function script()
         end
         return true
     end)
+
+    -- The first screen: the book to go back to, covers of the shelves, the rest as a list.
+    if menu.view ~= "home" then fail("the library does not start at its first screen") end
+    if not menu.strips.reading or not menu.strips.want then fail("no covers of the shelves") end
+    shot("03-library-home")
+    tap_widget(menu.shelf_rows.finished)
+    if menu.view ~= "finished" or #menu.rows ~= 4 then fail("the finished books: " .. #menu.rows) end
+    shot("03d-library-finished")
+    tap_widget(menu.back_button)
+    if menu.view ~= "home" then fail("the way back from a shelf") end
+
+    -- Search, from the first screen, in any case, and within a shelf.
+    local function search(query)
+        wait("the search dialog", function() return menu.search_dialog and top() == menu.search_dialog end)
+        menu.search_dialog:setInputText(query)
+        menu.search_dialog.button_table:getButtonById("find").callback()
+        wait("the search results", function() return menu.query == (query ~= "" and query or nil) end)
+        UIManager:forceRePaint()
+    end
+    tap_widget(menu.search_button)
+    wait("the keyboard", function() return top() == menu.search_dialog end)
+    UIManager:forceRePaint()
+    shot("03e-library-keyboard")
+    if G_reader_settings:readSetting("keyboard_layout") ~= "ru" then fail("search does not start in Russian") end
+    search("КНИГА НОМЕР 12")
+    if menu.view ~= "all" or #menu.rows ~= 1 or not menu.rows[1].title:find("номер 12", 1, true) then
+        fail("search found " .. #menu.rows)
+    end
+    shot("03f-library-found")
+    tap_widget(menu.search_bar)
+    search("нет такой книги")
+    if #menu.rows ~= 0 then fail("search found what is not there") end
+    shot("03g-library-not-found")
+    tap_widget(menu.clear_button)
+    if menu.query or #menu.rows == 0 then fail("the search was not cleared") end
+
     tap_widget(menu.next_button)
     if menu.page ~= 2 then fail("the arrow did not turn the library") end
     shot("03b-library-page-2")
@@ -556,6 +592,9 @@ local function script()
     tap_at(40, 40) -- the corner of the way back from a book: not a way out of the app
     UIManager:forceRePaint()
     if top() ~= menu then fail("a tap in the library's corner closed it") end
+    tap_at(40, 40) -- and on the first screen it does nothing at all
+    UIManager:forceRePaint()
+    if top() ~= menu or menu.view ~= "home" then fail("a second tap in the corner did something") end
     shot("03c-library-covers")
 
     menu:onMenuSelect(find_item(menu, "Сериал"))
@@ -681,6 +720,9 @@ local function script()
     if not menu.item_table[1].text:find("Книга номер 2", 1, true) then
         fail("the book just read is not first: " .. menu.item_table[1].text)
     end
+    -- Back from a book, the library is where it was left.
+    menu:openShelf("all")
+    menu:search("номер 0")
     open(menu, "Книга номер 0")
     if reader().document.configurable.line_spacing ~= 130 then
         fail("text settings are per book: " .. tostring(reader().document.configurable.line_spacing))
@@ -689,6 +731,7 @@ local function script()
     -- Leaving through the library's close button quits the app.
     reader():onHome()
     menu = library_with(21)
+    if menu.view ~= "all" or menu.query ~= "номер 0" then fail("the library forgot where it was") end
     local f = io.open(OUT .. "/PASS", "w")
     f:write("ok\n")
     f:close()

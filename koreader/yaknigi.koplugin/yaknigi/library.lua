@@ -1,4 +1,4 @@
--- The library: what is being read first, large, and the rest as a list with covers.
+-- The library: what is being read first, large, then the shelves, each a list with covers.
 local Blitbuffer = require("ffi/blitbuffer")
 local ButtonDialog = require("ui/widget/buttondialog")
 local CenterContainer = require("ui/widget/container/centercontainer")
@@ -8,10 +8,14 @@ local Geom = require("ui/geometry")
 local GestureRange = require("ui/gesturerange")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local HorizontalSpan = require("ui/widget/horizontalspan")
+local IconWidget = require("ui/widget/iconwidget")
 local ImageWidget = require("ui/widget/imagewidget")
+local InputDialog = require("ui/widget/inputdialog")
 local InputContainer = require("ui/widget/container/inputcontainer")
+local LeftContainer = require("ui/widget/container/leftcontainer")
 local OverlapGroup = require("ui/widget/overlapgroup")
 local ProgressWidget = require("ui/widget/progresswidget")
+local RightContainer = require("ui/widget/container/rightcontainer")
 local TextBoxWidget = require("ui/widget/textboxwidget")
 local UIManager = require("ui/uimanager")
 local VerticalGroup = require("ui/widget/verticalgroup")
@@ -19,13 +23,17 @@ local logger = require("logger")
 local Screen = Device.screen
 
 local Kit = require("yaknigi/kit")
+local Shelves = require("yaknigi/shelves")
 
--- item_table holds { text, title, authors, mandatory, card, sign_in, whole, cover }.
+-- item_table holds { text, title, authors, mandatory, card, sign_in, whole, cover, shelf }.
 local Library = InputContainer:extend{
     name = "YaknigiLibrary",
     covers_fullscreen = true,
     item_table = nil,
     page = 1,
+    view = "home", -- or the id of a shelf
+    query = nil,
+    place = nil, -- a table that outlives this screen, for coming back from a book
     message = nil,
     on_sign_in = nil, -- set when nobody is signed in
     onMenuSelect = nil, -- function(self, item)
@@ -35,6 +43,10 @@ local Library = InputContainer:extend{
 }
 
 function Library:init()
+    self.place = self.place or {}
+    self.view = self.place.view or "home"
+    self.query = self.place.query
+    self.page = self.place.page or 1
     self.dimen = Geom:new{ x = 0, y = 0, w = Screen:getWidth(), h = Screen:getHeight() }
     self.ges_events = {
         Swipe = { GestureRange:new{ ges = "swipe", range = self.dimen } },
@@ -151,95 +163,219 @@ function Library:hero(item, width, height)
     }
 end
 
--- What each page holds. The first has the book being read in large.
-function Library:layout()
-    local H = Screen:getHeight()
-    local header_h = Kit.px(60)
-    local footer_h = Kit.px(56)
-    local area = H - header_h - footer_h - 2 * Kit.px(1)
-    local row_h = Kit.px(100)
-    local hero_h = Kit.px(190)
-    local items = self.item_table or {}
-    local has_hero = items[1] and items[1].mandatory and true or false
-    local first_rows = math.floor((area - (has_hero and hero_h or 0)) / row_h)
-    local rows = math.floor(area / row_h)
-    local listed = #items - (has_hero and 1 or 0)
-    local pages = 1
-    if listed > first_rows then pages = 1 + math.ceil((listed - first_rows) / rows) end
-    return {
-        header_h = header_h, footer_h = footer_h, row_h = row_h, hero_h = hero_h, has_hero = has_hero,
-        first_rows = first_rows, rows = rows, pages = pages,
+local HEADER_H, FOOTER_H, SEARCH_H, ROW_H, HERO_H = 60, 56, 56, 100, 190
+local SHELF_ROW_H, STRIP_HEADING_H, STRIP_COVER_H, STRIP_LABEL_H = 46, 40, 140, 24
+
+--- A row of covers under the shelf's name, as many as fit.
+function Library:strip(id, books, width, with_progress)
+    local heading = HorizontalGroup:new{ align = "center",
+        Kit.fixed(Kit.text(Shelves.name(id), 20, { bold = true }), width - Kit.px(120)),
+        RightContainer:new{
+            dimen = Geom:new{ w = Kit.px(120), h = Kit.px(STRIP_HEADING_H) },
+            Kit.text(("все %d ›"):format(#Shelves.list(self.item_table, id)), 16, { color = Blitbuffer.COLOR_DARK_GRAY }),
+        },
     }
+    local cover_h = Kit.px(STRIP_COVER_H)
+    local cover_w = math.floor(cover_h * 2 / 3)
+    local gap = Kit.px(14)
+    local fit = math.floor((width + gap) / (cover_w + gap))
+    local row = HorizontalGroup:new{ align = "top" }
+    for i = 1, math.min(fit, #books) do
+        local item = books[i]
+        local cell = VerticalGroup:new{ align = "left", cover_box(item, cover_w, cover_h) }
+        if with_progress then
+            cell[2] = LeftContainer:new{
+                dimen = Geom:new{ w = cover_w, h = Kit.px(STRIP_LABEL_H) },
+                Kit.text(item.mandatory or "", 14, { color = Blitbuffer.COLOR_DARK_GRAY }),
+            }
+        end
+        if i > 1 then row[#row + 1] = HorizontalSpan:new{ width = gap } end
+        row[#row + 1] = Kit.Tappable:new{ callback = function() self:onMenuSelect(item) end, cell }
+    end
+    self.strips[id] = row
+    return VerticalGroup:new{ align = "left",
+        Kit.Tappable:new{ callback = function() self:openShelf(id) end, heading },
+        row,
+    }
+end
+
+function Library:shelfRow(id, width)
+    local height = Kit.px(SHELF_ROW_H)
+    local row = Kit.Tappable:new{
+        callback = function() self:openShelf(id) end,
+        HorizontalGroup:new{ align = "center",
+            Kit.fixed(Kit.text(Shelves.name(id), 19), width - Kit.px(100)),
+            RightContainer:new{
+                dimen = Geom:new{ w = Kit.px(100), h = height },
+                Kit.text(("%d ›"):format(#Shelves.list(self.item_table, id)), 17, { color = Blitbuffer.COLOR_DARK_GRAY }),
+            },
+        },
+    }
+    self.shelf_rows[id] = row
+    return row
+end
+
+-- The first screen: the book to go back to, then the shelves. Covers go first if the
+-- screen is short, as the list below them leads to the same books.
+function Library:homeBody(width, area)
+    local body = VerticalGroup:new{ align = "left" }
+    local reading = Shelves.list(self.item_table, "reading")
+    local hero = table.remove(reading, 1)
+    local want = Shelves.list(self.item_table, "want")
+    local free = area - 3 * Kit.px(SHELF_ROW_H)
+    if hero then
+        body[#body + 1] = self:hero(hero, width, Kit.px(HERO_H))
+        body[#body + 1] = Kit.line(width)
+        free = free - Kit.px(HERO_H)
+    end
+    local with_label = Kit.px(STRIP_HEADING_H + STRIP_COVER_H + STRIP_LABEL_H)
+    if #reading > 0 and free >= with_label then
+        body[#body + 1] = self:strip("reading", reading, width, true)
+        free = free - with_label
+    end
+    if #want > 0 and free >= Kit.px(STRIP_HEADING_H + STRIP_COVER_H) then
+        body[#body + 1] = self:strip("want", want, width)
+    end
+    body[#body + 1] = Kit.gap(Kit.px(4))
+    for _, id in ipairs { "all", "finished", "device" } do
+        body[#body + 1] = self:shelfRow(id, width)
+    end
+    return body
+end
+
+--- A box to tap for the keyboard, and a way to drop what was searched for.
+function Library:searchBar(width)
+    local height = Kit.px(44)
+    local clear_w = self.query and height or 0
+    local icon = Kit.px(26)
+    local text_w = width - clear_w - icon - Kit.px(32)
+    local box = FrameContainer:new{
+        bordersize = Kit.px(1),
+        radius = Kit.px(8),
+        color = Blitbuffer.COLOR_DARK_GRAY,
+        padding = 0,
+        LeftContainer:new{
+            dimen = Geom:new{ w = width - clear_w - 2 * Kit.px(1), h = height - 2 * Kit.px(1) },
+            HorizontalGroup:new{ align = "center",
+                HorizontalSpan:new{ width = Kit.px(10) },
+                IconWidget:new{ icon = "appbar.search", width = icon, height = icon },
+                HorizontalSpan:new{ width = Kit.px(10) },
+                Kit.text(self.query or "Поиск", 17, {
+                    color = not self.query and Blitbuffer.COLOR_DARK_GRAY or nil,
+                    max_width = text_w,
+                }),
+            },
+        },
+    }
+    self.search_bar = Kit.Tappable:new{ callback = function() self:showSearch() end, box }
+    local row = HorizontalGroup:new{ align = "center", self.search_bar }
+    self.clear_button = nil
+    if self.query then
+        self.clear_button = Kit.button(Kit.text("×", 30), clear_w, height, function() self:search("") end)
+        row[2] = self.clear_button
+    end
+    return CenterContainer:new{ dimen = Geom:new{ w = width, h = Kit.px(SEARCH_H) }, row }
+end
+
+function Library:listBody(width, area)
+    local books = Shelves.list(self.item_table, self.view, self.query)
+    self.shown = #books
+    local row_h = Kit.px(ROW_H)
+    local per_page = math.max(1, math.floor(area / row_h))
+    self.total_pages = math.max(1, math.ceil(#books / per_page))
+    self.page = math.max(1, math.min(self.page, self.total_pages))
+    local body = VerticalGroup:new{ align = "left" }
+    if #books == 0 then
+        body[1] = CenterContainer:new{
+            dimen = Geom:new{ w = width, h = area },
+            Kit.text(self.query and "Ничего не нашлось" or "Здесь пока пусто", 18, { color = Blitbuffer.COLOR_DARK_GRAY }),
+        }
+    end
+    local start = (self.page - 1) * per_page + 1
+    for i = start, math.min(#books, start + per_page - 1) do
+        body[#body + 1] = self:row(books[i], width, row_h)
+        self.rows[#self.rows + 1] = books[i]
+    end
+    return body
 end
 
 function Library:build()
     local W, H = Screen:getWidth(), Screen:getHeight()
     local pad = Kit.px(16)
     local inner = W - 2 * pad
-    local L = self:layout()
-    self.page = math.max(1, math.min(self.page, L.pages))
-    self.total_pages = L.pages
+    local header_h, footer_h = Kit.px(HEADER_H), Kit.px(FOOTER_H)
     local items = self.item_table or {}
+    self.item_table = items
     local side = Kit.px(56)
+    local home = self.view == "home"
+    self.rows, self.strips, self.shelf_rows = {}, {}, {}
+    self.total_pages = 1
 
-    -- Nothing that closes the app up here: the way back from a book is in this corner,
-    -- and one tap too many there must not end the session.
-    self.menu_button = Kit.icon_button("appbar.menu", side, function() self:showMenu() end)
-    local header = HorizontalGroup:new{ align = "center",
-        HorizontalSpan:new{ width = side },
-        CenterContainer:new{
-            dimen = Geom:new{ w = W - 2 * side, h = L.header_h },
-            Kit.text("Яндекс Книги", 20, { bold = true }),
-        },
-        self.menu_button,
-    }
-
-    local body = VerticalGroup:new{ align = "left" }
-    self.rows = {}
+    local body
+    local search_bar
+    local body_top = header_h + Kit.px(1)
     if #items == 0 then
-        local box = Geom:new{ w = inner, h = H - L.header_h - L.footer_h - Kit.px(2) }
+        local box = Geom:new{ w = inner, h = H - header_h - footer_h - Kit.px(2) }
         if self.on_sign_in then
-            body[1] = Kit.button(Kit.text("Войти в Яндекс", 22, { bold = true }), box.w, box.h, self.on_sign_in)
+            body = Kit.button(Kit.text("Войти в Яндекс", 22, { bold = true }), box.w, box.h, self.on_sign_in)
         else
-            body[1] = CenterContainer:new{
+            body = CenterContainer:new{
                 dimen = box,
                 Kit.text(self.message or "Загружаю библиотеку…", 18, { color = Blitbuffer.COLOR_DARK_GRAY, max_width = inner }),
             }
         end
+    elseif home then
+        body = self:homeBody(inner, H - body_top)
     else
-        local start
-        local count
-        if self.page == 1 then
-            start = 1
-            if L.has_hero then
-                body[#body + 1] = self:hero(items[1], inner, L.hero_h)
-                body[#body + 1] = Kit.line(inner)
-                start = 2
-            end
-            count = L.first_rows
-        else
-            start = (L.has_hero and 2 or 1) + L.first_rows + (self.page - 2) * L.rows
-            count = L.rows
-        end
-        for i = start, math.min(#items, start + count - 1) do
-            body[#body + 1] = self:row(items[i], inner, L.row_h)
-            self.rows[#self.rows + 1] = items[i]
-        end
+        search_bar = self:searchBar(inner)
+        body_top = body_top + Kit.px(SEARCH_H)
+        body = self:listBody(inner, H - body_top - footer_h)
     end
 
+    -- On the first screen nothing is up in the left corner: the way back from a book is
+    -- there, and one tap too many must do no more than go back a screen.
+    self.menu_button = Kit.icon_button("appbar.menu", side, function() self:showMenu() end)
+    self.back_button, self.search_button = nil, nil
+    local title = "Мои книги"
+    local left = HorizontalSpan:new{ width = side }
+    local right = HorizontalGroup:new{ align = "center", self.menu_button }
+    if home then
+        if #items > 0 then
+            self.search_button = Kit.icon_button("appbar.search", side, function() self:showSearch() end)
+            right = HorizontalGroup:new{ align = "center", self.search_button, self.menu_button }
+        end
+    else
+        self.back_button = Kit.icon_button("chevron.left", side, function() self:goHome() end)
+        left = self.back_button
+        title = ("%s · %d"):format(Shelves.name(self.view), self.shown or 0)
+    end
+    local side_w = math.max(side, right:getSize().w)
+    local header = HorizontalGroup:new{ align = "center",
+        Kit.fixed(left, side_w),
+        CenterContainer:new{
+            dimen = Geom:new{ w = W - 2 * side_w, h = header_h },
+            Kit.text(title, 20, { bold = true, max_width = W - 2 * side_w }),
+        },
+        RightContainer:new{ dimen = Geom:new{ w = side_w, h = header_h }, right },
+    }
+
     local pager
-    pager, self.prev_button, self.next_button = Kit.pager(self.page, L.pages, inner, L.footer_h,
+    pager, self.prev_button, self.next_button = Kit.pager(self.page, self.total_pages, inner, footer_h,
         function(delta) self:turn(delta) end)
 
     local frame = OverlapGroup:new{
         dimen = self.dimen:copy(),
         allow_mirroring = false,
         VerticalGroup:new{ align = "left", overlap_offset = { 0, 0 }, header, Kit.line(W) },
-        FrameContainer:new{ bordersize = 0, padding = 0, overlap_offset = { pad, L.header_h + Kit.px(1) }, body },
+        FrameContainer:new{ bordersize = 0, padding = 0, overlap_offset = { pad, body_top }, body },
     }
-    if L.pages > 1 then
+    if search_bar then
         frame[#frame + 1] = FrameContainer:new{ bordersize = 0, padding = 0,
-            overlap_offset = { pad, H - L.footer_h }, pager }
+            overlap_offset = { pad, header_h + Kit.px(1) }, search_bar }
+    end
+    if self.total_pages > 1 then
+        frame[#frame + 1] = FrameContainer:new{ bordersize = 0, padding = 0,
+            overlap_offset = { pad, H - footer_h }, pager }
     end
     -- Covers take memory until freed, and a long session turns many pages.
     if self[1] then self[1]:free() end
@@ -249,6 +385,60 @@ function Library:build()
         padding = 0,
         frame,
     }
+    self.place.view, self.place.query, self.place.page = self.view, self.query, self.page
+end
+
+--- Goes to another screen of the library, without keeping the old one's page.
+function Library:show(view, query)
+    self.view, self.query, self.page = view, query, 1
+    self:build()
+    UIManager:setDirty(self, "partial")
+end
+
+function Library:openShelf(id)
+    logger.info("yaknigi: library shelf", id)
+    self:show(id)
+end
+
+function Library:goHome()
+    self:show("home")
+end
+
+--- Shows what fits the query. On the first screen that means looking through all the books.
+function Library:search(query)
+    query = query:match("^%s*(.-)%s*$")
+    local view = self.view == "home" and "all" or self.view
+    self:show(view, query ~= "" and query or nil)
+end
+
+function Library:showSearch()
+    -- The books are mostly in Russian, and the sign-in code leaves the Latin keyboard on.
+    if #(G_reader_settings:readSetting("keyboard_layouts") or {}) == 0 then
+        G_reader_settings:saveSetting("keyboard_layouts", { "ru", "en" })
+    end
+    G_reader_settings:saveSetting("keyboard_layout", "ru")
+    local dialog
+    dialog = InputDialog:new{
+        title = "Поиск по библиотеке",
+        input = self.query or "",
+        input_hint = "Название или автор",
+        buttons = { {
+            { text = "Отмена", id = "close", callback = function() UIManager:close(dialog) end },
+            {
+                text = "Найти",
+                id = "find",
+                is_enter_default = true,
+                callback = function()
+                    local query = dialog:getInputText()
+                    UIManager:close(dialog)
+                    UIManager:nextTick(function() self:search(query) end)
+                end,
+            },
+        } },
+    }
+    self.search_dialog = dialog
+    UIManager:show(dialog)
+    dialog:onShowKeyboard()
 end
 
 function Library:refreshScreen()
