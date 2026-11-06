@@ -906,7 +906,7 @@ local function test_books_and_memory(settings)
     local menu = to_library()
 
     -- In the results: not yet in the library, a plus.
-    tap_widget(menu.tab_cells.search)
+    menu:search("достоевский")
     wait("the results", function() return menu.view == "catalogue" and #menu.rows > 0 end)
     local item
     for _, row in ipairs(menu.rows) do
