@@ -197,6 +197,35 @@ class Handler(BaseHTTPRequestHandler):
     def reply_json(self, code, value):
         self.reply(code, json.dumps(value).encode())
 
+    def card(self, i):
+        card = {
+            "uuid": f"card{i}",
+            "progress": 1,
+            "book": {
+                "uuid": f"book{i}",
+                "title": "Очень длинное название книги, которое не помещается в одну строку экрана"
+                         if i == 1 else f"Книга номер {i}",
+                "authors": [{"name": f"Автор {i}"}],
+                "cover": {"small": f"http://127.0.0.1:{self.server.server_address[1]}/cover/{i}.png"},
+            },
+        }
+        if self.server.big:
+            card["accessed_at"] = 1793000000 - i * 86400 if i < 20 else None
+            card["cfi"] = BIG_CFI if i == 0 else None
+            card["progress"] = 77 if i == 0 else 0
+        position = self.server.positions.get(card["book"]["uuid"])
+        if position:
+            spine, start = position["start"].split("!")
+            card["cfi"] = f'{spine}!,{start},{position["end"].split("!")[1]}'
+        update = self.server.card_updates.get(card["uuid"])
+        if update:
+            card["progress"] = update["progress"]
+            card["state"] = update["state"]
+        if i == 3:
+            card["book"]["uuid"] = "serial-1"
+            card["book"]["title"] = "Сериал"
+        return card
+
     def do_PUT(self):
         length = int(self.headers.get("Content-Length", 0))
         form = parse_qs(self.rfile.read(length).decode(), keep_blank_values=True)
@@ -275,42 +304,28 @@ class Handler(BaseHTTPRequestHandler):
             # The simulator cannot scan a QR code, so the test script passes it here.
             self.server.challenge = query["c"][0]
             self.reply(200, b"")
+        elif url.path == "/test/chapter_delay":
+            self.server.chapter_delay = float(query["s"][0])
+            self.reply(200, b"")
+        elif url.path == "/test/fail_card":
+            self.server.fail_card = int(query["n"][0])
+            self.reply(200, b"")
+        elif re.search(r"/profile/library_cards/card\d+$", url.path):
+            if self.headers.get("Auth-Token") != "mock-token":
+                self.reply(401, b"")
+                return
+            if self.server.fail_card > 0:
+                self.server.fail_card -= 1
+                self.reply(500, b"")
+                return
+            self.reply_json(200, {"library_card": self.card(int(url.path.split("card")[-1]))})
         elif url.path.endswith("/profile/library_cards"):
             if self.headers.get("Auth-Token") != "mock-token":
                 self.reply(401, b"")
                 return
             page = int(query.get("page", ["1"])[0])
             start = (page - 1) * 10
-            cards = [
-                {
-                    "uuid": f"card{i}",
-                    "progress": 1,
-                    "book": {
-                        "uuid": f"book{i}",
-                        "title": "Очень длинное название книги, которое не помещается в одну строку экрана"
-                                 if i == 1 else f"Книга номер {i}",
-                        "authors": [{"name": f"Автор {i}"}],
-                        "cover": {"small": f"http://127.0.0.1:{self.server.server_address[1]}/cover/{i}.png"},
-                    },
-                }
-                for i in range(start, min(start + 10, BOOKS))
-            ]
-            if self.server.big:
-                for n, card in enumerate(cards):
-                    card["accessed_at"] = 1793000000 - (start + n) * 86400 if start + n < 20 else None
-                    card["cfi"] = BIG_CFI if start + n == 0 else None
-                    card["progress"] = 77 if start + n == 0 else 0
-            for card in cards:
-                position = self.server.positions.get(card["book"]["uuid"])
-                if position:
-                    spine, start = position["start"].split("!")
-                    card["cfi"] = f'{spine}!,{start},{position["end"].split("!")[1]}'
-                update = self.server.card_updates.get(card["uuid"])
-                if update:
-                    card["progress"] = update["progress"]
-            if page == 1:
-                cards[3]["book"]["uuid"] = "serial-1"
-                cards[3]["book"]["title"] = "Сериал"
+            cards = [self.card(i) for i in range(start, min(start + 10, BOOKS))]
             self.reply_json(200, {"library_cards": cards})
         elif url.path.startswith("/cover/"):
             if self.headers.get("Auth-Token"):
@@ -334,7 +349,7 @@ class Handler(BaseHTTPRequestHandler):
             elif path.endswith(".css"):
                 self.reply(200, b"p { margin: 0; }")
             else:
-                time.sleep(CHAPTER_DELAY)
+                time.sleep(self.server.chapter_delay)
                 self.reply(200, big_chapter(path).encode())
         else:
             self.reply(404, b"")
@@ -346,5 +361,7 @@ if __name__ == "__main__":
     server.positions = {}
     server.card_updates = {}
     server.fail_writes = 0
+    server.fail_card = 0
+    server.chapter_delay = CHAPTER_DELAY
     server.big = len(sys.argv) > 2 and sys.argv[2] == "koreader"
     server.serve_forever()

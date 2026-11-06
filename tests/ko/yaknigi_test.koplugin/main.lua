@@ -98,6 +98,20 @@ local function find_item(menu, needle)
     fail("no book " .. needle)
 end
 
+-- The question about a position from another device, once it is up.
+local function asked()
+    return wait("the question about the other device", function()
+        local w = top()
+        return w.ok_text == "Перейти" and w
+    end, 15)
+end
+
+local function answer(box, go)
+    local callback = go and box.ok_callback or box.cancel_callback
+    callback()
+    UIManager:close(box)
+end
+
 local function open(menu, needle)
     local t0 = socket.gettime()
     menu:onMenuSelect(find_item(menu, needle))
@@ -217,11 +231,12 @@ local function test_position_upload()
     wait("nothing left to send after the failure", function() return not waiting() end, 15)
     menu = library_with(21)
 
-    -- Read on the phone while this one waited: the phone's is newer, and stays.
+    -- Read on the phone while this one waited: nothing is lost before the reader chooses.
     mock_get("/test/fail_writes?n=100")
     open(menu, "Книга номер 0")
     reader().rolling:onGotoViewRel(5)
     UIManager:forceRePaint()
+    read_to = reader().document:getCurrentPage()
     reader():onHome()
     wait("the position to wait", waiting, 15)
     moment() -- the attempts on leaving are over
@@ -231,15 +246,89 @@ local function test_position_upload()
     mock_get("/test/fail_writes?n=0")
     menu = library_with(21)
     menu.on_refresh()
-    wait("the waiting position dropped", function() return not waiting() end, 20)
-    if position().start ~= phone then fail("the phone's reading was overwritten: " .. tostring(position().start)) end
     wait("the library to show the phone's position", function()
         return (find_item(top(), "Книга номер 0").card.cfi or ""):find("/6/72!", 1, true)
     end, 15)
+    if position().start ~= phone then fail("the phone's reading was overwritten: " .. tostring(position().start)) end
+    if not waiting() then fail("the reading here was dropped without asking") end
     menu = library_with(21)
-    open(menu, "Книга номер 0")
+    menu:onMenuSelect(find_item(menu, "Книга номер 0"))
+    local box = asked()
+    if reader().document:getCurrentPage() ~= read_to then
+        fail("moved before the answer: page " .. reader().document:getCurrentPage() .. ", was " .. read_to)
+    end
+    if not box.text:find("здесь", 1, true) then fail("question without percentages: " .. box.text) end
+    answer(box, true)
     local n = fragment()
     if n ~= 36 then fail("the phone's position was not taken: chapter " .. tostring(n)) end
+    if waiting() then fail("the reading here was kept after going to the phone's") end
+    moment()
+    if position().start ~= phone then fail("going there sent a position: " .. tostring(position().start)) end
+    if top().ok_text then fail("asked again after the answer") end
+
+    -- Taken: reopening does not ask.
+    reader():onHome()
+    menu = library_with(21)
+    moment()
+    open(menu, "Книга номер 0")
+    moment()
+    if top().ok_text then fail("asked about a position already taken") end
+    if fragment() ~= 36 then fail("left the phone's position: " .. tostring(fragment())) end
+
+    -- The book opened before the list had heard of the phone: it asks all the same.
+    reader():onHome()
+    menu = library_with(21)
+    moment()
+    phone = "/6/40!/2/4/2/4/1:0"
+    mock_get("/test/phone_read?book=" .. BOOK .. "&start=" .. url_encode(phone))
+    menu:onMenuSelect(find_item(menu, "Книга номер 0"))
+    box = asked()
+    if fragment() ~= 36 then fail("moved without asking: " .. tostring(fragment())) end
+
+    -- Stayed: no asking again, and what is read from here goes to Yandex.
+    answer(box, false)
+    moment()
+    if top().ok_text then fail("asked again after staying") end
+    if fragment() ~= 36 then fail("moved after staying: " .. tostring(fragment())) end
+    reader().rolling:onGotoViewRel(3)
+    UIManager:forceRePaint()
+    want = reader().yaknigi:positionOf(reader().document:getXPointer())
+    reader():onHome()
+    wait("the position sent after staying", function() return position().start == want end, 15)
+    wait("nothing left to send after staying", function() return not waiting() end, 15)
+    menu = library_with(21)
+    open(menu, "Книга номер 0")
+    moment()
+    if top().ok_text then fail("asked about its own position") end
+
+    -- Read on the phone while this one slept, and it is noticed on waking.
+    phone = "/6/42!/2/4/2/4/1:0"
+    mock_get("/test/phone_read?book=" .. BOOK .. "&start=" .. url_encode(phone))
+    UIManager:broadcastEvent(Event:new("Suspend"))
+    UIManager:broadcastEvent(Event:new("Resume"))
+    answer(asked(), true)
+    if fragment() ~= 21 then fail("waking did not lead to the phone's position: " .. tostring(fragment())) end
+
+    -- Wi-Fi is still coming back when the device wakes.
+    moment()
+    phone = "/6/44!/2/4/2/4/1:0"
+    mock_get("/test/phone_read?book=" .. BOOK .. "&start=" .. url_encode(phone))
+    mock_get("/test/fail_card?n=1")
+    UIManager:broadcastEvent(Event:new("Resume"))
+    answer(asked(), true)
+    if fragment() ~= 22 then fail("no second try after waking: " .. tostring(fragment())) end
+
+    -- A page turned without waking, or before the answer: the phone's reading stays.
+    moment()
+    phone = "/6/46!/2/4/2/4/1:0"
+    mock_get("/test/phone_read?book=" .. BOOK .. "&start=" .. url_encode(phone))
+    reader().rolling:onGotoViewRel(1)
+    UIManager:forceRePaint()
+    reader().yaknigi:onSaveSettings()
+    box = asked()
+    if position().start ~= phone then fail("a turned page overwrote the phone: " .. tostring(position().start)) end
+    answer(box, true)
+    if fragment() ~= 23 then fail("the phone's position after a turned page: " .. tostring(fragment())) end
     say("position upload works")
 end
 
@@ -541,6 +630,7 @@ local function script()
     -- Reaching an unfetched chapter: a stub at first, then the real one.
     reader():onHome()
     menu = library_with(21)
+    mock_get("/test/chapter_delay?s=1")
     open(menu, "Книга номер 2")
     if reader().yaknigi.store:is_whole() then fail("second book is already whole") end
     local rolling = reader().rolling
@@ -558,6 +648,31 @@ local function script()
     say(("chapter arrived after %.1fs"):format(socket.gettime() - t0))
     shot("08-after-stub")
 
+    -- The phone is in a chapter that has not arrived: on its stub, then at the place itself.
+    local far = reader().yaknigi.store
+    local far_chapter
+    for i = #far.paths, 1, -1 do
+        if not far:has(far.paths[i]) then far_chapter = i; break end
+    end
+    if not far_chapter then fail("every chapter has arrived too soon") end
+    say("the phone's chapter is not here yet:", far_chapter)
+    mock_get("/test/phone_read?book=book2&start=" .. url_encode(("/6/%d!/2/4/2/40/1:0"):format(far_chapter * 2)))
+    UIManager:broadcastEvent(Event:new("Resume"))
+    answer(asked(), true)
+    n, xp = fragment()
+    if n ~= far_chapter then fail("not waiting in the chapter: " .. tostring(xp)) end
+    mock_get("/test/chapter_delay?s=0.1")
+    wait("the phone's chapter", function()
+        return reader() and top().name == "ReaderUI" and page_text():find("абзац", 1, true)
+            and not reader().yaknigi:stubs()[far_chapter]
+    end, 30)
+    local doc = reader().document
+    n, xp = fragment()
+    if n ~= far_chapter then fail("left the phone's chapter: " .. tostring(xp)) end
+    if doc:getPageFromXPointer(xp) <= doc:getPageFromXPointer(("/body/DocFragment[%d]"):format(far_chapter)) then
+        fail("at the start of the phone's chapter, not at its place: " .. xp)
+    end
+
     -- Text settings are one for all books, even a book with its own settings saved.
     G_reader_settings:saveSetting("copt_line_spacing", 130)
     reader():onHome()
@@ -569,14 +684,6 @@ local function script()
     if reader().document.configurable.line_spacing ~= 130 then
         fail("text settings are per book: " .. tostring(reader().document.configurable.line_spacing))
     end
-
-    -- Read on the phone: Yandex has a new position, and it wins over the one here.
-    reader():onHome()
-    menu = library_with(21)
-    find_item(menu, "Книга номер 0").card.cfi = "/6/70!,/2/4/2/6/1:7,/2/4/2/6/1:9"
-    open(menu, "Книга номер 0")
-    n, xp = fragment()
-    if n ~= 35 then fail("the position from the phone was ignored: " .. tostring(xp)) end
 
     -- Leaving through the library's close button quits the app.
     reader():onHome()

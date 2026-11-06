@@ -52,6 +52,9 @@ end
 function Sync.send(api, dir)
     local position = read_waiting(dir)
     if not position then return nil, "nothing" end
+    -- Before the request: the answer may be lost after the position has moved, and
+    -- coming back from Yandex it would look like reading on another device.
+    Session.note_sent(dir, position.start)
     local ok, kind, detail = api:send_position(position)
     local rejected = kind == "not_found" or (kind == "http" and detail ~= "graphql" and (tonumber(detail) or 500) < 500)
     if ok or rejected then
@@ -60,12 +63,29 @@ function Sync.send(api, dir)
         if now and now.start == position.start then os.remove(dir .. "/to_send") end
     end
     if not ok then return nil, kind end
-    Session.note_sent(dir, position.start)
     return position
 end
 
+--- Asks Yandex where the book is, and sends what is waiting only if nobody has read it
+-- elsewhere since. Otherwise it would overwrite that reading, so it leaves the question
+-- for the reader. Leaves a "checked" file if Yandex answered.
+function Sync.exchange(api, dir, card_uuid)
+    local card, kind = api:card(card_uuid)
+    if not card then
+        if kind == "not_found" then os.remove(dir .. "/to_send") end
+        return nil, kind
+    end
+    local f = io.open(dir .. "/checked", "wb")
+    if f then f:close() end
+    if Session.server_moved({ dir = dir }, card, true) then
+        Session.note_news(dir, card)
+        return nil, "moved"
+    end
+    return Sync.send(api, dir)
+end
+
 --- Sends what could not go earlier, for every book. A book that has since been read on
--- the phone is left alone: that reading is newer, and the book will open there.
+-- another device is left alone, for the reader to choose when opening it.
 -- Updates the cards to match.
 function Sync.send_waiting(api, books, cards)
     local by_book = {}
@@ -77,7 +97,7 @@ function Sync.send_waiting(api, books, cards)
         local dir = books .. "/" .. id
         if card and read_waiting(dir) then
             if Session.server_moved({ dir = dir }, card, true) then
-                os.remove(dir .. "/to_send")
+                Session.note_news(dir, card)
             else
                 local position, kind = Sync.send(api, dir)
                 if position then

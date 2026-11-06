@@ -40,6 +40,8 @@ os.execute("mkdir -p '" .. BOOKS .. "' '" .. COVERS .. "'")
 -- The app mode shows the library instead of the file manager, and leaves with it.
 local APP_MODE = os.getenv("YAKNIGI_APP") == "1"
 local POLL_SECONDS = 2
+-- Wi-Fi takes a while to come back after sleep. Pauses between tries to reach Yandex.
+local WAKE_RETRY_SECONDS = { 5, 15, 30 }
 
 -- KOReader quits when its last screen closes, which its own Exit and any failure to open
 -- something would do. Only "Закрыть приложение" should end the app: go back to the library.
@@ -365,10 +367,15 @@ function Yaknigi:openCard(card)
     local id = card.book and card.book.uuid
     local store = Store.open(BOOKS, id)
     if store and store:is_whole() then
-        -- Nothing to wait for, not even the network.
-        local moved = Session.server_moved(store, card, saved_fragment(store.epub) ~= nil)
-        if not moved then Session.remember(store, card) end
-        self:showBook(store, moved and Session.jump_for(store, card) or nil)
+        -- Nothing to wait for, not even the network. The reader asks Yandex once it is open.
+        local has_local = saved_fragment(store.epub) ~= nil
+        local moved = Session.server_moved(store, card, has_local)
+        if moved and not has_local then
+            self:showBook(store, Session.jump_for(store, card))
+            return
+        end
+        Session.opening_here(store, card, moved)
+        self:showBook(store)
         return
     end
     NetworkMgr:runWhenOnline(function() self:loadAndOpen(card, store) end)
@@ -413,7 +420,10 @@ function Yaknigi:showBook(store, xpointer, target, stubs)
         if xpointer then ui.rolling:onGotoXPointer(xpointer) end
         -- Only reading moves the position. Sending this one back would be a step behind
         -- the phone, as what comes from Yandex lands at the start of its paragraph.
-        if ui.yaknigi then ui.yaknigi.base_xp = ui.document:getXPointer() end
+        if ui.yaknigi then
+            ui.yaknigi.base_xp = ui.document:getXPointer()
+            ui.yaknigi:exchange()
+        end
     end)
 end
 
@@ -472,6 +482,8 @@ function Yaknigi:onReaderReady()
     end
     local state = workers[store.id] or {}
     workers[store.id] = state
+    self:jumpIfWaiting(state)
+    UIManager:nextTick(function() self:askAboutNews() end)
     if store:is_whole() and not next(state.stubs or {}) then return end
 
     -- Reopened without going through the library: work out what is a stub.
@@ -612,16 +624,121 @@ function Yaknigi:sendPosition()
         }, now - (self.queued_at or now))
         self.queued_at = now
     end
-    if not Sync.waiting(store.dir) then return end
-    if self.send_pid and not ffiutil.isSubProcessDone(self.send_pid) then return end
+    if Sync.waiting(store.dir) then self:exchange() end
+end
+
+--- In a forked process, as the network may be slow or not there: finds out where Yandex
+-- has the book, and sends what is waiting if that does not overwrite other reading.
+function Yaknigi:exchange()
+    local store = self.store
+    if self.closed or not store or not self.shell then return end
+    if self.send_pid and not ffiutil.isSubProcessDone(self.send_pid) then
+        -- It may have heard from Yandex before the device went to sleep, say.
+        self.exchange_again = true
+        return
+    end
+    local token = saved_token()
+    local card = Session.read_card(store.dir)
+    if not token or not card then return end
     local dir = store.dir
+    os.remove(dir .. "/checked")
     self.send_pid = ffiutil.runInSubProcess(function()
         local api = Api.new(token)
-        local ok, kind = Sync.send(api, dir)
+        local ok, kind = Sync.exchange(api, dir, card)
         api:close()
         if not ok then logger.info("yaknigi: position not sent:", kind) end
         os.exit(0)
     end)
+    if self.send_pid then self:pollExchange() end
+end
+
+function Yaknigi:pollExchange()
+    UIManager:scheduleIn(0.5, function()
+        if self.closed then return end
+        if not ffiutil.isSubProcessDone(self.send_pid) then
+            self:pollExchange()
+            return
+        end
+        if self.exchange_again then
+            self.exchange_again = false
+            self:exchange()
+            return
+        end
+        self:askAboutNews()
+        local f = io.open(self.store.dir .. "/checked", "rb")
+        if f then
+            f:close()
+            self.wake_try = nil
+        elseif self.wake_try then
+            local pause = WAKE_RETRY_SECONDS[self.wake_try]
+            self.wake_try = pause and self.wake_try + 1 or nil
+            if pause then UIManager:scheduleIn(pause, function() self:exchange() end) end
+        end
+    end)
+end
+
+--- Yandex has the book at a place this device has not seen: asks whether to go there.
+-- Until it is answered, nothing read here is sent.
+function Yaknigi:askAboutNews()
+    if self.closed or self.prompt or not self.shell or not self.ui.document then return end
+    local news = Session.read_news(self.store.dir)
+    if not news then return end
+    local here = math.floor(self.shell:progress() * 100 + 0.5)
+    local where = news.progress and ("\nТам %d%%, здесь %d%%."):format(news.progress, here) or ""
+    self.prompt = ConfirmBox:new{
+        text = "Эту книгу читали на другом устройстве." .. where .. "\nПерейти туда?",
+        ok_text = "Перейти",
+        cancel_text = "Остаться",
+        dismissable = false,
+        ok_callback = function()
+            self.prompt = nil
+            self:goToNews()
+        end,
+        cancel_callback = function()
+            self.prompt = nil
+            self:stayHere()
+        end,
+    }
+    UIManager:show(self.prompt)
+end
+
+function Yaknigi:goToNews()
+    local store = self.store
+    local news = Session.read_news(store.dir)
+    if not news then return end
+    Session.remember(store, news, true)
+    self.queued = nil
+    self.ui.link:addCurrentLocationToStack()
+    local state = workers[store.id]
+    state.jump_cfi = news.cfi
+    self:jumpIfWaiting(state)
+    if not state.jump_cfi then return end
+    -- That chapter has not arrived. Wait on its stub: the reader is rebuilt when it does.
+    local target = store:fragment_of_spine_index(Cfi.spine_index(news.cfi))
+    Background.set_priority(store, target)
+    self.ui.rolling:onGotoXPointer(("/body/DocFragment[%d]"):format(target))
+    self.base_xp = self.ui.document:getXPointer()
+end
+
+--- Goes to the place asked for, if its chapter is in the book by now.
+function Yaknigi:jumpIfWaiting(state)
+    local cfi, store = state.jump_cfi, self.store
+    if not cfi then return end
+    local target = store:fragment_of_spine_index(Cfi.spine_index(cfi))
+    if (state.stubs or {})[target] or not store:has(store.paths[target]) then return end
+    state.jump_cfi = nil
+    self.ui.rolling:onGotoXPointer(Cfi.to_xpointer(cfi, target, store:read(store.paths[target])))
+    self.base_xp = self.ui.document:getXPointer()
+end
+
+function Yaknigi:stayHere()
+    local store = self.store
+    local news = Session.read_news(store.dir)
+    if not news then return end
+    Session.remember(store, news)
+    workers[store.id].jump_cfi = nil
+    -- What was held back can go now.
+    if Sync.waiting(store.dir) then self:exchange() end
 end
 
 function Yaknigi:saveReading()
@@ -634,12 +751,24 @@ end
 function Yaknigi:onSuspend()
     -- The phone may be next: do not leave it a position behind.
     self:saveReading()
+    self.wake_try = nil
+end
+
+function Yaknigi:onResume()
+    -- The phone may have been read while this one slept.
+    self.wake_try = 1
+    self:exchange()
 end
 
 function Yaknigi:onCloseDocument()
     self:stopPoll()
     -- KOReader closes the document before its last SaveSettings, so that one is too late.
     self:saveReading()
+    self.closed = true
+    if self.prompt then
+        UIManager:close(self.prompt)
+        self.prompt = nil
+    end
 end
 
 function Yaknigi:onSaveSettings()

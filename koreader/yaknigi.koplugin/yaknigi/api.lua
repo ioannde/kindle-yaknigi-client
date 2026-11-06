@@ -117,6 +117,14 @@ function Api:send_position(p)
     return true
 end
 
+--- Returns one library card as it is now.
+function Api:card(uuid)
+    local data, kind, detail = self:get_json(API_BASE .. "/profile/library_cards/" .. encode(uuid))
+    if not data then return nil, kind, detail end
+    if type(data.library_card) ~= "table" then return nil, "http", "no card" end
+    return drop_nulls(data.library_card)
+end
+
 --- Returns every library card, fetching all pages.
 function Api:library()
     local cards = {}

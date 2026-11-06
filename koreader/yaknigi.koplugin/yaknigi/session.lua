@@ -6,7 +6,8 @@ local Store = require("yaknigi/store")
 local Session = {}
 
 --- Returns the store ready to be opened, the stubs, and the xpointer to jump to (or
--- nil to stay at the saved position). On failure returns nil, kind, detail.
+-- nil to stay at the saved position; the reader then asks, if Yandex has another).
+-- On failure returns nil, kind, detail.
 -- local_fragment is where the saved position is, if the book was read here before.
 function Session.prepare(root, api, card, local_fragment)
     local id = card.book and card.book.uuid
@@ -21,7 +22,8 @@ function Session.prepare(root, api, card, local_fragment)
     end
     if #store.paths == 0 then return nil, "http", "empty spine" end
 
-    local use_server = Session.server_moved(store, card, local_fragment ~= nil)
+    local moved = Session.server_moved(store, card, local_fragment ~= nil)
+    local use_server = moved and not local_fragment
     local target = use_server
         and store:fragment_of_spine_index(Cfi.spine_index(card.cfi))
         or local_fragment or 1
@@ -52,7 +54,11 @@ function Session.prepare(root, api, card, local_fragment)
     end
     local stubs, err = store:build()
     if not stubs then return nil, "disk", err end
-    Session.remember(store, card, use_server)
+    if use_server then
+        Session.remember(store, card, true)
+    else
+        Session.opening_here(store, card, moved)
+    end
     return store, stubs, xpointer, target
 end
 
@@ -76,6 +82,10 @@ local function write_file(path, data)
     if not f then return end
     f:write(data)
     f:close()
+end
+
+local function write_card(dir, card)
+    write_file(dir .. "/card", ("%s %s"):format(tostring(card.uuid), tostring(card.state)))
 end
 
 -- Positions sent from here since Yandex last had one of its own, one per line. The
@@ -107,7 +117,7 @@ end
 --- moved: the book is going to Yandex's position, so what was waiting to be sent is old.
 function Session.remember(store, card, moved)
     local dir = store.dir
-    write_file(dir .. "/card", ("%s %s"):format(tostring(card.uuid), tostring(card.state)))
+    write_card(dir, card)
     if moved then
         os.remove(dir .. "/sent")
         os.remove(dir .. "/to_send")
@@ -118,6 +128,23 @@ function Session.remember(store, card, moved)
     if sent[#sent] == Cfi.start(card.cfi) then os.remove(dir .. "/sent") end
 end
 
+--- Yandex has a position this device has not seen, and there is one here as well. Which
+-- of them is right is for the reader to say, so it stays unseen until then.
+function Session.note_news(dir, card)
+    write_card(dir, card)
+    write_file(dir .. "/news.tmp", ("%s %s"):format(tonumber(card.progress) or "-", card.cfi))
+    os.rename(dir .. "/news.tmp", dir .. "/news")
+end
+
+--- The book opens at the position saved here.
+function Session.opening_here(store, card, moved)
+    if moved then
+        Session.note_news(store.dir, card)
+    else
+        Session.remember(store, card)
+    end
+end
+
 --- Returns the card's uuid and state, as last seen when opening the book.
 function Session.read_card(dir)
     local uuid, state = (read_file(dir .. "/card") or ""):match("^(%S+) (%S+)$")
@@ -125,8 +152,22 @@ function Session.read_card(dir)
     return uuid, state ~= "nil" and state or nil
 end
 
+--- The position waiting for an answer as a card, or nil. One decided on since is old.
+function Session.read_news(dir)
+    local text = read_file(dir .. "/news")
+    if not text then return nil end
+    local progress, cfi = text:match("^(%S+) (%S+)$")
+    if not cfi or is_known(dir, cfi) then
+        os.remove(dir .. "/news")
+        return nil
+    end
+    local uuid, state = Session.read_card(dir)
+    return { uuid = uuid, state = state, cfi = cfi, progress = tonumber(progress) }
+end
+
 function Session.note_sent(dir, start)
     local sent = sent_positions(dir)
+    if sent[#sent] == start then return end
     sent[#sent + 1] = start
     -- Only the latest can come back; a few more cover a library that is behind.
     local from = math.max(1, #sent - 20)
