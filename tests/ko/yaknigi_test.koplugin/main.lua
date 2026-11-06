@@ -74,6 +74,7 @@ local function library_with(count)
 end
 
 local function tap_at(x, y)
+    UIManager:forceRePaint() -- a finger only ever taps what is on the screen
     UIManager:sendEvent(Event:new("Gesture", {
         ges = "tap",
         pos = Geom:new{ x = x, y = y, w = 0, h = 0 },
