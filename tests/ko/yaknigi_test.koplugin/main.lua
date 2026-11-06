@@ -225,9 +225,11 @@ local function test_position_upload()
     local read_to = doc:getCurrentPage()
     local want = reader().yaknigi:positionOf(doc:getXPointer())
     reader():onHome()
+    -- Two requests, one after the other: the position, then the library card.
+    local want_cfi = require("yaknigi/cfi").point_range(want)
     wait("the position on the server", function() return position().start == want end, 15)
+    wait("the position on the card", function() return position().sent_cfi == want_cfi end, 15)
     sent = position()
-    if sent.sent_cfi ~= require("yaknigi/cfi").point_range(want) then fail("card got " .. tostring(sent.sent_cfi)) end
     if sent.state ~= "reading" then fail("state " .. tostring(sent.state)) end
     if sent.progress < 1 then fail("progress " .. tostring(sent.progress)) end
     wait("nothing left to send", function() return not waiting() end, 15)
