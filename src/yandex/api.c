@@ -94,35 +94,47 @@ static int bookmate_get(const char *token, const char *url, cJSON **out_json) {
     return 0;
 }
 
+/* Safety limit in case the server never returns an empty page. */
+#define YB_LIBRARY_MAX_PAGES 500
+
+/* Pages vary in size (a short page is not the last one): the list ends only at
+ * an empty page. A failed page fails the whole call, so a partial library is
+ * never shown as complete. */
 int yb_api_get_my_library(const char *token, yb_library *out) {
     memset(out, 0, sizeof(*out));
 
-    char url[512];
-    snprintf(url, sizeof(url), "%s/profile/library_cards", yb_api_base());
+    for (int page = 1; page <= YB_LIBRARY_MAX_PAGES; ++page) {
+        char url[512];
+        snprintf(url, sizeof(url), "%s/profile/library_cards?page=%d", yb_api_base(), page);
 
-    cJSON *root = NULL;
-    int rc = bookmate_get(token, url, &root);
-    if (rc != 0) return rc;
+        cJSON *root = NULL;
+        int rc = bookmate_get(token, url, &root);
+        if (rc != 0) { yb_library_free(out); return rc; }
 
-    const cJSON *arr = find_items_array(root);
-    if (!arr) {
-        YB_ERR("library: no items array in response");
-        cJSON_Delete(root);
-        return -1;
-    }
+        const cJSON *arr = find_items_array(root);
+        if (!arr) {
+            YB_ERR("library: no items array in response");
+            cJSON_Delete(root);
+            yb_library_free(out);
+            return -1;
+        }
 
-    int n = cJSON_GetArraySize(arr);
-    if (n > 0) {
-        out->items = calloc((size_t)n, sizeof(yb_library_card));
-        if (!out->items) { cJSON_Delete(root); return -1; }
+        int n = cJSON_GetArraySize(arr);
+        if (n == 0) { cJSON_Delete(root); return 0; }
+
+        yb_library_card *items = realloc(out->items, (out->count + (size_t)n) * sizeof(*items));
+        if (!items) { cJSON_Delete(root); yb_library_free(out); return -1; }
+        out->items = items;
         for (int i = 0; i < n; ++i) {
             const cJSON *item = cJSON_GetArrayItem(arr, i);
             if (yb_library_card_parse(item, &out->items[out->count]) == 0)
                 out->count++;
         }
+        cJSON_Delete(root);
     }
-    cJSON_Delete(root);
-    return 0;
+    YB_ERR("library: no empty page after %d pages", YB_LIBRARY_MAX_PAGES);
+    yb_library_free(out);
+    return -1;
 }
 
 int yb_api_get_book(const char *token, const char *uuid, yb_book *out) {
