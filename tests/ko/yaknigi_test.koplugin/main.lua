@@ -1058,6 +1058,7 @@ local function test_books_and_memory(settings)
     shot("67-cleared")
 
     -- And with the saved books, after asking.
+    wait("the word about what was freed to go", function() return top() == settings end)
     tap_widget(settings.cache_rows.books)
     if not settings.cache.picks.books then fail("the switch of the saved books") end
     settings.cache.freed = nil
