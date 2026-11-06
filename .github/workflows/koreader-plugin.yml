@@ -2,7 +2,7 @@ name: KOReader plugin
 on:
   push:
     branches: [claude/kindle-client-mvp]
-    paths: ['koreader/**', 'tests/ko/**', 'tests/lua/**', 'tools/mock/**', '.github/workflows/koreader-plugin.yml']
+    paths: ['koreader/**', 'kual/**', 'tests/ko/**', 'tests/lua/**', 'tools/mock/**', '.github/workflows/koreader-plugin.yml']
   workflow_dispatch:
 permissions:
   contents: read

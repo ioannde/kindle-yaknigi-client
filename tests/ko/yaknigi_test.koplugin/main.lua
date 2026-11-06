@@ -1,6 +1,8 @@
 -- Drives the real KOReader UI through the plugin against the mock server, in CI.
 -- Writes screenshots and timings to YAKNIGI_TEST_OUT and "PASS" there at the end;
 -- any failure exits at once with a non-zero code.
+local Event = require("ui/event")
+local Geom = require("ui/geometry")
 local Screen = require("device").screen
 local UIManager = require("ui/uimanager")
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
@@ -71,6 +73,119 @@ local function library_with(count)
     end)
 end
 
+local function tap_at(x, y)
+    UIManager:sendEvent(Event:new("Gesture", {
+        ges = "tap",
+        pos = Geom:new{ x = x, y = y, w = 0, h = 0 },
+        time = require("ui/time").now(),
+    }))
+end
+
+local function tap_widget(widget)
+    UIManager:forceRePaint() -- a widget learns its place when painted
+    local d = widget.dimen
+    tap_at(d.x + math.floor(d.w / 2), d.y + math.floor(d.h / 2))
+    UIManager:forceRePaint()
+end
+
+local function is_named(name) return function() return top().name == name end end
+
+-- The reading screen, driven by taps at the place a finger would touch.
+local function test_reading_screen()
+    local W, H = Screen:getWidth(), Screen:getHeight()
+    local doc = reader().document
+
+    -- A plain page: no KOReader panel opens from any band of the screen.
+    shot("10-reading")
+    local page = doc:getCurrentPage()
+    tap_at(W - 40, 40) -- top right, KOReader's menu band: turns the page
+    wait("a page turn from the top band", function() return doc:getCurrentPage() == page + 1 end)
+    if top().name ~= "ReaderUI" then fail("top band opened " .. tostring(top().name)) end
+    tap_at(40, H - 40) -- bottom left, KOReader's settings band: turns back
+    wait("a page back from the bottom band", function() return doc:getCurrentPage() == page end)
+    if top().name ~= "ReaderUI" then fail("bottom band opened " .. tostring(top().name)) end
+
+    -- The middle brings up the panels, a tap on the text takes them away.
+    tap_at(W / 2, H / 2)
+    wait("the panels", is_named("YaknigiChrome"))
+    local chrome = top()
+    shot("11-chrome")
+    tap_at(W / 2, H / 2)
+    wait("the panels to close", is_named("ReaderUI"))
+
+    -- Bookmark.
+    tap_at(W / 2, H / 2)
+    wait("the panels", is_named("YaknigiChrome"))
+    chrome = top()
+    tap_widget(chrome.bookmark_button)
+    if not reader().bookmark:isPageBookmarked() then fail("the bookmark was not set") end
+    shot("12-chrome-bookmarked")
+    tap_widget(chrome.bookmark_button)
+    if reader().bookmark:isPageBookmarked() then fail("the bookmark was not removed") end
+
+    -- Slider: a tap at the middle goes to the middle of the book.
+    local pages = doc:getPageCount()
+    tap_at(chrome.slider.dimen.x + math.floor(chrome.slider.width / 2), chrome.slider.dimen.y + 5)
+    local now = doc:getCurrentPage()
+    if math.abs(now - pages / 2) > pages * 0.02 then fail("slider went to " .. now .. " of " .. pages) end
+    shot("13-chrome-slider")
+    tap_at(W / 2, H / 2)
+    wait("the panels to close", is_named("ReaderUI"))
+    reader().rolling:onGotoXPointer("/body/DocFragment[31]")
+
+    -- Contents.
+    tap_at(W / 2, H / 2)
+    wait("the panels", is_named("YaknigiChrome"))
+    tap_widget(top().chapter_row)
+    wait("the contents", function() return top().name ~= "YaknigiChrome" and top().name ~= "ReaderUI" end)
+    shot("14-contents")
+    UIManager:close(top())
+    wait("the page", is_named("ReaderUI"))
+
+    -- The text panel. Each change must reach the document and stay for other books.
+    tap_at(W / 2, H / 2)
+    wait("the panels", is_named("YaknigiChrome"))
+    tap_widget(top().text_button)
+    wait("the text panel", is_named("YaknigiTextPanel"))
+    local panel = top()
+    shot("15-text-panel")
+    local config = doc.configurable
+    local size = config.font_size
+    tap_widget(panel.size_up)
+    if config.font_size ~= size + 1 then fail("size is " .. tostring(config.font_size)) end
+    if G_reader_settings:readSetting("copt_font_size") ~= size + 1 then fail("size is not the default") end
+    tap_widget(panel.size_down)
+    tap_widget(panel.font_next)
+    local font = reader().font.font_face
+    if font == "Noto Serif" then fail("the font did not change") end
+    shot("16-text-panel-font")
+    tap_widget(panel.font_prev)
+    if reader().font.font_face ~= "Noto Serif" then fail("the font did not come back") end
+    tap_widget(panel.spacing[3])
+    if config.line_spacing ~= 130 then fail("spacing is " .. tostring(config.line_spacing)) end
+    tap_widget(panel.spacing[2])
+    tap_widget(panel.margins[3])
+    if config.h_page_margins[1] ~= 35 then fail("margins are " .. tostring(config.h_page_margins[1])) end
+    shot("17-text-panel-wide")
+    tap_widget(panel.margins[2])
+    tap_at(W / 2, 100)
+    wait("the page", is_named("ReaderUI"))
+
+    -- Night mode, there and back.
+    tap_at(W / 2, H / 2)
+    wait("the panels", is_named("YaknigiChrome"))
+    tap_widget(top().text_button)
+    wait("the text panel", is_named("YaknigiTextPanel"))
+    panel = top()
+    tap_widget(panel.theme[2])
+    if not G_reader_settings:isTrue("night_mode") then fail("night mode did not turn on") end
+    shot("18-night")
+    tap_widget(top().theme[1])
+    if G_reader_settings:isTrue("night_mode") then fail("night mode did not turn off") end
+    tap_at(W / 2, 100)
+    wait("the page", is_named("ReaderUI"))
+end
+
 local function find_item(menu, needle)
     for _, item in ipairs(menu.item_table) do
         if item.text:find(needle, 1, true) then return item end
@@ -126,6 +241,17 @@ local function script()
     end
 
     -- A serial explains itself rather than failing silently.
+    wait("the covers", function()
+        for _, item in ipairs(menu.item_table) do
+            if not item.cover then return false end
+        end
+        return true
+    end)
+    menu:turn(1)
+    shot("03b-library-page-2")
+    menu:turn(-1)
+    shot("03c-library-covers")
+
     menu:onMenuSelect(find_item(menu, "Сериал"))
     wait("the serial message", function() return (top().text or ""):find("Сериалы", 1, true) end)
     shot("04-serial")
@@ -162,6 +288,9 @@ local function script()
     n, xp = fragment()
     if n ~= 31 then fail("position lost in the swap: " .. tostring(xp)) end
     shot("06-reader-whole")
+    test_reading_screen()
+    n, xp = fragment()
+    if n ~= 31 then fail("left the chapter in the panels: " .. tostring(xp)) end
 
     -- TOC and paging work on the swapped document.
     local before = reader().document:getCurrentPage()
@@ -199,6 +328,15 @@ local function script()
     if n ~= 35 then fail("left the chapter: " .. tostring(xp)) end
     say(("chapter arrived after %.1fs"):format(socket.gettime() - t0))
     shot("08-after-stub")
+
+    -- Text settings are one for all books, even a book with its own settings saved.
+    G_reader_settings:saveSetting("copt_line_spacing", 130)
+    reader():onHome()
+    menu = library_with(21)
+    open(menu, "Книга номер 0")
+    if reader().document.configurable.line_spacing ~= 130 then
+        fail("text settings are per book: " .. tostring(reader().document.configurable.line_spacing))
+    end
 
     -- Leaving through the library's close button quits the app.
     reader():onHome()

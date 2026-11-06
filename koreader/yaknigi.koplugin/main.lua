@@ -10,7 +10,6 @@ local DocSettings = require("docsettings")
 local InfoMessage = require("ui/widget/infomessage")
 local InputDialog = require("ui/widget/inputdialog")
 local LuaSettings = require("luasettings")
-local Menu = require("ui/widget/menu")
 local NetworkMgr = require("ui/network/manager")
 local QRMessage = require("ui/widget/qrmessage")
 local Screen = require("device").screen
@@ -22,14 +21,18 @@ local json = require("rapidjson")
 
 local Api = require("yaknigi/api")
 local Background = require("yaknigi/background")
+local Covers = require("yaknigi/covers")
 local Crypt = require("yaknigi/crypt")
+local Library = require("yaknigi/library")
 local Session = require("yaknigi/session")
+local Shell = require("yaknigi/shell")
 local Store = require("yaknigi/store")
 
 local ROOT = DataStorage:getDataDir() .. "/yaknigi"
 local BOOKS = ROOT .. "/books"
+local COVERS = ROOT .. "/covers"
 local LIBRARY_CACHE = ROOT .. "/library.json"
-os.execute("mkdir -p '" .. BOOKS .. "'")
+os.execute("mkdir -p '" .. BOOKS .. "' '" .. COVERS .. "'")
 
 -- The app mode shows the library instead of the file manager, and leaves with it.
 local APP_MODE = os.getenv("YAKNIGI_APP") == "1"
@@ -148,15 +151,13 @@ end
 
 -- Library ---------------------------------------------------------------------
 
-local function card_title(card)
+local function card_authors(card)
     local book = card.book or {}
     local authors = {}
     for _, a in ipairs(book.authors_objects or book.authors or {}) do
         if type(a) == "table" and a.name then authors[#authors + 1] = a.name end
     end
-    local title = book.title or "?"
-    if #authors > 0 then title = title .. " — " .. table.concat(authors, ", ") end
-    return title
+    return table.concat(authors, ", ")
 end
 
 local function sorted_cards(cards)
@@ -174,53 +175,95 @@ local function sorted_cards(cards)
     return out
 end
 
+local function is_whole(card)
+    -- Runs for every book on each refresh, so it only looks at the one file. Store.open
+    -- would start a shell for each.
+    local id = card.book and card.book.uuid
+    if type(id) ~= "string" or not id:match("^[%w_%-]+$") then return false end
+    local f = io.open(BOOKS .. "/" .. id .. "/state", "rb")
+    if not f then return false end
+    local state = f:read("*a")
+    f:close()
+    return state == "whole"
+end
+
 function Yaknigi:libraryItems(cards)
     local items = {}
     for _, card in ipairs(sorted_cards(cards)) do
-        local store = card.book and card.book.uuid and Store.open(BOOKS, card.book.uuid)
         local progress = tonumber(card.progress)
+        local title = card.book and card.book.title or "?"
+        local whole = is_whole(card)
         items[#items + 1] = {
-            text = ((store and store:is_whole()) and "✓ " or "") .. card_title(card),
+            text = (whole and "✓ " or "") .. title,
+            title = title,
+            authors = card_authors(card),
             mandatory = progress and progress > 0 and (math.floor(progress) .. "%") or nil,
+            whole = whole,
+            cover = Covers.find(COVERS, card),
             card = card,
         }
     end
     return items
 end
 
+function Yaknigi:fetchCovers(cards)
+    if not NetworkMgr:isOnline() then return end
+    if self.covers_pid and not ffiutil.isSubProcessDone(self.covers_pid) then return end
+    self.covers_pid = Covers.fetch(COVERS, cards)
+    if self.covers_pid then self:scheduleCoverPoll(cards) end
+end
+
+-- Shows covers as they arrive, without touching the screen when none did.
+function Yaknigi:scheduleCoverPoll(cards)
+    UIManager:scheduleIn(POLL_SECONDS, function()
+        if not self.library then return end
+        local done = ffiutil.isSubProcessDone(self.covers_pid)
+        local changed = false
+        for _, item in ipairs(self.library.item_table or {}) do
+            if not item.cover then
+                item.cover = Covers.find(COVERS, item.card)
+                if item.cover then changed = true end
+            end
+        end
+        if changed then self.library:refreshScreen() end
+        if not done then self:scheduleCoverPoll(cards) end
+    end)
+end
+
+function Yaknigi:signOut()
+    UIManager:show(ConfirmBox:new{
+        text = "Выйти из аккаунта Яндекса?",
+        ok_callback = function()
+            save_token(nil)
+            self:showLibrary()
+        end,
+    })
+end
+
 function Yaknigi:showLibrary()
     if self.library then UIManager:close(self.library) end
     local signed_in = saved_token() ~= nil
     local cached = signed_in and read_json(LIBRARY_CACHE) or nil
-    local items
-    if not signed_in then
-        items = { { text = "Войдите по QR-коду, затем коснитесь экрана", sign_in = true } }
-    else
-        items = cached and self:libraryItems(cached) or {}
-    end
-    local menu
-    menu = Menu:new{
-        title = "Яндекс Книги",
+    local items = {}
+    if signed_in and cached then items = self:libraryItems(cached) end
+    local library
+    library = Library:new{
         item_table = items,
-        is_borderless = true,
-        is_popout = false,
-        covers_fullscreen = true,
-        single_line = true,
-        onMenuSelect = function(_menu, item)
-            if item.sign_in then self:showLogin() else self:openCard(item.card) end
-        end,
+        on_sign_in = not signed_in and function() self:showLogin() end or nil,
+        onMenuSelect = function(_library, item) self:openCard(item.card) end,
         close_callback = function()
-            UIManager:close(menu)
+            UIManager:close(library)
             self.library = nil
             if APP_MODE then UIManager:quit() end
         end,
-        title_bar_left_icon = "cre.render.reload",
-        onLeftButtonTap = function() self:refreshLibrary(true) end,
+        on_refresh = function() self:refreshLibrary(true) end,
+        on_sign_out = signed_in and function() self:signOut() end or nil,
     }
-    self.library = menu
-    UIManager:show(menu)
+    self.library = library
+    UIManager:show(library)
     if signed_in then
         UIManager:nextTick(function() self:refreshLibrary(cached == nil) end)
+        if cached then UIManager:nextTick(function() self:fetchCovers(cached) end) end
     else
         UIManager:nextTick(function() self:showLogin() end)
     end
@@ -237,6 +280,7 @@ function Yaknigi:refreshLibrary(tell_failure)
                 self:showLibrary()
             elseif tell_failure then
                 message(error_text(kind), 3)
+                if self.library then self.library:setMessage(error_text(kind)) end
             end
             return
         end
@@ -244,6 +288,7 @@ function Yaknigi:refreshLibrary(tell_failure)
         if self.library then
             self.library:switchItemTable(nil, self:libraryItems(cards))
         end
+        self:fetchCovers(cards)
     end
     if tell_failure then
         NetworkMgr:runWhenOnline(fetch)
@@ -303,10 +348,25 @@ function Yaknigi:showBook(store, xpointer, target, stubs)
     local state = workers[store.id]
     state.target = target or state.target
     state.stubs = stubs or {}
+    self:applyTextDefaults(store.epub)
     local ReaderUI = require("apps/reader/readerui")
     ReaderUI:showReader(store.epub, nil, false, nil, function(ui)
         if xpointer then ui.rolling:onGotoXPointer(xpointer) end
     end)
+end
+
+-- The text settings are one for all books, as in the phone app, but KOReader keeps them
+-- per book. Put the current ones in this book's settings before KOReader reads them.
+function Yaknigi:applyTextDefaults(path)
+    if not DocSettings:hasSidecarFile(path) then return end
+    local doc_settings = DocSettings:open(path)
+    local font = G_reader_settings:readSetting("cre_font")
+    if font then doc_settings:saveSetting("font_face", font) end
+    for _, name in ipairs { "font_size", "line_spacing", "h_page_margins" } do
+        local value = G_reader_settings:readSetting("copt_" .. name)
+        if value ~= nil then doc_settings:saveSetting("copt_" .. name, value) end
+    end
+    doc_settings:flush()
 end
 
 -- Reading ---------------------------------------------------------------------
@@ -328,11 +388,24 @@ function Yaknigi:keepChapter()
     if fragment then self.ui.rolling:onGotoXPointer(fragment) end
 end
 
+function Yaknigi:stubs()
+    local state = self.store and workers[self.store.id]
+    return state and state.stubs or {}
+end
+
+function Yaknigi:paths()
+    return self.store and self.store.paths or {}
+end
+
 function Yaknigi:onReaderReady()
     local store = self:readerStore()
     if not store or not store.manifest then return end
     self.store = store
     self:keepChapter()
+    if APP_MODE then
+        self.shell = Shell.new(self.ui, self)
+        self.shell:install()
+    end
     local state = workers[store.id] or {}
     workers[store.id] = state
     if store:is_whole() and not next(state.stubs or {}) then return end
@@ -434,6 +507,13 @@ end
 
 function Yaknigi:onCloseDocument()
     self:stopPoll()
+end
+
+function Yaknigi:onSetDimensions()
+    -- The screen was rotated; KOReader has laid out its zones for the new shape.
+    if self.shell then
+        UIManager:nextTick(function() self.shell:registerZone() end)
+    end
 end
 
 -- Plugin ----------------------------------------------------------------------

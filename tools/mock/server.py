@@ -11,9 +11,11 @@ reading position, and chapters take a moment to arrive, as for the KOReader plug
 import base64
 import hashlib
 import json
+import struct
 import subprocess
 import sys
 import time
+import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -58,6 +60,17 @@ BIG_CONTAINER = (
 # Chapter 31 (zero-based 30), second-level: div > p number 3, as the app's CFI points.
 BIG_CFI = "/6/62!,/2/4/2/6/1:7,/2/4/2/6/1:9"
 CHAPTER_DELAY = 0.1
+
+
+def cover_png(n):
+    """A small greyscale image, a different shade per book."""
+    w, h = 90, 135
+    shade = 60 + (n * 37) % 160
+    rows = b"".join(b"\0" + bytes([shade if 8 < y < h - 8 else 0] * w) for y in range(h))
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 0, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
 
 
 def big_chapter(path):
@@ -132,6 +145,7 @@ class Handler(BaseHTTPRequestHandler):
                         "title": "Очень длинное название книги, которое не помещается в одну строку экрана"
                                  if i == 1 else f"Книга номер {i}",
                         "authors": [{"name": f"Автор {i}"}],
+                        "cover": {"small": f"http://127.0.0.1:{self.server.server_address[1]}/cover/{i}.png"},
                     },
                 }
                 for i in range(start, min(start + 10, BOOKS))
@@ -145,6 +159,11 @@ class Handler(BaseHTTPRequestHandler):
                 cards[3]["book"]["uuid"] = "serial-1"
                 cards[3]["book"]["title"] = "Сериал"
             self.reply_json(200, {"library_cards": cards})
+        elif url.path.startswith("/cover/"):
+            if self.headers.get("Auth-Token"):
+                self.reply(400, b"the covers' host must not get the token")
+                return
+            self.reply(200, cover_png(int(url.path.split("/")[-1].split(".")[0])))
         elif "serial" in url.path:
             self.reply(404, b"")
         elif url.path.endswith("/metadata/v4"):
