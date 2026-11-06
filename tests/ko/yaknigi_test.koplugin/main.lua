@@ -744,10 +744,10 @@ local function script()
         tap_widget(menu.prev_button)
     end
     if menu.page ~= 1 then fail("the arrow did not turn the library back") end
-    tap_at(40, 40) -- the corner of the way back from a book: not a way out of the app
+    tap_at(40, 100) -- the corner of the way back from a book: not a way out of the app
     UIManager:forceRePaint()
     if top() ~= menu then fail("a tap in the library's corner closed it") end
-    tap_at(40, 40) -- and on the first screen it does nothing at all
+    tap_at(40, 100) -- and on the first screen it does nothing at all
     UIManager:forceRePaint()
     if top() ~= menu or menu.view ~= "home" then fail("a second tap in the corner did something") end
     shot("03c-library-covers")
