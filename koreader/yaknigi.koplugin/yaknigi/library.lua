@@ -174,7 +174,7 @@ function Library:rowButton(item, height)
     elseif self:inLibrary(item) or item.in_library then
         file, action = "cloud.down", function() self.on_save(item) end
     else
-        name, action = "plus", function() self.on_add(item) end
+        file, action = "plus", function() self.on_add(item) end
     end
     return Kit.icon_button(name, height, action, {
         width = Kit.px(ROW_BUTTON_W),

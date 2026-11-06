@@ -910,9 +910,16 @@ local function test_books_and_memory(settings)
     wait("the results", function() return menu.view == "catalogue" and #menu.rows > 0 end)
     local item
     for _, row in ipairs(menu.rows) do
-        if not row.in_library and not menu:inLibrary(row) then item = row; break end
+        if not row.in_library and not menu:inLibrary(row) and row.card.book.uuid ~= "found-denied" then
+            item = row
+            break
+        end
     end
     if not item then fail("no book outside the library on the first page") end
+    -- Found again, with the covers here from the first time.
+    for _, row in ipairs(menu.rows) do
+        if not row.cover then fail("a cover that is here is not shown: " .. row.title) end
+    end
     local id = item.card.book.uuid
     local added_before = count("added")
     UIManager:forceRePaint()

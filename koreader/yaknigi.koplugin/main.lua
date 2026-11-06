@@ -334,7 +334,8 @@ function Yaknigi:fetchCovers(cards)
     self.covers_queue = queue
     if self.covers_pids then self:reapCovers(Covers.stop(self.covers_pids)) end
     self.covers_pids = Covers.fetch(COVERS, queue)
-    if #self.covers_pids > 0 then self:scheduleCoverPoll(self.covers_pids) end
+    -- Also with nothing to fetch: books found anew know nothing of the covers already here.
+    self:scheduleCoverPoll(self.covers_pids)
 end
 
 --- A stopped process stays until it has been asked about.
@@ -605,6 +606,7 @@ function Yaknigi:pollCatalogue(state, pid, path)
         local new
         if result.kind == "ok" then
             new = Catalogue.add(state, result.items, result.cursor)
+            for _, item in ipairs(new) do item.cover = Covers.find(COVERS, item.card) end
         else
             Catalogue.fail(state, catalogue_error(result.kind or "network"))
         end
