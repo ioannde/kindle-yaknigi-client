@@ -20,13 +20,15 @@ trap 'kill $SERVER 2>/dev/null' EXIT
 sleep 1
 
 cd "$KO" || exit 2
-KO_HOME=$HOME_DIR YAKNIGI_APP=1 YAKNIGI_TEST_OUT=$OUT \
-    YB_API_BASE=http://127.0.0.1:$PORT/api/v5 YB_OAUTH_BASE=http://127.0.0.1:$PORT \
-    EMULATE_READER_W=1236 EMULATE_READER_H=1648 EMULATE_READER_DPI=300 \
-    SDL_AUDIODRIVER=dummy \
-    timeout 300 xvfb-run -a -s "-screen 0 1236x1648x24" ./luajit reader.lua -d "$OUT/empty" 2>&1 \
-    | tee "$OUT/koreader.log" | grep -E '\[driver\]|Traceback|attempt to|error' 
-STATUS=${PIPESTATUS[0]}
+{
+    KO_HOME=$HOME_DIR YAKNIGI_APP=1 YAKNIGI_TEST_OUT=$OUT \
+        YB_API_BASE=http://127.0.0.1:$PORT/api/v5 YB_OAUTH_BASE=http://127.0.0.1:$PORT \
+        EMULATE_READER_W=1236 EMULATE_READER_H=1648 EMULATE_READER_DPI=300 \
+        SDL_AUDIODRIVER=dummy \
+        timeout 300 xvfb-run -a -s "-screen 0 1236x1648x24" ./luajit reader.lua -d "$OUT/empty" 2>&1
+    echo $? > "$OUT/status"
+} | tee "$OUT/koreader.log" | grep -E '\[driver\]|Traceback|attempt to|error'
+STATUS=$(cat "$OUT/status")
 # The script's last step closes the app, so running into the time limit means it did not end.
 if [ "$STATUS" = 124 ]; then
     echo "the app did not end when asked to" >&2
