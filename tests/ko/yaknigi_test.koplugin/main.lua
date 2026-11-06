@@ -627,7 +627,9 @@ local function test_reading_screen()
     if cover ~= store:cover_file() then fail("sleep screen shows " .. tostring(cover)) end
     settings:close()
     UIManager:forceRePaint()
-    if top().name ~= "ReaderUI" then fail("settings did not close") end
+    if top().name ~= "YaknigiChrome" then fail("settings did not go back to the panels") end
+    tap_at(W / 2, H / 2)
+    wait("the panels to close", is_named("ReaderUI"))
     -- This is KOReader's own screen, as it would come up on the way to sleep.
     local Screensaver = require("ui/screensaver")
     local ok, err = pcall(function()
