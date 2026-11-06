@@ -1,0 +1,11 @@
+{
+  "items": [
+    {
+      "name": "Yaknigi: проверка устройства",
+      "priority": 0,
+      "action": "/bin/sh",
+      "params": "/mnt/us/extensions/yaknigi-probe/run.sh",
+      "exitmenu": true
+    }
+  ]
+}

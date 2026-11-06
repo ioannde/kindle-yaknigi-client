@@ -1,0 +1,92 @@
+name: Kindle build
+
+on:
+  push:
+    branches: [claude/kindle-client-mvp]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  TC: arm-kindlehf-linux-gnueabihf
+  TC_URL: https://github.com/KindleModding/koxtoolchain/releases/download/2026.04/kindlehf.tar.gz
+  TC_SHA256: d08d3a5cbbaa184cc0cc2279df1d64a71656ab2c1e0223cae324b8d30c8d73e0
+
+jobs:
+  kindlehf:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y meson ninja-build pkg-config cmake qemu-user fonts-dejavu-core
+
+      - name: Install the toolchain
+        run: |
+          curl -fsSL --retry 3 -o /tmp/tc.tar.gz "$TC_URL"
+          echo "$TC_SHA256  /tmp/tc.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/tc.tar.gz -C "$HOME"
+          echo "$HOME/x-tools/$TC/bin" >> "$GITHUB_PATH"
+
+      - name: Restore dependencies
+        id: deps
+        uses: actions/cache@v4
+        with:
+          path: ~/kindle-prefix
+          key: deps-kindlehf-${{ env.TC_SHA256 }}-${{ hashFiles('tools/kindle/build-deps.sh') }}
+
+      - name: Build dependencies
+        if: steps.deps.outputs.cache-hit != 'true'
+        run: tools/kindle/build-deps.sh "$TC" "$HOME/kindle-prefix"
+
+      - name: Build the client
+        run: |
+          export PKG_CONFIG_LIBDIR="$HOME/kindle-prefix/lib/pkgconfig"
+          meson setup build-kindle --cross-file cross/kindlehf.txt \
+            -Dkindle=true -Dprefer_static=true -Dbuildtype=release \
+            -Dc_args="-I$HOME/kindle-prefix/include" \
+            -Dc_link_args="-static-libgcc -Wl,--gc-sections"
+          ninja -C build-kindle
+
+      - name: Check the binaries link only to glibc
+        run: |
+          for b in yb-probe yb-smoke; do
+            needed=$("$TC-readelf" -d "build-kindle/$b" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p')
+            echo "$b needs:" $needed
+            if echo "$needed" | grep -vE '^(libc|libm|libdl|libpthread|librt|ld-linux-armhf)\.so'; then
+              echo "::error::$b links to an unexpected library"
+              exit 1
+            fi
+          done
+
+      - name: Run the tests on emulated ARM
+        run: |
+          sysroot=$("$TC-gcc" -print-sysroot)
+          cd build-kindle
+          for t in test_*; do
+            [ -x "$t" ] && [ -f "$t" ] || continue
+            qemu-arm -L "$sysroot" "./$t"
+          done
+
+      - name: Package the KUAL extension
+        run: |
+          ext=package/extensions/yaknigi-probe
+          mkdir -p "$ext"
+          cp kual/yaknigi-probe/* "$ext/"
+          "$TC-strip" -o "$ext/yb-probe" build-kindle/yb-probe
+          "$TC-strip" -o "$ext/yb-smoke" build-kindle/yb-smoke
+          curl -fsSL --retry 3 -o "$ext/cacert.pem" https://curl.se/ca/cacert.pem
+          cp /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf "$ext/"
+          cp /usr/share/doc/fonts-dejavu-core/copyright "$ext/DejaVu-LICENSE.txt"
+          cp LICENSE "$ext/"
+          ls -l "$ext"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: yaknigi-probe-kindlehf
+          path: package
+          if-no-files-found: error

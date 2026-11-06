@@ -1,0 +1,13 @@
+# Kindle firmware 5.16.3 and newer (hard-float), koxtoolchain target `kindlehf`.
+# The toolchain's bin/ must be on PATH, see tools/kindle/build-deps.sh.
+[binaries]
+c = 'arm-kindlehf-linux-gnueabihf-gcc'
+ar = 'arm-kindlehf-linux-gnueabihf-gcc-ar'
+strip = 'arm-kindlehf-linux-gnueabihf-strip'
+pkg-config = 'pkg-config'
+
+[host_machine]
+system = 'linux'
+cpu_family = 'arm'
+cpu = 'cortex-a9'
+endian = 'little'

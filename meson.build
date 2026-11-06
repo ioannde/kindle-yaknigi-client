@@ -75,6 +75,17 @@ executable('yb-render', 'src/tools/render.c',
   install : false,
 )
 
+# probe: first on-device check of the screen, touch input and HTTPS.
+if get_option('kindle')
+  executable('yb-probe',
+    'src/tools/probe.c',
+    'src/platform/display_fbink.c',
+    'src/platform/input_evdev.c',
+    dependencies : [yb_dep, dependency('fbink')],
+    install : false,
+  )
+endif
+
 # --- tests ------------------------------------------------------------------
 test_inc = include_directories('src', 'tests')
 

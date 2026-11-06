@@ -1,0 +1,2 @@
+option('kindle', type : 'boolean', value : false,
+       description : 'Build the Kindle device targets (needs FBInk)')
