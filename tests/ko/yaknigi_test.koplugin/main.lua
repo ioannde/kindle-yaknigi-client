@@ -379,17 +379,26 @@ local function script()
     reader().rolling:onGotoViewRel(1)
     if reader().document:getCurrentPage() == before then fail("paging does nothing") end
 
-    -- Back to the library in app mode, reopen: nothing is fetched, and it is quick.
+    -- Read on, back to the library in app mode, reopen: the book is where it was left,
+    -- though Yandex still has the old position. Nothing is fetched, and it is quick.
+    reader().rolling:onGotoViewRel(3)
+    local read_to = reader().document:getCurrentPage()
+    local percent = math.floor(reader().yaknigi.shell:progress() * 100 + 0.5)
     reader():onHome()
     menu = wait("the library again", function()
         local w = top()
         return w.item_table and #w.item_table == 21 and w
     end)
+    if find_item(menu, "Книга номер 0").mandatory ~= percent .. "%" then
+        fail("the library does not show how far the book is read: "
+            .. tostring(find_item(menu, "Книга номер 0").mandatory) .. ", read " .. percent)
+    end
     if not find_item(menu, "Книга номер 0").text:find("✓", 1, true) then fail("no mark on a whole book") end
     seconds = open(menu, "Книга номер 0")
     say(("second open: %.3fs"):format(seconds))
-    n, xp = fragment()
-    if n ~= 31 then fail("position lost after reopening: " .. tostring(xp)) end
+    if reader().document:getCurrentPage() ~= read_to then
+        fail(("position lost after reopening: page %d, left at %d"):format(reader().document:getCurrentPage(), read_to))
+    end
 
     -- Reaching an unfetched chapter: a stub at first, then the real one.
     reader():onHome()
@@ -415,10 +424,21 @@ local function script()
     G_reader_settings:saveSetting("copt_line_spacing", 130)
     reader():onHome()
     menu = library_with(21)
+    if not menu.item_table[1].text:find("Книга номер 2", 1, true) then
+        fail("the book just read is not first: " .. menu.item_table[1].text)
+    end
     open(menu, "Книга номер 0")
     if reader().document.configurable.line_spacing ~= 130 then
         fail("text settings are per book: " .. tostring(reader().document.configurable.line_spacing))
     end
+
+    -- Read on the phone: Yandex has a new position, and it wins over the one here.
+    reader():onHome()
+    menu = library_with(21)
+    find_item(menu, "Книга номер 0").card.cfi = "/6/70!,/2/4/2/6/1:7,/2/4/2/6/1:9"
+    open(menu, "Книга номер 0")
+    n, xp = fragment()
+    if n ~= 35 then fail("the position from the phone was ignored: " .. tostring(xp)) end
 
     -- Leaving through the library's close button quits the app.
     reader():onHome()

@@ -21,10 +21,7 @@ function Session.prepare(root, api, card, local_fragment)
     end
     if #store.paths == 0 then return nil, "http", "empty spine" end
 
-    -- A new position from Yandex (read on the phone) wins over the saved one. Without
-    -- any saved one, Yandex's is all there is.
-    local server_changed = card.accessed_at ~= nil and card.accessed_at ~= Session.read_stamp(store)
-    local use_server = card.cfi ~= nil and (server_changed or local_fragment == nil)
+    local use_server = Session.server_moved(store, card, local_fragment ~= nil)
     local target = use_server
         and store:fragment_of_spine_index(Cfi.spine_index(card.cfi))
         or local_fragment or 1
@@ -55,31 +52,59 @@ function Session.prepare(root, api, card, local_fragment)
     end
     local stubs, err = store:build()
     if not stubs then return nil, "disk", err end
-    Session.write_stamp(store, card.accessed_at)
+    Session.remember(store, card)
     return store, stubs, xpointer, target
 end
 
 --- For a book already on disk: the xpointer of Yandex's newer position.
 function Session.jump_for(store, card)
     local target = store:fragment_of_spine_index(Cfi.spine_index(card.cfi))
-    Session.write_stamp(store, card.accessed_at)
+    Session.remember(store, card)
     return Cfi.to_xpointer(card.cfi, target, store:read(store.paths[target]))
 end
 
-function Session.read_stamp(store)
-    local f = io.open(store.dir .. "/server_position", "rb")
+local function read_file(path)
+    local f = io.open(path, "rb")
     if not f then return nil end
     local s = f:read("*a")
     f:close()
     return s
 end
 
-function Session.write_stamp(store, stamp)
-    if not stamp then return end
-    local f = io.open(store.dir .. "/server_position", "wb")
+local function write_file(path, data)
+    local f = io.open(path, "wb")
     if not f then return end
-    f:write(tostring(stamp))
+    f:write(data)
     f:close()
+end
+
+--- Whether to go to Yandex's position rather than stay at the one saved here. Yandex's
+-- wins only when it differs from the last one seen, as it does after reading on the phone:
+-- the position is not sent back, so it says nothing about reading on this device. Without
+-- a position here, it is all there is.
+function Session.server_moved(store, card, has_local)
+    if type(card.cfi) ~= "string" then return false end
+    local seen = read_file(store.dir .. "/server_cfi")
+    if seen then return seen ~= card.cfi end
+    return not has_local
+end
+
+function Session.remember(store, card)
+    if type(card.cfi) == "string" then write_file(store.dir .. "/server_cfi", card.cfi) end
+end
+
+--- Records how far the book is read here, for the library.
+function Session.save_reading(dir, ratio)
+    write_file(dir .. "/reading", ("%d %d"):format(math.floor(ratio * 100 + 0.5), os.time()))
+end
+
+--- Returns the percentage read here and when, or nil if the phone has moved on since.
+function Session.read_reading(dir, card)
+    local percent, at = (read_file(dir .. "/reading") or ""):match("^(%d+) (%d+)$")
+    if not percent then return nil end
+    local seen = read_file(dir .. "/server_cfi")
+    if seen and type(card.cfi) == "string" and seen ~= card.cfi then return nil end
+    return tonumber(percent), tonumber(at)
 end
 
 return Session

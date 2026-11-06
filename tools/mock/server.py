@@ -152,7 +152,7 @@ class Handler(BaseHTTPRequestHandler):
             ]
             if self.server.big:
                 for n, card in enumerate(cards):
-                    card["accessed_at"] = f"2026-10-{28 - (start + n):02d}T10:00:00Z" if start + n < 20 else None
+                    card["accessed_at"] = 1793000000 - (start + n) * 86400 if start + n < 20 else None
                     card["cfi"] = BIG_CFI if start + n == 0 else None
                     card["progress"] = 77 if start + n == 0 else 0
             if page == 1:

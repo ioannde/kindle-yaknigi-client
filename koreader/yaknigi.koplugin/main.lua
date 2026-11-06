@@ -42,6 +42,9 @@ local POLL_SECONDS = 2
 -- KOReader quits when its last screen closes, which its own Exit and any failure to open
 -- something would do. Only "Закрыть приложение" should end the app: go back to the library.
 if APP_MODE then
+    -- A crash or a dead battery should cost a minute of reading, not KOReader's usual 15.
+    G_reader_settings:saveSetting("auto_save_settings_interval_minutes", 1)
+
     UIManager._gated_quit = function(this)
         -- UIManager:quit() empties the stack too, and only sets the exit code first. That
         -- is someone asking to end the app, and they must get what they asked for.
@@ -174,9 +177,24 @@ local function card_authors(card)
     return table.concat(authors, ", ")
 end
 
+local function book_dir(card)
+    local id = card.book and card.book.uuid
+    if type(id) ~= "string" or not id:match("^[%w_%-]+$") then return nil end
+    return BOOKS .. "/" .. id
+end
+
+local function reading_here(card)
+    local dir = book_dir(card)
+    if not dir then return nil end
+    return Session.read_reading(dir, card)
+end
+
 local function sorted_cards(cards)
-    -- Same-format timestamps sort as text; books never opened go last.
-    local function stamp(c) return tostring(c.accessed_at or "") end
+    -- Latest read here or elsewhere first; books never opened go last.
+    local function stamp(c)
+        local _, here = reading_here(c)
+        return math.max(tonumber(c.accessed_at) or 0, here or 0)
+    end
     local ordered = {}
     for i, c in ipairs(cards) do ordered[i] = { card = c, index = i } end
     table.sort(ordered, function(a, b)
@@ -192,9 +210,9 @@ end
 local function is_whole(card)
     -- Runs for every book on each refresh, so it only looks at the one file. Store.open
     -- would start a shell for each.
-    local id = card.book and card.book.uuid
-    if type(id) ~= "string" or not id:match("^[%w_%-]+$") then return false end
-    local f = io.open(BOOKS .. "/" .. id .. "/state", "rb")
+    local dir = book_dir(card)
+    if not dir then return false end
+    local f = io.open(dir .. "/state", "rb")
     if not f then return false end
     local state = f:read("*a")
     f:close()
@@ -204,14 +222,15 @@ end
 function Yaknigi:libraryItems(cards)
     local items = {}
     for _, card in ipairs(sorted_cards(cards)) do
-        local progress = tonumber(card.progress)
+        local here = reading_here(card)
+        local progress = here or tonumber(card.progress)
         local title = card.book and card.book.title or "?"
         local whole = is_whole(card)
         items[#items + 1] = {
             text = (whole and "✓ " or "") .. title,
             title = title,
             authors = card_authors(card),
-            mandatory = progress and progress > 0 and (math.floor(progress) .. "%") or nil,
+            mandatory = progress and (here or progress > 0) and (math.floor(progress) .. "%") or nil,
             whole = whole,
             cover = Covers.find(COVERS, card),
             card = card,
@@ -343,8 +362,9 @@ function Yaknigi:openCard(card)
     local store = Store.open(BOOKS, id)
     if store and store:is_whole() then
         -- Nothing to wait for, not even the network.
-        local fresh = card.cfi and card.accessed_at ~= Session.read_stamp(store)
-        self:showBook(store, fresh and Session.jump_for(store, card) or nil)
+        local moved = Session.server_moved(store, card, saved_fragment(store.epub) ~= nil)
+        if not moved then Session.remember(store, card) end
+        self:showBook(store, moved and Session.jump_for(store, card) or nil)
         return
     end
     NetworkMgr:runWhenOnline(function() self:loadAndOpen(card, store) end)
@@ -545,6 +565,12 @@ end
 
 function Yaknigi:onCloseDocument()
     self:stopPoll()
+end
+
+function Yaknigi:onSaveSettings()
+    if self.shell and self.store and self.ui.document then
+        Session.save_reading(self.store.dir, self.shell:progress())
+    end
 end
 
 function Yaknigi:onSetDimensions()
