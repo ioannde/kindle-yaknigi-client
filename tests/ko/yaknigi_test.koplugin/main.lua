@@ -395,12 +395,9 @@ local function test_reading_screen()
     if reader().bookmark:isPageBookmarked() then fail("a bookmark beside the corner") end
     tap_at(W / 2, H / 2)
     wait("the panels to close", is_named("ReaderUI"))
-    -- ... and in the menu, for whoever does not know of the corner.
     tap_at(W / 2, H / 2)
     wait("the panels", is_named("YaknigiChrome"))
     chrome = top()
-    tap_at(W / 2, H / 2)
-    wait("the panels to close", is_named("ReaderUI"))
 
     -- Slider: a tap at the middle goes to the middle of the book.
     local pages = doc:getPageCount()
