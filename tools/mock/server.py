@@ -63,6 +63,9 @@ BIG_CONTAINER = (
 BIG_CFI = "/6/62!,/2/4/2/6/1:7,/2/4/2/6/1:9"
 CHAPTER_DELAY = 0.1
 PROGRESS_UPDATED = ("mutation ProgressUpdated($textbookProgresses: [TextbookProgressUpdatedInput!], $textSerialProgresses: [TextSerialProgressUpdatedInput!], $audiobookProgresses: [AudiobookProgressUpdatedInput!], $comicbookProgresses: [ComicbookProgressUpdatedInput!]) { progressUpdated(textbookProgresses: $textbookProgresses, textSerialProgresses: $textSerialProgresses, audiobookProgresses: $audiobookProgresses, comicbookProgresses: $comicbookProgresses) { value } }")
+SEARCH = ("query Search($query: SearchParamsInput!) { search(query: $query) { page { __typename ...searchSnippetAudioBookFragment ...searchSnippetTextBookFragment ...searchSnippetComicBookFragment ...searchSnippetTextSerialFragment ...bookshelfFragment ...personFragment ...publisherFragment ...seriesFragment ...topicFragment ...userFragment } cursor rankedFilter { filterType } misspell { correctedText correctionType } } }  fragment coverFragment on Cover { url ratio backgroundColorHex }  fragment personFragment on Person { avatar { __typename ...coverFragment } name uuid worksCount roles }  fragment bookFragment on Book { annotation name cover { __typename ...coverFragment } uuid initUuid authors { __typename ...personFragment } editorAnnotation }  fragment publisherFragment on Publisher { avatar { __typename ...coverFragment } name uuid worksCount }  fragment publisherBookFragment on Book { publisher { __typename ...publisherFragment } }  fragment translatorsBookFragment on Book { translators { __typename ...personFragment } }  fragment topicsBookFragment on Book { topics { name totalBook uuid } }  fragment subscriptionLevelsFragment on Book { subscriptionLevels }  fragment snippetBookFragment on Book { __typename ...bookFragment ...publisherBookFragment ...translatorsBookFragment ...topicsBookFragment ...subscriptionLevelsFragment }  fragment narratorsAudioBookFragment on AudioBook { narrators { __typename ...personFragment } }  fragment progressFragment on Progress { finished inLibrary progress isPublic }  fragment progressAudioBookFragment on AudioBook { progress { __typename ...progressFragment } }  fragment listenersCountAudioBookFragment on AudioBook { listenersCount }  fragment subscriptionsFragment on Availability { subscriptions { types } }  fragment ageRestrictionFragment on Availability { ageRestriction { name value } }  fragment snippetAudioBookFragment on AudioBook { __typename book { __typename ...snippetBookFragment } ...narratorsAudioBookFragment ...progressAudioBookFragment ...listenersCountAudioBookFragment availability { __typename ...subscriptionsFragment ...ageRestrictionFragment } }  fragment bookTagsFragment on Book { tags { name value } }  fragment searchSnippetAudioBookFragment on AudioBook { __typename ...snippetAudioBookFragment book { __typename ...bookTagsFragment } }  fragment progressTextBookFragment on TextBook { progress { __typename ...progressFragment } }  fragment readersCountTextBookFragment on TextBook { readersCount }  fragment snippetTextBookFragment on TextBook { __typename book { __typename ...snippetBookFragment } availability { __typename ...subscriptionsFragment ...ageRestrictionFragment } ...progressTextBookFragment ...readersCountTextBookFragment }  fragment searchSnippetTextBookFragment on TextBook { __typename ...snippetTextBookFragment book { __typename ...bookTagsFragment } }  fragment progressComicBookFragment on ComicBook { progress { __typename ...progressFragment } }  fragment readersCountComicBookFragment on ComicBook { readersCount }  fragment snippetComicBookFragment on ComicBook { __typename book { __typename ...snippetBookFragment } ...progressComicBookFragment ...readersCountComicBookFragment availability { __typename ...subscriptionsFragment ...ageRestrictionFragment } }  fragment searchSnippetComicBookFragment on ComicBook { __typename ...snippetComicBookFragment book { __typename ...bookTagsFragment } }  fragment textSerialFragment on TextSerial { availability { __typename ...ageRestrictionFragment } book { __typename ...bookFragment } }  fragment episodesTextSerialFragment on TextSerial { episodes { total } }  fragment readersCountTextSerialFragment on TextSerial { readersCount }  fragment snippetTextSerialFragment on TextSerial { __typename book { __typename ...snippetBookFragment } availability { __typename ...subscriptionsFragment ...ageRestrictionFragment } ...textSerialFragment ...episodesTextSerialFragment ...readersCountTextSerialFragment }  fragment searchSnippetTextSerialFragment on TextSerial { __typename ...snippetTextSerialFragment book { __typename ...bookTagsFragment } }  fragment userFragment on User { avatar { __typename ...coverFragment } name uuid followersCount login }  fragment bookshelfFragment on Bookshelf { cover { __typename ...coverFragment } name uuid user { __typename ...userFragment } posts { total } followersCount description }  fragment seriesFragment on Series { authors { __typename ...personFragment } cover { __typename ...coverFragment } name uuid items { followersCount total } }  fragment topicFragment on Topic { name slug totalBook uuid parent { name slug totalBook uuid } }")
+FOUND = 60
+FOUND_PAGE = 25
 
 
 def cover_png(n):
@@ -228,6 +231,66 @@ class Handler(BaseHTTPRequestHandler):
             card["book"]["title"] = "Сериал"
         return card
 
+    def found(self, i):
+        """A book in the search results; the first few are the odd cases."""
+        uuid = {0: "book5", 2: "found-on-phone", 3: "found-denied"}.get(i, f"found{i}")
+        return {
+            "__typename": "TextBook",
+            "book": {
+                "uuid": uuid,
+                "initUuid": uuid,
+                "name": "Книга номер 5" if i == 0 else f"Найденная книга {i}",
+                "authors": [{"name": f"Автор {i}", "uuid": f"a{i}"}],
+                "annotation": None if i == 4 else f"Аннотация книги {i}. " + PARAGRAPH * 8,
+                "cover": {"url": f"http://127.0.0.1:{self.server.server_address[1]}/cover/{100 + i}.png", "ratio": 0.7},
+            },
+            "availability": {"subscriptions": {"types": ["plus"]}},
+            "progress": {"inLibrary": uuid == "book5" or uuid == "found-on-phone" or uuid in self.server.added,
+                         "progress": 0, "finished": False, "isPublic": True},
+        }
+
+    def search(self, variables):
+        asked = variables["query"]
+        if self.server.fail_search > 0:
+            self.server.fail_search -= 1
+            self.reply(500, b"")
+            return
+        if asked.get("types") != ["TEXTBOOK"] or asked.get("noMisspell") is not False or not asked.get("query"):
+            print("bad Search:", variables, flush=True)
+            self.reply_json(200, {"errors": [{"message": "bad input"}], "data": None})
+            return
+        none = {"page": [], "cursor": "", "misspell": {"correctedText": "", "correctionType": "NOT_CORRECTED"}}
+        if "нет такой" in asked["query"]:
+            self.reply_json(200, {"data": {"search": none}})
+            return
+        start = int(asked["cursor"].split(",")[1]) if asked["cursor"] else 0
+        end = min(start + FOUND_PAGE, FOUND)
+        self.reply_json(200, {"data": {"search": {
+            **none,
+            "page": [self.found(i) for i in range(start, end)],
+            "cursor": f"{start // FOUND_PAGE + 1},{end}" if end < FOUND else "",
+        }}})
+
+    def added_card(self, uuid):
+        i = int(uuid.replace("found", ""))
+        return {"uuid": f"added{i}", "state": "pending", "progress": 0, "cfi": None, "public": True,
+                "document_uuid": "d1", "book": {**self.found(i)["book"], "title": f"Найденная книга {i}",
+                                                "cover": {"small": self.found(i)["book"]["cover"]["url"]}}}
+
+    def add_book(self):
+        form = parse_qs(self.rfile.read(int(self.headers.get("Content-Length", 0))).decode())
+        if self.headers.get("Auth-Token") != "mock-token":
+            self.reply(401, b"")
+            return
+        want = {"lc[state]": ["pending"], "lc[progress]": ["0"], "lc[public]": ["true"], "lc[is_in_child_library]": ["false"]}
+        book = form.pop("book_uuid", [""])[0]
+        if form != want or not re.fullmatch(r"found\d+", book):
+            print("bad add:", book, form, flush=True)
+            self.reply(400, b"")
+            return
+        self.server.added.append(book)
+        self.reply_json(200, {"library_card": self.added_card(book)})
+
     def do_PUT(self):
         length = int(self.headers.get("Content-Length", 0))
         form = parse_qs(self.rfile.read(length).decode(), keep_blank_values=True)
@@ -254,6 +317,9 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(500, b"")
             return
         # The real server takes only queries on its whitelist, to the letter.
+        if body.get("operationName") == "Search" and body["query"] == SEARCH:
+            self.search(body["variables"])
+            return
         if body["query"] != PROGRESS_UPDATED:
             self.reply_json(200, {"errors": [{"message": "Whitelist: query not found"}]})
             return
@@ -275,6 +341,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if self.path == "/graphql":
             self.graphql()
+            return
+        if self.path.endswith("/profile/library_cards"):
+            self.add_book()
             return
         form = parse_qs(self.rfile.read(int(self.headers.get("Content-Length", 0))).decode())
         verifier = form.get("code_verifier", [""])[0]
@@ -306,6 +375,11 @@ class Handler(BaseHTTPRequestHandler):
             spine, inner = query["cfi"][0].split("!")
             chapter_number = int(spine.split("/")[-1]) // 2 - 1
             self.reply_json(200, {"text": text_at(big_chapter(f"OEBPS/c{chapter_number}.html"), inner)})
+        elif url.path == "/test/fail_search":
+            self.server.fail_search = int(query["n"][0])
+            self.reply(200, b"")
+        elif url.path == "/test/added":
+            self.reply_json(200, {"added": self.server.added})
         elif url.path == "/challenge":
             # The simulator cannot scan a QR code, so the test script passes it here.
             self.server.challenge = query["c"][0]
@@ -316,6 +390,16 @@ class Handler(BaseHTTPRequestHandler):
         elif url.path == "/test/fail_card":
             self.server.fail_card = int(query["n"][0])
             self.reply(200, b"")
+        elif re.search(r"/books/[^/]+$", url.path):
+            # What a book's page says, whether it is in the library or not.
+            uuid = url.path.split("/")[-1]
+            card = {"book5": "card5", "found-on-phone": "card7"}.get(uuid)
+            if uuid in self.server.added:
+                card = "added" + uuid.replace("found", "")
+            self.reply_json(200, {"book": {"uuid": uuid, "can_be_read": uuid != "found-denied",
+                                           "in_library": card is not None, "library_card_uuid": card}})
+        elif re.search(r"/profile/library_cards/added\d+$", url.path):
+            self.reply_json(200, {"library_card": self.added_card("found" + url.path.split("added")[-1])})
         elif re.search(r"/profile/library_cards/card\d+$", url.path):
             if self.headers.get("Auth-Token") != "mock-token":
                 self.reply(401, b"")
@@ -331,7 +415,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             page = int(query.get("page", ["1"])[0])
             start = (page - 1) * 10
-            cards = [self.card(i) for i in range(start, min(start + 10, BOOKS))]
+            everything = BOOKS + len(self.server.added)
+            cards = [self.card(i) if i < BOOKS else self.added_card(self.server.added[i - BOOKS])
+                     for i in range(start, min(start + 10, everything))]
             self.reply_json(200, {"library_cards": cards})
         elif url.path.startswith("/cover/"):
             if self.headers.get("Auth-Token"):
@@ -367,6 +453,8 @@ if __name__ == "__main__":
     server.positions = {}
     server.card_updates = {}
     server.fail_writes = 0
+    server.added = []
+    server.fail_search = 0
     server.fail_card = 0
     server.chapter_delay = CHAPTER_DELAY
     server.big = len(sys.argv) > 2 and sys.argv[2] == "koreader"

@@ -37,11 +37,15 @@ function Covers.find(root, card)
     return nil
 end
 
-local function cover_url(card)
+-- The small picture if there is one, and the big one if it fails.
+local function cover_urls(card)
     local cover = card.book and card.book.cover
-    if type(cover) ~= "table" then return nil end
-    local url = cover.small or cover.large
-    return type(url) == "string" and url or nil
+    local urls = {}
+    if type(cover) == "table" then
+        if type(cover.small) == "string" then urls[#urls + 1] = cover.small end
+        if type(cover.large) == "string" then urls[#urls + 1] = cover.large end
+    end
+    return urls
 end
 
 --- Downloads what is missing. The covers' host gets no token. Returns the pid, or nil
@@ -49,9 +53,9 @@ end
 function Covers.fetch(root, cards)
     local wanted = {}
     for _, card in ipairs(cards) do
-        local base, url = base_path(root, card), cover_url(card)
-        if base and url and not Covers.find(root, card) then
-            wanted[#wanted + 1] = { base = base, url = url }
+        local base, urls = base_path(root, card), cover_urls(card)
+        if base and #urls > 0 and not Covers.find(root, card) then
+            wanted[#wanted + 1] = { base = base, urls = urls }
         end
     end
     if #wanted == 0 then return nil end
@@ -59,14 +63,17 @@ function Covers.fetch(root, cards)
         pcall(function() ffi.C.nice(10) end)
         local http = Http.new(Net.connect)
         for _, item in ipairs(wanted) do
-            local status, body = http:request("GET", item.url, { ["User-Agent"] = "okhttp/4.12.0" })
-            local ext = status == 200 and extension(body)
-            if ext then
-                local f = io.open(item.base .. ".tmp", "wb")
-                if f then
-                    f:write(body)
-                    f:close()
-                    os.rename(item.base .. ".tmp", item.base .. ext)
+            for _, url in ipairs(item.urls) do
+                local status, body = http:request("GET", url, { ["User-Agent"] = "okhttp/4.12.0" })
+                local ext = status == 200 and extension(body)
+                if ext then
+                    local f = io.open(item.base .. ".tmp", "wb")
+                    if f then
+                        f:write(body)
+                        f:close()
+                        os.rename(item.base .. ".tmp", item.base .. ext)
+                    end
+                    break
                 end
             end
         end

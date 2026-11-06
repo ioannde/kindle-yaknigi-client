@@ -22,6 +22,7 @@ local VerticalGroup = require("ui/widget/verticalgroup")
 local logger = require("logger")
 local Screen = Device.screen
 
+local Catalogue = require("yaknigi/catalogue")
 local Kit = require("yaknigi/kit")
 local Shelves = require("yaknigi/shelves")
 
@@ -31,7 +32,7 @@ local Library = InputContainer:extend{
     covers_fullscreen = true,
     item_table = nil,
     page = 1,
-    view = "home", -- or the id of a shelf
+    view = "home", -- or the id of a shelf, or "catalogue": all of Yandex's books
     query = nil,
     place = nil, -- a table that outlives this screen, for coming back from a book
     message = nil,
@@ -40,6 +41,7 @@ local Library = InputContainer:extend{
     close_callback = nil,
     on_refresh = nil,
     on_sign_out = nil,
+    on_catalogue = nil, -- function(state): asks for the next books found
 }
 
 function Library:init()
@@ -48,6 +50,10 @@ function Library:init()
     self.view = not self.on_sign_in and self.place.view or "home"
     self.query = not self.on_sign_in and self.place.query or nil
     self.page = self.place.page or 1
+    self.catalogue = self.place.catalogue
+    if self.view == "catalogue" and not self.catalogue then
+        self.view, self.query = "home", nil
+    end
     self.dimen = Geom:new{ x = 0, y = 0, w = Screen:getWidth(), h = Screen:getHeight() }
     self.ges_events = {
         Swipe = { GestureRange:new{ ges = "swipe", range = self.dimen } },
@@ -94,6 +100,8 @@ local function title_box(text, width, size, lines)
         height_overflow_show_ellipsis = true,
     }
 end
+
+Library.cover_box = cover_box
 
 function Library:row(item, width, height)
     local cover_h = height - Kit.px(16)
@@ -300,6 +308,45 @@ function Library:listBody(width, area)
     return body
 end
 
+--- What was found, with the next books asked for before the list runs out of them.
+function Library:catalogueBody(width, area)
+    local state = self.catalogue
+    local books = state.items
+    local row_h = Kit.px(ROW_H)
+    local per_page = math.max(1, math.floor(area / row_h))
+    self.total_pages = math.max(1, math.ceil(#books / per_page))
+    -- A page to go on to, when the books for it are still to come.
+    if #books > 0 and not state.finished and (#books % per_page == 0 or state.failed) then
+        self.total_pages = self.total_pages + 1
+    end
+    self.page = math.max(1, math.min(self.page, self.total_pages))
+    local start = (self.page - 1) * per_page + 1
+    local body = VerticalGroup:new{ align = "left" }
+    for i = start, math.min(#books, start + per_page - 1) do
+        body[#body + 1] = self:row(books[i], width, row_h)
+        self.rows[#self.rows + 1] = books[i]
+    end
+    self.retry_button = nil
+    if #self.rows == 0 then
+        local box = Geom:new{ w = width, h = area }
+        if state.failed then
+            self.retry_button = Kit.button(
+                Kit.text(state.failed .. " Нажмите, чтобы повторить.", 18, { max_width = width }),
+                width, Kit.px(ROW_H), function()
+                    self.on_catalogue(state)
+                    self:refreshScreen()
+                end)
+            body[1] = CenterContainer:new{ dimen = box, self.retry_button }
+        else
+            local text = "Ничего не нашлось"
+            if not state.query then text = "Введите название или автора"
+            elseif not state.finished then text = #books == 0 and "Ищу…" or "Загружаю…" end
+            body[1] = CenterContainer:new{ dimen = box, Kit.text(text, 18, { color = Blitbuffer.COLOR_DARK_GRAY }) }
+        end
+    end
+    return body
+end
+
 function Library:build()
     local W, H = Screen:getWidth(), Screen:getHeight()
     local pad = Kit.px(16)
@@ -315,7 +362,11 @@ function Library:build()
     local body
     local search_bar
     local body_top = header_h + Kit.px(1)
-    if #items == 0 then
+    if self.view == "catalogue" then
+        search_bar = self:searchBar(inner)
+        body_top = body_top + Kit.px(SEARCH_H)
+        body = self:catalogueBody(inner, H - body_top - footer_h)
+    elseif #items == 0 then
         local box = Geom:new{ w = inner, h = H - header_h - footer_h - Kit.px(2) }
         if self.on_sign_in then
             body = Kit.button(Kit.text("Войти в Яндекс", 22, { bold = true }), box.w, box.h, self.on_sign_in)
@@ -341,14 +392,16 @@ function Library:build()
     local left = HorizontalSpan:new{ width = side }
     local right = HorizontalGroup:new{ align = "center", self.menu_button }
     if home then
-        if #items > 0 then
+        -- All of Yandex's books can be searched, even with nothing in the library yet.
+        if not self.on_sign_in then
             self.search_button = Kit.icon_button("appbar.search", side, function() self:showSearch() end)
             right = HorizontalGroup:new{ align = "center", self.search_button, self.menu_button }
         end
     else
         self.back_button = Kit.icon_button("chevron.left", side, function() self:goHome() end)
         left = self.back_button
-        title = ("%s · %d"):format(Shelves.name(self.view), self.shown or 0)
+        title = self.view == "catalogue" and "Все книги Яндекса"
+            or ("%s · %d"):format(Shelves.name(self.view), self.shown or 0)
     end
     local side_w = math.max(side, right:getSize().w)
     local header = HorizontalGroup:new{ align = "center",
@@ -394,6 +447,14 @@ function Library:show(view, query)
     self.view, self.query, self.page = view, query, 1
     self:build()
     UIManager:setDirty(self, "partial")
+    self:askForMore()
+end
+
+--- Near the end of what was found, gets the next books, for the next page to be there.
+function Library:askForMore()
+    if self.view == "catalogue" and self.page >= self.total_pages - 1 then
+        self.on_catalogue(self.catalogue)
+    end
 end
 
 function Library:openShelf(id)
@@ -405,11 +466,18 @@ function Library:goHome()
     self:show("home")
 end
 
---- Shows what fits the query. On the first screen that means looking through all the books.
+--- On a shelf, looks through that shelf; from the first screen, through all of Yandex's books.
 function Library:search(query)
     query = query:match("^%s*(.-)%s*$")
-    local view = self.view == "home" and "all" or self.view
-    self:show(view, query ~= "" and query or nil)
+    query = query ~= "" and query or nil
+    if self.view ~= "home" and self.view ~= "catalogue" then
+        self:show(self.view, query)
+    elseif query or self.view == "catalogue" then
+        self.catalogue = Catalogue.new(query)
+        self.place.catalogue = self.catalogue
+        self:show("catalogue", query)
+        if not query then self:showSearch() end -- the cross clears the box to type anew
+    end
 end
 
 function Library:showSearch()
@@ -420,7 +488,7 @@ function Library:showSearch()
     G_reader_settings:saveSetting("keyboard_layout", "ru")
     local dialog
     dialog = InputDialog:new{
-        title = "Поиск по библиотеке",
+        title = (self.view == "home" or self.view == "catalogue") and "Поиск по всем книгам" or "Поиск по библиотеке",
         input = self.query or "",
         input_hint = "Название или автор",
         buttons = { {
@@ -465,6 +533,7 @@ function Library:turn(delta)
     logger.info("yaknigi: library page", page, "of", self.total_pages)
     self:build()
     UIManager:setDirty(self, "partial")
+    self:askForMore()
 end
 
 function Library:onSwipe(_, ges)

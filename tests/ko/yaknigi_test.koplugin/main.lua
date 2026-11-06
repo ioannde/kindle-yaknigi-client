@@ -553,7 +553,7 @@ local function script()
     tap_widget(menu.back_button)
     if menu.view ~= "home" then fail("the way back from a shelf") end
 
-    -- Search, from the first screen, in any case, and within a shelf.
+    -- Search within a shelf, in any case.
     local function search(query)
         wait("the search dialog", function() return menu.search_dialog and UIManager:isWidgetShown(menu.search_dialog) end)
         menu.search_dialog:setInputText(query)
@@ -563,7 +563,8 @@ local function script()
     end
     -- The emulator counts as having a real keyboard; a Kindle has only this one.
     G_reader_settings:saveSetting("virtual_keyboard_enabled", true)
-    tap_widget(menu.search_button)
+    menu:openShelf("all")
+    tap_widget(menu.search_bar)
     wait("the keyboard", function() return top().name == "VirtualKeyboard" or top().keyboard_layer end)
     UIManager:forceRePaint()
     shot("03e-library-keyboard")
@@ -735,6 +736,136 @@ local function script()
     reader():onHome()
     menu = library_with(21)
     if menu.view ~= "all" or menu.query ~= "номер 0" then fail("the library forgot where it was") end
+
+    -- All of Yandex's books, from the first screen. A failure can be tried again.
+    menu:goHome()
+    mock_get("/test/fail_search?n=1")
+    tap_widget(menu.search_button)
+    wait("the catalogue's dialog", function() return menu.search_dialog and UIManager:isWidgetShown(menu.search_dialog) end)
+    if menu.search_dialog.title ~= "Поиск по всем книгам" then fail("search from home: " .. menu.search_dialog.title) end
+    search("достоевский")
+    if menu.view ~= "catalogue" then fail("search from home is not in the catalogue: " .. menu.view) end
+    wait("the search to fail", function() return menu.retry_button end)
+    UIManager:forceRePaint()
+    shot("20-catalogue-failed")
+    tap_widget(menu.retry_button)
+    wait("the books found", function() return #menu.rows > 0 end)
+    local added = function() return #mock_get("/test/added").added end
+    if #menu.catalogue.items ~= 25 then fail("the first page of results: " .. #menu.catalogue.items) end
+    if menu.rows[1].mandatory ~= "в библиотеке" or menu.rows[2].mandatory then
+        fail("the mark of a book in the library")
+    end
+    wait("the covers found", function()
+        for _, item in ipairs(menu.rows) do
+            if not item.cover then return false end
+        end
+        return true
+    end)
+    UIManager:forceRePaint()
+    shot("21-catalogue")
+
+    -- Pages go on as the next results arrive, to the very last.
+    local pages_seen = 1
+    while menu.page < menu.total_pages or not menu.catalogue.finished do
+        wait("more results", function() return menu.page < menu.total_pages or menu.catalogue.finished end)
+        if menu.page < menu.total_pages then
+            tap_widget(menu.next_button)
+            pages_seen = pages_seen + 1
+            if pages_seen > 30 then fail("the results do not end") end
+        end
+    end
+    if #menu.catalogue.items ~= 60 then fail("all results: " .. #menu.catalogue.items) end
+    shot("21b-catalogue-last-page")
+    for _ = 2, menu.total_pages do tap_widget(menu.prev_button) end
+    if menu.page ~= 1 then fail("back through the results: " .. menu.page) end
+
+    -- A book not in the library: its card first, and nothing added by looking.
+    local new_book = menu.catalogue.items[2]
+    menu:onMenuSelect(new_book)
+    wait("the book's card", is_named("YaknigiBookCard"))
+    local card_screen = top()
+    UIManager:forceRePaint()
+    shot("22-catalogue-book")
+    tap_widget(card_screen.back_button)
+    wait("the way back from the card", function() return top() == menu end)
+    if added() ~= 0 then fail("looking at a book added it") end
+    menu:onMenuSelect(new_book)
+    wait("the book's card again", is_named("YaknigiBookCard"))
+    tap_widget(top().read_button)
+    wait("the found book to open", function()
+        return reader() and reader().document and top().name == "ReaderUI"
+            and reader().document.file:find("/found1/", 1, true)
+    end)
+    if added() ~= 1 then fail("the book was not added once: " .. added()) end
+    shot("23-catalogue-opened")
+
+    -- Back in the results, where they were left; now it is in the library.
+    reader():onHome()
+    menu = library_with(22)
+    if menu.view ~= "catalogue" or menu.query ~= "достоевский" then fail("the results were forgotten") end
+    new_book = menu.catalogue.items[2]
+    if new_book.mandatory ~= "в библиотеке" then fail("the added book has no mark") end
+    menu:onMenuSelect(new_book)
+    wait("the added book to open at once", function()
+        return reader() and reader().document and top().name == "ReaderUI"
+            and reader().document.file:find("/found1/", 1, true)
+    end)
+    if added() ~= 1 then fail("the book was added twice: " .. added()) end
+    reader():onHome()
+    menu = library_with(22)
+
+    -- A book in the library opens without its card.
+    menu:onMenuSelect(menu.catalogue.items[1])
+    wait("a book from the library to open", function()
+        return reader() and reader().document and top().name == "ReaderUI"
+            and reader().document.file:find("/book5/", 1, true)
+    end)
+    reader():onHome()
+    menu = library_with(22)
+
+    -- Added on the phone since the library was loaded: not added again.
+    menu:onMenuSelect(menu.catalogue.items[3])
+    wait("a book added elsewhere to open", function()
+        return reader() and reader().document and top().name == "ReaderUI"
+            and reader().document.file:find("/book7/", 1, true)
+    end)
+    if added() ~= 1 then fail("a book already in the library was added: " .. added()) end
+    reader():onHome()
+    menu = library_with(22)
+
+    -- A book out of reach stays out of the library, and the reader is told why.
+    local denied = menu.catalogue.items[4]
+    menu:onMenuSelect(denied)
+    wait("the card of a book out of reach", is_named("YaknigiBookCard"))
+    local denied_card = top()
+    tap_widget(denied_card.read_button)
+    wait("the refusal", function() return (top().text or ""):find("недоступна", 1, true) end)
+    shot("24-catalogue-denied")
+    UIManager:close(top())
+    if added() ~= 1 then fail("a book out of reach was added") end
+    UIManager:close(denied_card)
+
+    -- Nothing found, and the cross goes straight to typing anew.
+    tap_widget(menu.search_bar)
+    search("нет такой книги")
+    wait("nothing found", function() return menu.catalogue.finished end)
+    UIManager:forceRePaint()
+    if #menu.rows ~= 0 then fail("found what is not there") end
+    shot("25-catalogue-not-found")
+    local old_dialog = menu.search_dialog
+    tap_widget(menu.clear_button)
+    wait("the dialog to type anew", function() return menu.search_dialog ~= old_dialog end)
+    if menu.query or menu.search_dialog:getInputText() ~= "" then fail("the search was not cleared") end
+    UIManager:close(menu.search_dialog)
+    UIManager:forceRePaint()
+    tap_widget(menu.back_button)
+    if menu.view ~= "home" then fail("the way back from the catalogue") end
+    -- A shelf still searches only itself.
+    menu:openShelf("finished")
+    tap_widget(menu.search_bar)
+    wait("the shelf's dialog", function() return UIManager:isWidgetShown(menu.search_dialog) end)
+    if menu.search_dialog.title ~= "Поиск по библиотеке" then fail("search on a shelf: " .. menu.search_dialog.title) end
+    UIManager:close(menu.search_dialog)
     local f = io.open(OUT .. "/PASS", "w")
     f:write("ok\n")
     f:close()
@@ -753,7 +884,7 @@ function Driver:init()
         local ok, err = coroutine.resume(co)
         if not ok then fail(err) end
     end)
-    UIManager:scheduleIn(240, function() fail("the whole test timed out") end)
+    UIManager:scheduleIn(300, function() fail("the whole test timed out") end)
     logger.info("yaknigi test driver armed")
 end
 

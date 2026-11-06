@@ -79,6 +79,8 @@ end
 -- Yandex takes only queries it knows, to the letter, or answers "Whitelist: query not found".
 local PROGRESS_UPDATED = "mutation ProgressUpdated($textbookProgresses: [TextbookProgressUpdatedInput!], $textSerialProgresses: [TextSerialProgressUpdatedInput!], $audiobookProgresses: [AudiobookProgressUpdatedInput!], $comicbookProgresses: [ComicbookProgressUpdatedInput!]) { progressUpdated(textbookProgresses: $textbookProgresses, textSerialProgresses: $textSerialProgresses, audiobookProgresses: $audiobookProgresses, comicbookProgresses: $comicbookProgresses) { value } }"
 
+local SEARCH = "query Search($query: SearchParamsInput!) { search(query: $query) { page { __typename ...searchSnippetAudioBookFragment ...searchSnippetTextBookFragment ...searchSnippetComicBookFragment ...searchSnippetTextSerialFragment ...bookshelfFragment ...personFragment ...publisherFragment ...seriesFragment ...topicFragment ...userFragment } cursor rankedFilter { filterType } misspell { correctedText correctionType } } }  fragment coverFragment on Cover { url ratio backgroundColorHex }  fragment personFragment on Person { avatar { __typename ...coverFragment } name uuid worksCount roles }  fragment bookFragment on Book { annotation name cover { __typename ...coverFragment } uuid initUuid authors { __typename ...personFragment } editorAnnotation }  fragment publisherFragment on Publisher { avatar { __typename ...coverFragment } name uuid worksCount }  fragment publisherBookFragment on Book { publisher { __typename ...publisherFragment } }  fragment translatorsBookFragment on Book { translators { __typename ...personFragment } }  fragment topicsBookFragment on Book { topics { name totalBook uuid } }  fragment subscriptionLevelsFragment on Book { subscriptionLevels }  fragment snippetBookFragment on Book { __typename ...bookFragment ...publisherBookFragment ...translatorsBookFragment ...topicsBookFragment ...subscriptionLevelsFragment }  fragment narratorsAudioBookFragment on AudioBook { narrators { __typename ...personFragment } }  fragment progressFragment on Progress { finished inLibrary progress isPublic }  fragment progressAudioBookFragment on AudioBook { progress { __typename ...progressFragment } }  fragment listenersCountAudioBookFragment on AudioBook { listenersCount }  fragment subscriptionsFragment on Availability { subscriptions { types } }  fragment ageRestrictionFragment on Availability { ageRestriction { name value } }  fragment snippetAudioBookFragment on AudioBook { __typename book { __typename ...snippetBookFragment } ...narratorsAudioBookFragment ...progressAudioBookFragment ...listenersCountAudioBookFragment availability { __typename ...subscriptionsFragment ...ageRestrictionFragment } }  fragment bookTagsFragment on Book { tags { name value } }  fragment searchSnippetAudioBookFragment on AudioBook { __typename ...snippetAudioBookFragment book { __typename ...bookTagsFragment } }  fragment progressTextBookFragment on TextBook { progress { __typename ...progressFragment } }  fragment readersCountTextBookFragment on TextBook { readersCount }  fragment snippetTextBookFragment on TextBook { __typename book { __typename ...snippetBookFragment } availability { __typename ...subscriptionsFragment ...ageRestrictionFragment } ...progressTextBookFragment ...readersCountTextBookFragment }  fragment searchSnippetTextBookFragment on TextBook { __typename ...snippetTextBookFragment book { __typename ...bookTagsFragment } }  fragment progressComicBookFragment on ComicBook { progress { __typename ...progressFragment } }  fragment readersCountComicBookFragment on ComicBook { readersCount }  fragment snippetComicBookFragment on ComicBook { __typename book { __typename ...snippetBookFragment } ...progressComicBookFragment ...readersCountComicBookFragment availability { __typename ...subscriptionsFragment ...ageRestrictionFragment } }  fragment searchSnippetComicBookFragment on ComicBook { __typename ...snippetComicBookFragment book { __typename ...bookTagsFragment } }  fragment textSerialFragment on TextSerial { availability { __typename ...ageRestrictionFragment } book { __typename ...bookFragment } }  fragment episodesTextSerialFragment on TextSerial { episodes { total } }  fragment readersCountTextSerialFragment on TextSerial { readersCount }  fragment snippetTextSerialFragment on TextSerial { __typename book { __typename ...snippetBookFragment } availability { __typename ...subscriptionsFragment ...ageRestrictionFragment } ...textSerialFragment ...episodesTextSerialFragment ...readersCountTextSerialFragment }  fragment searchSnippetTextSerialFragment on TextSerial { __typename ...snippetTextSerialFragment book { __typename ...bookTagsFragment } }  fragment userFragment on User { avatar { __typename ...coverFragment } name uuid followersCount login }  fragment bookshelfFragment on Bookshelf { cover { __typename ...coverFragment } name uuid user { __typename ...userFragment } posts { total } followersCount description }  fragment seriesFragment on Series { authors { __typename ...personFragment } cover { __typename ...coverFragment } name uuid items { followersCount total } }  fragment topicFragment on Topic { name slug totalBook uuid parent { name slug totalBook uuid } }"
+
 --- Tells Yandex where the book is being read. Takes two requests, as in the phone app:
 -- ProgressUpdated moves the position that other devices see; the library card holds the
 -- percentage and the time of reading, and ignores the position it is sent.
@@ -140,6 +142,58 @@ function Api:library()
         page = page + 1
     end
     return cards
+end
+
+--- Looks through all of Yandex's books. Returns { page = found books, cursor = where the
+-- next page starts, or empty after the last one }.
+function Api:search(text, cursor)
+    local status, body = self.http:request("POST", GRAPHQL_URL, self:headers("application/json"), json.encode({
+        operationName = "Search",
+        query = SEARCH,
+        variables = { query = {
+            cursor = cursor or "",
+            noMisspell = false,
+            query = text,
+            types = { "TEXTBOOK" }, -- audiobooks and comics cannot be read here
+        } },
+    }))
+    if status ~= 200 then return status_error(status, body) end
+    local ok, answer = pcall(json.decode, body)
+    if not ok or type(answer) ~= "table" or (answer.errors and answer.errors ~= json.null) then
+        logger.warn("yaknigi: Yandex refused the search:", ok and type(answer) == "table" and type(answer.errors) == "table"
+            and answer.errors[1] and answer.errors[1].message)
+        return nil, "http", "graphql"
+    end
+    local found = type(answer.data) == "table" and answer.data.search
+    if type(found) ~= "table" or type(found.page) ~= "table" then return nil, "http", "no results" end
+    drop_nulls(found)
+    return { page = found.page, cursor = found.cursor }
+end
+
+--- Puts a book into the library, visible to others as those added on the phone are.
+function Api:add_book(book_uuid)
+    local status, body = self.http:request("POST", API_BASE .. "/profile/library_cards",
+        self:headers("application/x-www-form-urlencoded"),
+        "book_uuid=" .. encode(book_uuid) .. "&lc%5Bstate%5D=pending&lc%5Bprogress%5D=0"
+            .. "&lc%5Bpublic%5D=true&lc%5Bis_in_child_library%5D=false")
+    if status == 403 then return nil, "denied" end
+    if status ~= 200 and status ~= 201 then return status_error(status, body) end
+    local ok, data = pcall(json.decode, body)
+    local card = ok and type(data) == "table" and data.library_card
+    if type(card) ~= "table" or type(card.book) ~= "table" then return nil, "http", "no card" end
+    return drop_nulls(card)
+end
+
+--- Returns the library card to read a found book by. The library here may be behind the
+-- phone's, so Yandex is asked first; a book is added only if it is neither there already
+-- nor out of the reader's reach, as it would then sit in the library unreadable.
+function Api:card_for_reading(book_uuid)
+    local data, kind, detail = self:get_json(API_BASE .. "/books/" .. encode(book_uuid))
+    if not data then return nil, kind, detail end
+    local book = type(data.book) == "table" and data.book or {}
+    if type(book.library_card_uuid) == "string" then return self:card(book.library_card_uuid) end
+    if book.can_be_read == false then return nil, "denied" end
+    return self:add_book(book_uuid)
 end
 
 local function find_key(node)

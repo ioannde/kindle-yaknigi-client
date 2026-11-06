@@ -21,6 +21,8 @@ local json = require("rapidjson")
 
 local Api = require("yaknigi/api")
 local Background = require("yaknigi/background")
+local BookCard = require("yaknigi/bookcard")
+local Catalogue = require("yaknigi/catalogue")
 local Covers = require("yaknigi/covers")
 local Cfi = require("yaknigi/cfi")
 local Crypt = require("yaknigi/crypt")
@@ -36,6 +38,8 @@ local BOOKS = ROOT .. "/books"
 local COVERS = ROOT .. "/covers"
 local LIBRARY_CACHE = ROOT .. "/library.json"
 local LIBRARY_RESULT = ROOT .. "/library.result"
+local CATALOGUE_RESULT = ROOT .. "/catalogue.result"
+local TAKE_RESULT = ROOT .. "/take.result"
 os.execute("mkdir -p '" .. BOOKS .. "' '" .. COVERS .. "'")
 
 -- The app mode shows the library instead of the file manager, and leaves with it.
@@ -45,6 +49,9 @@ local POLL_SECONDS = 2
 local WAKE_RETRY_SECONDS = { 5, 15, 30 }
 -- Which screen of the library was open, for coming back to it from a book.
 local library_place = {}
+-- The library on the screen, for answers that arrive after the reader was opened and left.
+local shown_library = nil
+local catalogue_requests = 0
 
 -- KOReader quits when its last screen closes, which its own Exit and any failure to open
 -- something would do. Only "Закрыть приложение" should end the app: go back to the library.
@@ -166,6 +173,7 @@ function Yaknigi:finishLogin(code, verifier, retry)
         local token, kind = Api.exchange_code(code, verifier)
         if token then
             save_token(token)
+            library_place = {} -- another account may have other books
             self:showLibrary()
             return
         end
@@ -250,7 +258,12 @@ end
 
 function Yaknigi:fetchCovers(cards)
     if not NetworkMgr:isOnline() then return end
-    if self.covers_pid and not ffiutil.isSubProcessDone(self.covers_pid) then return end
+    if self.covers_pid and not ffiutil.isSubProcessDone(self.covers_pid) then
+        -- One at a time. What was asked for meanwhile goes next.
+        self.covers_waiting = self.covers_waiting or {}
+        for _, card in ipairs(cards) do table.insert(self.covers_waiting, card) end
+        return
+    end
     self.covers_pid = Covers.fetch(COVERS, cards)
     if self.covers_pid then self:scheduleCoverPoll(cards) end
 end
@@ -259,16 +272,35 @@ end
 function Yaknigi:scheduleCoverPoll(cards)
     UIManager:scheduleIn(POLL_SECONDS, function()
         if not self.library then return end
+        local library = self.library
         local done = ffiutil.isSubProcessDone(self.covers_pid)
+        local in_catalogue = library.view == "catalogue"
         local changed = false
-        for _, item in ipairs(self.library.item_table or {}) do
+        for _, item in ipairs(library.item_table or {}) do
             if not item.cover then
                 item.cover = Covers.find(COVERS, item.card)
-                if item.cover then changed = true end
+                if item.cover and not in_catalogue then changed = true end
             end
         end
-        if changed then self.library:refreshScreen() end
-        if not done then self:scheduleCoverPoll(cards) end
+        if library.catalogue then
+            local shown = {}
+            for _, item in ipairs(library.rows or {}) do shown[item] = true end
+            for _, item in ipairs(library.catalogue.items) do
+                if not item.cover then
+                    item.cover = Covers.find(COVERS, item.card)
+                    -- Only what is on the screen is worth redrawing it.
+                    if item.cover and in_catalogue and shown[item] then changed = true end
+                end
+            end
+        end
+        if changed then library:refreshScreen() end
+        if not done then
+            self:scheduleCoverPoll(cards)
+        elseif self.covers_waiting then
+            local waiting = self.covers_waiting
+            self.covers_waiting = nil
+            self:fetchCovers(waiting)
+        end
     end)
 end
 
@@ -294,10 +326,14 @@ function Yaknigi:showLibrary()
         item_table = items,
         place = library_place,
         on_sign_in = not signed_in and function() self:showLogin() end or nil,
-        onMenuSelect = function(_library, item) self:openCard(item.card) end,
+        onMenuSelect = function(_library, item)
+            if item.found then self:openFound(item) else self:openCard(item.card) end
+        end,
+        on_catalogue = function(state) self:askCatalogue(state) end,
         close_callback = function()
             UIManager:close(library)
             self.library = nil
+            shown_library = nil
             logger.info("yaknigi: closed from the library")
             if APP_MODE then UIManager:quit() end
         end,
@@ -305,10 +341,20 @@ function Yaknigi:showLibrary()
         on_sign_out = signed_in and function() self:signOut() end or nil,
     }
     self.library = library
+    shown_library = library
     UIManager:show(library)
     if signed_in then
         UIManager:nextTick(function() self:refreshLibrary(cached == nil) end)
         if cached then UIManager:nextTick(function() self:fetchCovers(cached) end) end
+        -- Back from a book, to what had been found: the covers that came meanwhile, or did not.
+        if library.catalogue then
+            for _, item in ipairs(library.catalogue.items) do
+                item.cover = item.cover or Covers.find(COVERS, item.card)
+            end
+            library:refreshScreen()
+            local cards = Catalogue.cards(library.catalogue.items)
+            UIManager:nextTick(function() self:fetchCovers(cards) end)
+        end
     else
         UIManager:nextTick(function() self:showLogin() end)
     end
@@ -352,6 +398,7 @@ function Yaknigi:pollLibrary(tell_failure)
         if kind == "ok" then
             local cards = read_json(LIBRARY_CACHE)
             if not cards then return end
+            if #cards == 0 then self.library.message = "Библиотека пуста. Книги можно найти через поиск." end
             self.library:switchItemTable(nil, self:libraryItems(cards))
             self:fetchCovers(cards)
         elseif kind == "auth" then
@@ -360,6 +407,172 @@ function Yaknigi:pollLibrary(tell_failure)
         elseif tell_failure then
             message(error_text(kind), 3)
             self.library:setMessage(error_text(kind))
+        end
+    end)
+end
+
+-- Catalogue -------------------------------------------------------------------
+
+local function catalogue_error(kind)
+    if kind == "network" then return "Нет связи с Яндекс Книгами." end
+    return "Поиск сейчас не работает."
+end
+
+--- Gets the next books found, if they are not on their way already. In a forked process,
+-- as all slow requests; every request has its file, for an old search not to answer a new one.
+function Yaknigi:askCatalogue(state)
+    if not Catalogue.start(state) then return end
+    local function start()
+        catalogue_requests = catalogue_requests + 1
+        local path = CATALOGUE_RESULT .. catalogue_requests
+        local token, cursor = saved_token(), state.cursor
+        local pid = ffiutil.runInSubProcess(function()
+            local api = Api.new(token)
+            local answer, kind = api:search(state.query, cursor)
+            api:close()
+            if answer then
+                local items = {}
+                for _, found in ipairs(answer.page) do
+                    items[#items + 1] = Catalogue.item(found)
+                end
+                write_json(path, { kind = "ok", items = items, cursor = answer.cursor or "" })
+            else
+                write_json(path, { kind = kind or "network" })
+            end
+            os.exit(0)
+        end)
+        if pid then
+            self:pollCatalogue(state, pid, path)
+        else
+            Catalogue.fail(state, catalogue_error("http"))
+        end
+    end
+    if state.cursor == "" then
+        NetworkMgr:runWhenOnline(start)
+    elseif NetworkMgr:isOnline() then
+        start()
+    else
+        Catalogue.fail(state, catalogue_error("network"))
+    end
+end
+
+function Yaknigi:pollCatalogue(state, pid, path)
+    UIManager:scheduleIn(0.3, function()
+        if not ffiutil.isSubProcessDone(pid) then
+            self:pollCatalogue(state, pid, path)
+            return
+        end
+        local result = read_json(path) or {}
+        os.remove(path)
+        local library = shown_library
+        local current = library and library.catalogue == state
+        if result.kind == "auth" then
+            Catalogue.fail(state, catalogue_error("http"))
+            if current then
+                save_token(nil)
+                if self.library == library then self:showLibrary() end
+            end
+            return
+        end
+        local new
+        if result.kind == "ok" then
+            new = Catalogue.add(state, result.items, result.cursor)
+        else
+            Catalogue.fail(state, catalogue_error(result.kind or "network"))
+        end
+        if not current then return end
+        if library.view == "catalogue" then library:refreshScreen() end
+        if new and self.library == library then self:fetchCovers(Catalogue.cards(new)) end
+    end)
+end
+
+function Yaknigi:ownedCard(book_uuid)
+    for _, item in ipairs(self.library and self.library.item_table or {}) do
+        local book = item.card and item.card.book
+        if book and book.uuid == book_uuid then return item.card end
+    end
+end
+
+--- A book from the library opens at once. Any other shows what it is first, as opening it
+-- means adding it to the library.
+function Yaknigi:openFound(item)
+    local card = self:ownedCard(item.card.book.uuid)
+    if card then
+        self:openCard(card)
+    elseif item.in_library then
+        self:takeFound(item)
+    else
+        local screen
+        screen = BookCard:new{
+            item = item,
+            on_read = function() self:takeFound(item, screen) end,
+        }
+        UIManager:show(screen)
+    end
+end
+
+--- Gets a library card for a found book and opens it.
+function Yaknigi:takeFound(item, screen)
+    NetworkMgr:runWhenOnline(function()
+        if self.taking then return end
+        self.taking = true
+        local wait = InfoMessage:new{ text = "Открываю…" }
+        UIManager:show(wait)
+        os.remove(TAKE_RESULT)
+        local token, uuid = saved_token(), item.card.book.uuid
+        local pid = ffiutil.runInSubProcess(function()
+            local api = Api.new(token)
+            local card, kind = api:card_for_reading(uuid)
+            api:close()
+            write_json(TAKE_RESULT, { kind = kind or "ok", card = card })
+            os.exit(0)
+        end)
+        if not pid then
+            self.taking = false
+            UIManager:close(wait)
+            message(error_text("http"), 3)
+            return
+        end
+        self:pollTake(item, screen, wait, pid)
+    end)
+end
+
+function Yaknigi:pollTake(item, screen, wait, pid)
+    UIManager:scheduleIn(0.2, function()
+        if not ffiutil.isSubProcessDone(pid) then
+            self:pollTake(item, screen, wait, pid)
+            return
+        end
+        self.taking = false
+        UIManager:close(wait)
+        local result = read_json(TAKE_RESULT) or {}
+        local kind = result.kind or "network"
+        if not self.library then return end
+        if kind == "ok" and result.card then
+            if screen then UIManager:close(screen) end
+            Catalogue.mark_added(item, result.card)
+            -- So that the library has it now, whatever becomes of opening it.
+            local cards = read_json(LIBRARY_CACHE) or {}
+            local known = false
+            for _, card in ipairs(cards) do
+                known = known or card.uuid == result.card.uuid
+            end
+            if not known then
+                table.insert(cards, 1, result.card)
+                write_json(LIBRARY_CACHE, cards)
+            end
+            self.library:switchItemTable(nil, self:libraryItems(cards))
+            self:openCard(result.card)
+        elseif kind == "auth" then
+            if screen then UIManager:close(screen) end
+            save_token(nil)
+            self:showLibrary()
+        elseif kind == "denied" then
+            message("Эта книга недоступна по вашей подписке.", 3)
+        elseif kind == "network" then
+            message(error_text(kind), 3)
+        else
+            message("Яндекс Книги не дали открыть эту книгу.", 3)
         end
     end)
 end
@@ -417,6 +630,7 @@ function Yaknigi:showBook(store, xpointer, target, stubs)
         UIManager:close(self.library)
         self.library = nil
     end
+    shown_library = nil
     workers[store.id] = workers[store.id] or {}
     local state = workers[store.id]
     state.target = target or state.target
