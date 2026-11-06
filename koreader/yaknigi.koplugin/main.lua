@@ -648,7 +648,7 @@ function Yaknigi:pollFeed(state, pid, path)
             library:refreshScreen()
             library:askForMore() -- a page may have held nothing to read here
         end
-        if self.library == library then self:fetchCovers(Feed.cards(new, 5)) end
+        if self.library == library then self:fetchCovers(Feed.cards(new, Feed.ROW_COVERS)) end
     end)
 end
 

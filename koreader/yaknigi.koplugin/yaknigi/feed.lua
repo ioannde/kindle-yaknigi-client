@@ -7,6 +7,8 @@ local Feed = {}
 Feed.ROOT = "EKSEfw9w"
 -- Sections with fewer books than this have mostly lost them to the filter: audiobooks.
 local FEWEST_BOOKS = 3
+-- At least as many as stand in a row of the feed on any screen, for the covers to be got.
+Feed.ROW_COVERS = 8
 -- Pages can hold only audiobooks, but not without end.
 local EMPTY_PAGES_AT_MOST = 3
 

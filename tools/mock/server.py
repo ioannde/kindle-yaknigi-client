@@ -502,13 +502,11 @@ class Handler(BaseHTTPRequestHandler):
             self.reply_json(200, {"secret": base64.b64encode(KEY).decode()})
         elif url.path.endswith("/content"):
             path = query["path"][0]
-            if f"/{COVER_PAGE_BOOK}/" in url.path:
-                if path.endswith(".png"):
-                    self.reply(200, cover_png(5))
-                elif path.endswith("title.xhtml"):
-                    self.reply(200, COVER_PAGE.encode())
-                else:
-                    self.reply(200, chapter(path).encode())
+            # This route knows a book by its document, not its uuid: these names are that book's.
+            if path.endswith("title.xhtml"):
+                self.reply(200, COVER_PAGE.encode())
+            elif path.endswith(("/a.html", "/b.html")):
+                self.reply(200, chapter(path).encode())
             elif not self.server.big:
                 self.reply(200, chapter(path).encode())
             elif path.endswith(".css"):

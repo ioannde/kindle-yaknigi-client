@@ -644,7 +644,7 @@ function Library:openFeed()
     local first_time = not self.feed
     if first_time then self.feed = self.load_feed() end
     self:show("feed", nil, page)
-    if first_time then self.on_covers(Feed.cards(self.feed.sections, 5)) end
+    if first_time then self.on_covers(Feed.cards(self.feed.sections, Feed.ROW_COVERS)) end
 end
 
 --- What was found last is still there; a tap on the tab while in it starts typing.
