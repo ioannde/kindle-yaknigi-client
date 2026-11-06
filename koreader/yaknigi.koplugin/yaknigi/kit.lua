@@ -197,7 +197,7 @@ function Kit.segments(labels, selected, width, on_select, height)
             margin = 0,
             CenterContainer:new{
                 dimen = Geom:new{ w = cell - 2 * Kit.px(1), h = height - 2 * Kit.px(1) },
-                Kit.text(label, 17, { color = on and Blitbuffer.COLOR_WHITE or Blitbuffer.COLOR_BLACK, max_width = cell - Kit.px(8) }),
+                Kit.text(label, 17, { color = on and Blitbuffer.COLOR_WHITE or Blitbuffer.COLOR_BLACK, max_width = cell - Kit.px(4) }),
             },
         }
         row[i] = Tappable:new{ callback = function() on_select(i) end, box }
