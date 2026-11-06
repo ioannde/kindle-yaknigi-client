@@ -656,12 +656,49 @@ local function test_reading_screen()
 
     -- The time's refresh leaves nothing of the last minute, and touches nothing else.
     do
-        local mode, region
-        UIManager.setDirty = function(_, _, refresh, where) mode, region = refresh, where end
+        local refresh
+        UIManager.setDirty = function(_, _, asked) refresh = asked end
         reader().yaknigi.shell:paintClock()
         UIManager.setDirty = set_dirty
-        if mode ~= "flashui" then fail("the clock's refresh is " .. tostring(mode)) end
+        local counted = UIManager.refresh_counted
+        local mode, region = refresh()
+        if not UIManager.refresh_counted then fail("the clock brings the next flash closer") end
+        UIManager.refresh_counted = counted
+        if mode ~= "partial" then fail("the clock's refresh is " .. tostring(mode)) end
         if region.w > W / 4 then fail("the clock flashes " .. region.w .. " wide") end
+    end
+
+    -- The table of contents: ours, opened where the reader is, and it goes where it is told.
+    do
+        tap_at(W / 2, H / 2)
+        wait("the panels", is_named("YaknigiChrome"))
+        tap_widget(top().toc_button)
+        wait("the table of contents", is_named("YaknigiToc"))
+        local toc = top()
+        UIManager:forceRePaint()
+        if not toc.rows[toc.current] then fail("the table of contents is not at the current chapter") end
+        shot("19a-toc")
+        local before = reader().document:getCurrentPage()
+        local target
+        for i, row in pairs(toc.rows) do
+            if i ~= toc.current and toc.items[i].page ~= before then target = row end
+        end
+        if toc.pager_next then
+            tap_widget(toc.pager_next)
+            UIManager:forceRePaint()
+            shot("19b-toc-next-page")
+            tap_widget(toc.pager_prev)
+            UIManager:forceRePaint()
+            for i, row in pairs(toc.rows) do
+                if i ~= toc.current and toc.items[i].page ~= before then target = row end
+            end
+        end
+        tap_widget(target)
+        wait("the chapter from the contents", function()
+            return top() ~= toc and reader().document:getCurrentPage() ~= before
+        end)
+        reader():handleEvent(Event:new("GotoPage", before))
+        UIManager:forceRePaint()
     end
 
     -- The settings, from the panels' menu.

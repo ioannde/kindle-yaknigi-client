@@ -27,6 +27,16 @@ function Kit.px(n) return Screen:scaleBySize(n) end
 function Kit.cover_radius() return Kit.px(6) end
 function Kit.face(size) return Font:getFace("cfont", size) end
 
+--- The refresh of a clock's small patch: no flash, and the waveform of a page turn, which
+-- leaves nothing of the digits before. Not a page turn, though: "partial" counts towards the
+-- next flash of the whole screen, and a passing minute must not bring that any closer.
+function Kit.clock_refresh(region)
+    return function()
+        require("ui/uimanager").refresh_counted = true
+        return "partial", region
+    end
+end
+
 function Kit.text(text, size, opts)
     opts = opts or {}
     return TextWidget:new{

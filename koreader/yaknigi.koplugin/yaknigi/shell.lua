@@ -129,6 +129,11 @@ function Shell:install()
         ui.highlight:removeFromHighlightDialog(id)
     end
     self:registerZone()
+    -- Ours wherever it is asked for. KOReader's has its own menu, which is not needed here.
+    ui.toc.onShowToc = function()
+        require("ui/uimanager"):show(require("yaknigi/toc"):new{ ui = ui, shell = self })
+        return true
+    end
     local dogear = ui.view.dogear
     dogear.paintTo = function(_, bb, x, y) Ribbon.paint(bb, x, y) end
     dogear.getRefreshRegion = function() return Ribbon.region() end
@@ -145,9 +150,7 @@ function Shell:paintClock()
     if Device.screen_saver_mode or not Prefs.reading_clock() or not ui.view.footer:shouldBeRepainted() then
         return
     end
-    -- Flashed clean, on its small patch alone: a quiet refresh of the same spot leaves the
-    -- last minute's digits showing through the new ones.
-    require("ui/uimanager"):setDirty(ui.view.dialog, "flashui", Clock.patch())
+    require("ui/uimanager"):setDirty(ui.view.dialog, Kit.clock_refresh(Clock.patch()))
 end
 
 --- Each minute's turn of the clock on the page.
