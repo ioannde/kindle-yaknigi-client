@@ -555,16 +555,19 @@ local function script()
 
     -- Search, from the first screen, in any case, and within a shelf.
     local function search(query)
-        wait("the search dialog", function() return menu.search_dialog and top() == menu.search_dialog end)
+        wait("the search dialog", function() return menu.search_dialog and UIManager:isWidgetShown(menu.search_dialog) end)
         menu.search_dialog:setInputText(query)
         menu.search_dialog.button_table:getButtonById("find").callback()
         wait("the search results", function() return menu.query == (query ~= "" and query or nil) end)
         UIManager:forceRePaint()
     end
+    -- The emulator counts as having a real keyboard; a Kindle has only this one.
+    G_reader_settings:saveSetting("virtual_keyboard_enabled", true)
     tap_widget(menu.search_button)
-    wait("the keyboard", function() return top() == menu.search_dialog end)
+    wait("the keyboard", function() return top().name == "VirtualKeyboard" or top().keyboard_layer end)
     UIManager:forceRePaint()
     shot("03e-library-keyboard")
+    G_reader_settings:saveSetting("virtual_keyboard_enabled", false)
     if G_reader_settings:readSetting("keyboard_layout") ~= "ru" then fail("search does not start in Russian") end
     search("КНИГА НОМЕР 12")
     if menu.view ~= "all" or #menu.rows ~= 1 or not menu.rows[1].title:find("номер 12", 1, true) then

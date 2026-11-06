@@ -44,8 +44,9 @@ local Library = InputContainer:extend{
 
 function Library:init()
     self.place = self.place or {}
-    self.view = self.place.view or "home"
-    self.query = self.place.query
+    -- Signed out, there is nothing but the first screen to come back to.
+    self.view = not self.on_sign_in and self.place.view or "home"
+    self.query = not self.on_sign_in and self.place.query or nil
     self.page = self.place.page or 1
     self.dimen = Geom:new{ x = 0, y = 0, w = Screen:getWidth(), h = Screen:getHeight() }
     self.ges_events = {
