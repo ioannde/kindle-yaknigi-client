@@ -108,6 +108,141 @@ local function open(menu, needle)
 end
 
 -- The reading screen, driven by taps at the place a finger would touch.
+local function mock_get(path)
+    local http = require("socket.http")
+    local body, code = http.request(os.getenv("YB_OAUTH_BASE") .. path)
+    if code ~= 200 then fail("mock server: " .. tostring(code) .. " for " .. path) end
+    return body ~= "" and require("rapidjson").decode(body) or nil
+end
+
+local function url_encode(s)
+    return (s:gsub("[^%w%-_%.~]", function(c) return ("%%%02X"):format(c:byte()) end))
+end
+
+local function plain(text)
+    return (text:gsub("%s+", " "):gsub("^ ", ""))
+end
+
+-- Every position sent must point at the very words the page starts with, as a phone reads
+-- them. The server works that out on its own, from the chapter's source.
+local function test_positions_match_the_text()
+    local doc = reader().document
+    local plugin = reader().yaknigi
+    local kinds = {}
+    for _ = 1, 60 do
+        reader().rolling:onGotoViewRel(1)
+        UIManager:forceRePaint()
+        local xp = doc:getXPointer()
+        local next_xp = doc:getPageXPointer(doc:getCurrentPage() + 1)
+        local start = plugin:positionOf(xp)
+        if not start then fail("no position for " .. xp) end
+        local words = plain(doc:getTextFromXPointers(xp, next_xp) or ""):sub(1, 40)
+        local answer = mock_get("/test/text_at?cfi=" .. url_encode(start))
+        local there = answer.text and plain(answer.text) or "(nothing)"
+        -- Cut at a whole letter: the two sides are compared in bytes.
+        local prefix = words:sub(1, 30):gsub("[\128-\255]+$", "")
+        if prefix ~= "" and there:sub(1, #prefix) ~= prefix then
+            fail(("position %s from %s points elsewhere: page starts %q, position has %q")
+                :format(start, xp, words, there:sub(1, 40)))
+        end
+        kinds[start:match("/(%d+):%d+$")] = true
+    end
+    if not (kinds["1"] and (kinds["3"] or kinds["5"]) ) then
+        fail("the pages tried did not start in different text nodes")
+    end
+    say("positions match the text")
+end
+
+local function test_position_upload()
+    local BOOK = "book0"
+    local dir = reader().yaknigi.store.dir
+    local doc = reader().document
+    local function position() return mock_get("/test/position?book=" .. BOOK) end
+    local function moment()
+        local t0 = socket.gettime()
+        wait("a moment", function() return socket.gettime() - t0 > 2 end)
+    end
+    local function waiting()
+        local f = io.open(dir .. "/to_send")
+        if f then f:close() end
+        return f ~= nil
+    end
+
+    -- Opening a book and leaving it again says nothing new.
+    reader():onHome()
+    local menu = library_with(21)
+    wait("the position after paging through", function() return position().writes ~= nil and not waiting() end, 15)
+    moment()
+    local sent = position()
+    open(menu, "Книга номер 0")
+    local expected_page = reader().document:getCurrentPage()
+    reader():onHome()
+    menu = library_with(21)
+    moment()
+    if position().writes ~= sent.writes then fail("an unread book was sent again") end
+
+    -- Reading goes up as soon as the book is left.
+    open(menu, "Книга номер 0")
+    doc = reader().document
+    if doc:getCurrentPage() ~= expected_page then
+        fail("its own position taken for reading on the phone: page " .. doc:getCurrentPage() .. ", was " .. expected_page)
+    end
+    reader().rolling:onGotoViewRel(5)
+    UIManager:forceRePaint()
+    local read_to = doc:getCurrentPage()
+    local want = reader().yaknigi:positionOf(doc:getXPointer())
+    reader():onHome()
+    wait("the position on the server", function() return position().start == want end, 15)
+    sent = position()
+    if sent.sent_cfi ~= require("yaknigi/cfi").point_range(want) then fail("card got " .. tostring(sent.sent_cfi)) end
+    if sent.state ~= "reading" then fail("state " .. tostring(sent.state)) end
+    if sent.progress < 1 then fail("progress " .. tostring(sent.progress)) end
+    wait("nothing left to send", function() return not waiting() end, 15)
+    menu = library_with(21)
+
+    -- And it is not taken for a move on the phone, with the list before or after the upload.
+    open(menu, "Книга номер 0")
+    if reader().document:getCurrentPage() ~= read_to then
+        fail("its own upload moved the book: page " .. reader().document:getCurrentPage() .. ", was " .. read_to)
+    end
+
+    -- No network: the position waits, and goes with the next refresh.
+    mock_get("/test/fail_writes?n=1")
+    reader().rolling:onGotoViewRel(5)
+    UIManager:forceRePaint()
+    want = reader().yaknigi:positionOf(reader().document:getXPointer())
+    read_to = reader().document:getCurrentPage()
+    reader():onHome()
+    wait("the position sent after the failure", function() return position().start == want end, 20)
+    wait("nothing left to send after the failure", function() return not waiting() end, 15)
+    menu = library_with(21)
+
+    -- Read on the phone while this one waited: the phone's is newer, and stays.
+    mock_get("/test/fail_writes?n=100")
+    open(menu, "Книга номер 0")
+    reader().rolling:onGotoViewRel(5)
+    UIManager:forceRePaint()
+    reader():onHome()
+    wait("the position to wait", waiting, 15)
+    moment() -- the attempts on leaving are over
+    if not waiting() then fail("the position did not wait") end
+    local phone = "/6/72!/2/4/2/4/1:0"
+    mock_get("/test/phone_read?book=" .. BOOK .. "&start=" .. url_encode(phone))
+    mock_get("/test/fail_writes?n=0")
+    menu = library_with(21)
+    menu.on_refresh()
+    wait("the waiting position dropped", function() return not waiting() end, 20)
+    if position().start ~= phone then fail("the phone's reading was overwritten: " .. tostring(position().start)) end
+    wait("the library to show the phone's position", function()
+        return (find_item(top(), "Книга номер 0").card.cfi or ""):find("/6/72!", 1, true)
+    end, 15)
+    menu = library_with(21)
+    open(menu, "Книга номер 0")
+    local n = fragment()
+    if n ~= 36 then fail("the phone's position was not taken: chapter " .. tostring(n)) end
+    say("position upload works")
+end
+
 local function test_reading_screen()
     local W, H = Screen:getWidth(), Screen:getHeight()
     local doc = reader().document
@@ -399,6 +534,9 @@ local function script()
     if reader().document:getCurrentPage() ~= read_to then
         fail(("position lost after reopening: page %d, left at %d"):format(reader().document:getCurrentPage(), read_to))
     end
+
+    test_positions_match_the_text()
+    test_position_upload()
 
     -- Reaching an unfetched chapter: a stub at first, then the real one.
     reader():onHome()

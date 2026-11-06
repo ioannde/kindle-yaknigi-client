@@ -1,0 +1,95 @@
+-- Sends the reading position to Yandex, so that the phone opens where the Kindle left off.
+--
+-- A position waits in the book's "to_send" file until a request gets through. There is no
+-- Wi-Fi on a train, and a Kindle may sleep in the middle of a request.
+local json = require("rapidjson")
+local lfs = require("libs/libkoreader-lfs")
+local logger = require("logger")
+
+local Cfi = require("yaknigi/cfi")
+local Session = require("yaknigi/session")
+
+local Sync = {}
+
+-- Time left over a page says nothing about reading, as the book may just be lying open.
+local MAX_SECONDS_PER_UPDATE = 300
+
+math.randomseed(os.time())
+
+function Sync.new_session()
+    return (("xxxxxxxx-xxxx-4xxx-8xxx-xxxxxxxxxxxx"):gsub("x", function()
+        return ("%x"):format(math.random(0, 15))
+    end))
+end
+
+local function read_waiting(dir)
+    local f = io.open(dir .. "/to_send", "rb")
+    if not f then return nil end
+    local text = f:read("*a")
+    f:close()
+    local ok, position = pcall(json.decode, text)
+    return ok and type(position) == "table" and position or nil
+end
+
+function Sync.waiting(dir)
+    return read_waiting(dir)
+end
+
+--- Sets a position aside. Reading time adds up while nothing gets through.
+function Sync.queue(dir, position, seconds)
+    local earlier = read_waiting(dir)
+    local spent = math.max(1, math.min(MAX_SECONDS_PER_UPDATE, seconds))
+    position.timespent = (earlier and earlier.timespent or 0) + spent * 1000
+    local tmp = dir .. "/to_send.tmp"
+    local f = io.open(tmp, "wb")
+    if not f then return end
+    f:write(json.encode(position))
+    f:close()
+    os.rename(tmp, dir .. "/to_send")
+end
+
+--- Sends what is waiting for a book. Returns the position sent, or nil and why not.
+function Sync.send(api, dir)
+    local position = read_waiting(dir)
+    if not position then return nil, "nothing" end
+    local ok, kind, detail = api:send_position(position)
+    local rejected = kind == "not_found" or (kind == "http" and detail ~= "graphql" and (tonumber(detail) or 500) < 500)
+    if ok or rejected then
+        local now = read_waiting(dir)
+        -- Reading went on during the request: that one is still to go.
+        if now and now.start == position.start then os.remove(dir .. "/to_send") end
+    end
+    if not ok then return nil, kind end
+    Session.note_sent(dir, position.start)
+    return position
+end
+
+--- Sends what could not go earlier, for every book. A book that has since been read on
+-- the phone is left alone: that reading is newer, and the book will open there.
+-- Updates the cards to match.
+function Sync.send_waiting(api, books, cards)
+    local by_book = {}
+    for _, card in ipairs(cards) do
+        if card.book and card.book.uuid then by_book[card.book.uuid] = card end
+    end
+    for id in lfs.dir(books) do
+        local card = by_book[id]
+        local dir = books .. "/" .. id
+        if card and read_waiting(dir) then
+            if Session.server_moved({ dir = dir }, card, true) then
+                os.remove(dir .. "/to_send")
+            else
+                local position, kind = Sync.send(api, dir)
+                if position then
+                    card.cfi = Cfi.point_range(position.start)
+                    card.progress = position.progress
+                elseif kind == "network" or kind == "auth" then
+                    logger.info("yaknigi: positions not sent:", kind)
+                    return
+                end
+            end
+        end
+    end
+end
+
+return Sync

@@ -9,8 +9,10 @@ With "koreader", books have many chapters, a stylesheet, a table of contents and
 reading position, and chapters take a moment to arrive, as for the KOReader plugin.
 """
 import base64
+from html.parser import HTMLParser
 import hashlib
 import json
+import re
 import struct
 import subprocess
 import sys
@@ -75,12 +77,96 @@ def cover_png(n):
 
 def big_chapter(path):
     number = int(path.split("/c")[-1].split(".")[0]) + 1
-    paragraphs = "".join(f"<p>Глава {number}, абзац {i + 1}. {PARAGRAPH * 4}</p>" for i in range(30))
+    # Every third paragraph has elements inside, as real books do, so that pages start in
+    # all kinds of text node. The picture and the comment are steps a position must count.
+    def paragraph(i):
+        start = f"Глава {number}, абзац {i + 1}."
+        if i % 3 == 2:
+            return (f"<p>{start} {PARAGRAPH} <em>курсив {i} {PARAGRAPH}</em> <b>жирный {i} {PARAGRAPH}</b>"
+                    f" хвост {i} {PARAGRAPH} &amp; {PARAGRAPH}</p>\n<!-- a > b --><br/>")
+        return f"<p>{start} {PARAGRAPH * 4}</p>\n"
+    paragraphs = "".join(paragraph(i) for i in range(30))
     return (
         '<?xml version="1.0" encoding="utf-8"?><html xmlns="http://www.w3.org/1999/xhtml">'
         f'<head><title>Глава {number}</title><link rel="stylesheet" href="s.css"/></head>'
         f"<body><div>{paragraphs}</div></body></html>"
     )
+
+
+class Chapter(HTMLParser):
+    """The tree of a chapter, written apart from the plugin's walker to check its answers."""
+    VOID = {"br", "img", "hr", "meta", "link"}
+
+    def __init__(self, html):
+        super().__init__(convert_charrefs=True)
+        self.root = {"children": []}
+        self.stack = [self.root]
+        self.feed(html)
+
+    def handle_starttag(self, tag, attrs):
+        node = {"tag": tag, "children": []}
+        self.stack[-1]["children"].append(node)
+        if tag not in self.VOID:
+            self.stack.append(node)
+
+    def handle_endtag(self, tag):
+        if tag not in self.VOID and len(self.stack) > 1:
+            self.stack.pop()
+
+    def handle_data(self, data):
+        children = self.stack[-1]["children"]
+        if children and isinstance(children[-1], str):
+            children[-1] += data
+        else:
+            children.append(data)
+
+
+def child_at(node, step):
+    """A CFI step: elements are 2, 4..., with odd steps for the text around them."""
+    elements = 0
+    for child in node["children"]:
+        if isinstance(child, str):
+            if step == elements * 2 + 1:
+                return child
+        else:
+            elements += 1
+            if step == elements * 2:
+                return child
+    return None
+
+
+def text_after(node, skip):
+    """All text after a child of node."""
+    found = []
+    children = node["children"]
+    for child in children[skip:]:
+        if isinstance(child, str):
+            found.append(child)
+        else:
+            found.extend(text_after(child, 0))
+    return found
+
+
+def text_at(html, inner):
+    """The text from a position on, to the end of the chapter."""
+    steps = inner.split(":")[0].strip("/").split("/")
+    offset = int(inner.split(":")[1])
+    path = []
+    node = Chapter(html).root
+    for step in steps:
+        path.append(node)
+        node = child_at(node, int(step))
+        if node is None:
+            return None
+    if not isinstance(node, str) or offset > len(node):
+        return None
+    found = [node[offset:]]
+    current = node
+    for parent in reversed(path):
+        index = next(i for i, c in enumerate(parent["children"]) if c is current)
+        found.extend(text_after(parent, index + 1))
+        current = parent
+    return " ".join("".join(found).split())
 
 
 def encrypted(data):
@@ -111,7 +197,50 @@ class Handler(BaseHTTPRequestHandler):
     def reply_json(self, code, value):
         self.reply(code, json.dumps(value).encode())
 
+    def do_PUT(self):
+        length = int(self.headers.get("Content-Length", 0))
+        form = parse_qs(self.rfile.read(length).decode(), keep_blank_values=True)
+        match = re.search(r"/profile/library_cards/([^/]+)$", self.path)
+        if self.headers.get("Auth-Token") != "mock-token" or not match:
+            self.reply(401, b"")
+            return
+        card = match.group(1)
+        # As on the real server, the position in this request changes nothing.
+        self.server.card_updates[card] = {
+            "progress": int(form["lc[progress]"][0]),
+            "state": form.get("lc[state]", [None])[0],
+            "sent_cfi": form["lc[cfi]"][0],
+        }
+        self.reply_json(200, {"library_card": {"uuid": card, "cfi": form["lc[cfi]"][0]}})
+
+    def graphql(self):
+        body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
+        if self.headers.get("Auth-Token") != "mock-token":
+            self.reply(401, b"")
+            return
+        if self.server.fail_writes > 0:
+            self.server.fail_writes -= 1
+            self.reply(500, b"")
+            return
+        for p in body["variables"]["textbookProgresses"]:
+            good = (isinstance(p["timespent"], int) and p["timespent"] > 0
+                    and p["consumptionType"] == "CONSUMPTION"
+                    and re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}\+00:00", p["readAt"])
+                    and re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-8[0-9a-f]{3}-[0-9a-f]{12}", p["sessionId"])
+                    and p["documentUuid"] == "d1" and "!/" in p["cfi"]["start"] and "!/" in p["cfi"]["end"]
+                    and "ProgressUpdated" in body["query"])
+            if not good:
+                print("bad ProgressUpdated:", p, flush=True)
+                self.reply_json(200, {"errors": [{"message": "bad input"}], "data": None})
+                return
+            self.server.positions[p["uuid"]] = {"start": p["cfi"]["start"], "end": p["cfi"]["end"],
+                                                  "writes": self.server.positions.get(p["uuid"], {}).get("writes", 0) + 1}
+        self.reply_json(200, {"data": {"progressUpdated": None}})
+
     def do_POST(self):
+        if self.path == "/graphql":
+            self.graphql()
+            return
         form = parse_qs(self.rfile.read(int(self.headers.get("Content-Length", 0))).decode())
         verifier = form.get("code_verifier", [""])[0]
         digest = hashlib.sha256(verifier.encode()).digest()
@@ -126,7 +255,23 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         url = urlparse(self.path)
         query = parse_qs(url.query)
-        if url.path == "/challenge":
+        if url.path == "/test/fail_writes":
+            self.server.fail_writes = int(query["n"][0])
+            self.reply(200, b"")
+        elif url.path == "/test/phone_read":
+            # Someone reads on the phone: a position this device did not send.
+            self.server.positions[query["book"][0]] = {"start": query["start"][0], "end": query["start"][0], "writes": 0}
+            self.reply(200, b"")
+        elif url.path == "/test/position":
+            book = query["book"][0]
+            self.reply_json(200, {**self.server.positions.get(book, {}),
+                                  **self.server.card_updates.get(book.replace("book", "card"), {})})
+        elif url.path == "/test/text_at":
+            # What a phone would show first at this position.
+            spine, inner = query["cfi"][0].split("!")
+            chapter_number = int(spine.split("/")[-1]) // 2 - 1
+            self.reply_json(200, {"text": text_at(big_chapter(f"OEBPS/c{chapter_number}.html"), inner)})
+        elif url.path == "/challenge":
             # The simulator cannot scan a QR code, so the test script passes it here.
             self.server.challenge = query["c"][0]
             self.reply(200, b"")
@@ -155,6 +300,14 @@ class Handler(BaseHTTPRequestHandler):
                     card["accessed_at"] = 1793000000 - (start + n) * 86400 if start + n < 20 else None
                     card["cfi"] = BIG_CFI if start + n == 0 else None
                     card["progress"] = 77 if start + n == 0 else 0
+            for card in cards:
+                position = self.server.positions.get(card["book"]["uuid"])
+                if position:
+                    spine, start = position["start"].split("!")
+                    card["cfi"] = f'{spine}!,{start},{position["end"].split("!")[1]}'
+                update = self.server.card_updates.get(card["uuid"])
+                if update:
+                    card["progress"] = update["progress"]
             if page == 1:
                 cards[3]["book"]["uuid"] = "serial-1"
                 cards[3]["book"]["title"] = "Сериал"
@@ -190,5 +343,8 @@ class Handler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     server = ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), Handler)
     server.challenge = None
+    server.positions = {}
+    server.card_updates = {}
+    server.fail_writes = 0
     server.big = len(sys.argv) > 2 and sys.argv[2] == "koreader"
     server.serve_forever()

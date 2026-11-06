@@ -22,11 +22,13 @@ local json = require("rapidjson")
 local Api = require("yaknigi/api")
 local Background = require("yaknigi/background")
 local Covers = require("yaknigi/covers")
+local Cfi = require("yaknigi/cfi")
 local Crypt = require("yaknigi/crypt")
 local Library = require("yaknigi/library")
 local Session = require("yaknigi/session")
 local Shell = require("yaknigi/shell")
 local Store = require("yaknigi/store")
+local Sync = require("yaknigi/sync")
 
 local ROOT = DataStorage:getDataDir() .. "/yaknigi"
 local BOOKS = ROOT .. "/books"
@@ -312,6 +314,8 @@ function Yaknigi:refreshLibrary(tell_failure)
         self.library_pid = ffiutil.runInSubProcess(function()
             local api = Api.new(token)
             local cards, kind = api:library()
+            -- What could not be sent earlier, before the list is saved: the list then holds it.
+            if cards then Sync.send_waiting(api, BOOKS, cards) end
             api:close()
             if cards then write_json(LIBRARY_CACHE, cards) end
             write_json(LIBRARY_RESULT, { kind = kind or "ok" })
@@ -407,6 +411,9 @@ function Yaknigi:showBook(store, xpointer, target, stubs)
     local ReaderUI = require("apps/reader/readerui")
     ReaderUI:showReader(store.epub, nil, false, nil, function(ui)
         if xpointer then ui.rolling:onGotoXPointer(xpointer) end
+        -- Only reading moves the position. Sending this one back would be a step behind
+        -- the phone, as what comes from Yandex lands at the start of its paragraph.
+        if ui.yaknigi then ui.yaknigi.base_xp = ui.document:getXPointer() end
     end)
 end
 
@@ -456,6 +463,8 @@ function Yaknigi:onReaderReady()
     local store = self:readerStore()
     if not store or not store.manifest then return end
     self.store = store
+    self.reading_session = Sync.new_session()
+    self.queued_at = os.time()
     self:keepChapter()
     if APP_MODE then
         self.shell = Shell.new(self.ui, self)
@@ -563,10 +572,68 @@ function Yaknigi:onPageUpdate()
     end
 end
 
+-- The position for Yandex: where an xpointer is, counted in its spine.
+function Yaknigi:positionOf(xp)
+    local store = self.store
+    local fragment = xp and tonumber(xp:match("DocFragment%[(%d+)%]"))
+    local path = fragment and store.paths[fragment]
+    local spine = fragment and store:spine_index_of_fragment(fragment)
+    if not path or not spine or not store:has(path) then return nil end
+    local inner = Cfi.locate(store:read(path), xp)
+    return inner and Cfi.at(spine, inner)
+end
+
+--- If reading has moved on, sets the new position aside and tries to send it. Whatever
+-- does not go now goes from the library's next refresh.
+function Yaknigi:sendPosition()
+    local doc, store = self.ui.document, self.store
+    local xp = doc:getXPointer()
+    if not self.base_xp then self.base_xp = xp; return end
+    if xp == self.base_xp then return end
+    local token = saved_token()
+    local card, state = Session.read_card(store.dir)
+    local start = self:positionOf(xp)
+    if not token or not card or not start or not store.manifest.document_uuid then return end
+
+    local now = os.time()
+    if start ~= self.queued then
+        self.queued = start
+        Sync.queue(store.dir, {
+            start = start,
+            finish = self:positionOf(doc:getPageXPointer(doc:getCurrentPage() + 1)) or start,
+            range = Cfi.point_range(start),
+            progress = math.max(0, math.min(100, math.floor(self.shell:progress() * 100 + 0.5))),
+            card = card,
+            book = store.id,
+            document = store.manifest.document_uuid,
+            state = state ~= "finished" and "reading" or nil,
+            read_at = os.date("!%Y-%m-%dT%H:%M:%S.000+00:00", now),
+            session = self.reading_session or Sync.new_session(),
+        }, now - (self.queued_at or now))
+        self.queued_at = now
+    end
+    if not Sync.waiting(store.dir) then return end
+    if self.send_pid and not ffiutil.isSubProcessDone(self.send_pid) then return end
+    local dir = store.dir
+    self.send_pid = ffiutil.runInSubProcess(function()
+        local api = Api.new(token)
+        local ok, kind = Sync.send(api, dir)
+        api:close()
+        if not ok then logger.info("yaknigi: position not sent:", kind) end
+        os.exit(0)
+    end)
+end
+
 function Yaknigi:saveReading()
     if self.shell and self.store and self.ui.document then
         Session.save_reading(self.store.dir, self.shell:progress())
+        self:sendPosition()
     end
+end
+
+function Yaknigi:onSuspend()
+    -- The phone may be next: do not leave it a position behind.
+    self:saveReading()
 end
 
 function Yaknigi:onCloseDocument()

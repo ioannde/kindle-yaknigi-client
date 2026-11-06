@@ -154,5 +154,32 @@ h:request("GET", "http://x.test/1")
 h:request("GET", "http://y.test/1")
 eq(connects, 2, "new host, new connection")
 
+-- The way back: an xpointer to Yandex's position.
+eq(Cfi.start("/6/24!,/2/4/2/64/1:560,/2/4/2/66/5:89"), "/6/24!/2/4/2/64/1:560", "start of a range")
+eq(Cfi.start("/6/24!/2/4/2/64/1:560"), "/6/24!/2/4/2/64/1:560", "a point is its start")
+eq(Cfi.start(nil), nil, "no position")
+eq(Cfi.at(11, "/2/4/2/64/1:560"), "/6/24!/2/4/2/64/1:560", "spine index to steps")
+eq(Cfi.point_range("/6/24!/2/4/2/64/1:560"), "/6/24!,/2/4/2/64/1:560,/2/4/2/64/1:560", "range as the card holds it")
+local F = "/body/DocFragment[13]/body"
+local page = '<?xml version="1.0"?><html><head><title>x</title></head><body><div>'
+    .. "<h1>Заголовок</h1><p>Первый абзац</p><!-- a > b --><p>Второй абзац</p><br/><p>Третий</p>"
+    .. "<p>Раз <em>два</em> <b>три</b> четыре &amp; пять</p><img src='a.png'/>"
+    .. "<div><p>Вложенный</p></div></div><p>Вне</p></body></html>"
+eq(Cfi.locate(page, F .. "/div/p[1]/text().3"), "/2/4/2/4/1:3", "h1 counts as a step, not as a p")
+eq(Cfi.locate(page, F .. "/div/p[2]/text().0"), "/2/4/2/6/1:0", "a comment is no step")
+eq(Cfi.locate(page, F .. "/div/p[3]/text().2"), "/2/4/2/10/1:2", "br is a step")
+eq(Cfi.locate(page, F .. "/div/p[4]/text()[1].2"), "/2/4/2/12/1:2", "text before the elements")
+eq(Cfi.locate(page, F .. "/div/p[4]/em/text().1"), "/2/4/2/12/2/1:1", "text in an inline element")
+eq(Cfi.locate(page, F .. "/div/p[4]/text()[3].1"), "/2/4/2/12/5:1", "text after two elements, with a space between")
+eq(Cfi.locate(page, F .. "/div/p[4]/text()[3].999"), "/2/4/2/12/5:14", "past the end of the text, an entity is one letter")
+eq(Cfi.locate(page, F .. "/div/img"), "/2/4/2/16/2/1:0", "a picture gives the text after it")
+eq(Cfi.locate(page, F .. "/div/div/p/text().4"), "/2/4/2/16/2/1:4", "nested")
+eq(Cfi.locate(page, F .. "/p/text().1"), "/2/4/4/1:1", "second child of body")
+eq(Cfi.locate(page, F), "/2/4/2/2/1:0", "the chapter's start")
+eq(Cfi.locate(page, F .. "/div/p[9]/text().1"), "/2/4/2/2/1:0", "no such element: what is known of the path")
+eq(Cfi.locate(page, "/body/nonsense"), nil, "not in a chapter")
+eq(Cfi.locate(nil, F), nil, "no chapter")
+eq(Cfi.locate("<html><head/><body><img/></body></html>", F .. "/img"), nil, "no text at all")
+
 print(("%d passed, %d failed"):format(passed, failed))
 os.exit(failed == 0 and 0 or 1)

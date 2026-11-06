@@ -52,14 +52,14 @@ function Session.prepare(root, api, card, local_fragment)
     end
     local stubs, err = store:build()
     if not stubs then return nil, "disk", err end
-    Session.remember(store, card)
+    Session.remember(store, card, use_server)
     return store, stubs, xpointer, target
 end
 
 --- For a book already on disk: the xpointer of Yandex's newer position.
 function Session.jump_for(store, card)
     local target = store:fragment_of_spine_index(Cfi.spine_index(card.cfi))
-    Session.remember(store, card)
+    Session.remember(store, card, true)
     return Cfi.to_xpointer(card.cfi, target, store:read(store.paths[target]))
 end
 
@@ -78,19 +78,59 @@ local function write_file(path, data)
     f:close()
 end
 
+-- Positions sent from here since Yandex last had one of its own, one per line. The
+-- library may still show the one before them, so that one and these are not news.
+local function sent_positions(dir)
+    local list = {}
+    for line in (read_file(dir .. "/sent") or ""):gmatch("[^\n]+") do list[#list + 1] = line end
+    return list
+end
+
+local function is_known(dir, cfi)
+    local start = Cfi.start(cfi)
+    if start == Cfi.start(read_file(dir .. "/server_cfi")) then return true end
+    for _, sent in ipairs(sent_positions(dir)) do
+        if sent == start then return true end
+    end
+    return false
+end
+
 --- Whether to go to Yandex's position rather than stay at the one saved here. Yandex's
--- wins only when it differs from the last one seen, as it does after reading on the phone:
--- the position is not sent back, so it says nothing about reading on this device. Without
--- a position here, it is all there is.
+-- wins only when it is one this device neither saw nor sent, as after reading on the
+-- phone. Without a position here, it is all there is.
 function Session.server_moved(store, card, has_local)
     if type(card.cfi) ~= "string" then return false end
-    local seen = read_file(store.dir .. "/server_cfi")
-    if seen then return seen ~= card.cfi end
+    if read_file(store.dir .. "/server_cfi") then return not is_known(store.dir, card.cfi) end
     return not has_local
 end
 
-function Session.remember(store, card)
-    if type(card.cfi) == "string" then write_file(store.dir .. "/server_cfi", card.cfi) end
+--- moved: the book is going to Yandex's position, so what was waiting to be sent is old.
+function Session.remember(store, card, moved)
+    local dir = store.dir
+    write_file(dir .. "/card", ("%s %s"):format(tostring(card.uuid), tostring(card.state)))
+    if moved then
+        os.remove(dir .. "/sent")
+        os.remove(dir .. "/to_send")
+    end
+    if type(card.cfi) ~= "string" then return end
+    write_file(dir .. "/server_cfi", card.cfi)
+    local sent = sent_positions(dir)
+    if sent[#sent] == Cfi.start(card.cfi) then os.remove(dir .. "/sent") end
+end
+
+--- Returns the card's uuid and state, as last seen when opening the book.
+function Session.read_card(dir)
+    local uuid, state = (read_file(dir .. "/card") or ""):match("^(%S+) (%S+)$")
+    if not uuid or uuid == "nil" then return nil end
+    return uuid, state ~= "nil" and state or nil
+end
+
+function Session.note_sent(dir, start)
+    local sent = sent_positions(dir)
+    sent[#sent + 1] = start
+    -- Only the latest can come back; a few more cover a library that is behind.
+    local from = math.max(1, #sent - 20)
+    write_file(dir .. "/sent", table.concat(sent, "\n", from))
 end
 
 --- Records how far the book is read here, for the library.
@@ -102,8 +142,9 @@ end
 function Session.read_reading(dir, card)
     local percent, at = (read_file(dir .. "/reading") or ""):match("^(%d+) (%d+)$")
     if not percent then return nil end
-    local seen = read_file(dir .. "/server_cfi")
-    if seen and type(card.cfi) == "string" and seen ~= card.cfi then return nil end
+    if read_file(dir .. "/server_cfi") and type(card.cfi) == "string" and not is_known(dir, card.cfi) then
+        return nil
+    end
     return tonumber(percent), tonumber(at)
 end
 

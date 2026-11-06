@@ -113,6 +113,14 @@ function Store:fragment_of_spine_index(index)
     return fragment or 1
 end
 
+--- The Yandex spine index of a chapter, zero-based; nil if unknown.
+function Store:spine_index_of_fragment(fragment)
+    for i, f in ipairs(self.book.fragments) do
+        if f == fragment then return i - 1 end
+    end
+    return nil
+end
+
 --- Paths of everything still to fetch, chapters nearest to `around` first and
 -- forward before backward, then resources. Stylesheets go first of all, since they
 -- change how every chapter looks.

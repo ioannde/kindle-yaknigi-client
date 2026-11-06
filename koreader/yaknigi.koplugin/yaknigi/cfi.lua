@@ -98,4 +98,147 @@ function Cfi.to_xpointer(cfi, fragment, html)
     return base
 end
 
+--- The start of a position, without the range: /6/24!/2/4/2/64/1:560. Yandex stores
+-- where a page starts and where it ends, and only the start says where the reader is.
+function Cfi.start(cfi)
+    if type(cfi) ~= "string" then return nil end
+    local spine, first = cfi:match("^(/[^!]*!)/?,?(/[^,]*)")
+    return spine and spine .. first or nil
+end
+
+--- A position as the single-point range the library card holds.
+function Cfi.point_range(start)
+    local spine, inner = start:match("^(/[^!]*!)(/.*)$")
+    return spine .. "," .. inner .. "," .. inner
+end
+
+--- The position of a spot in a chapter; inner comes from Cfi.locate.
+function Cfi.at(spine_index, inner)
+    return "/6/" .. (spine_index + 1) * 2 .. "!" .. inner
+end
+
+-- /body/DocFragment[3]/body/div/p[2]/text()[2].15 gives the elements under <body> with
+-- their indexes among same-named siblings, the text node and the offset in it. The last
+-- two are nil when the pointer is at an element.
+local function parse_xpointer(xp)
+    local rest = type(xp) == "string" and xp:match("^/body/DocFragment[^/]*/body(.*)$")
+    if not rest then return nil end
+    local target, text_index, offset = {}, nil, nil
+    for seg in rest:gmatch("/([^/]+)") do
+        if seg:match("^text%(%)") then
+            text_index = tonumber(seg:match("^text%(%)%[(%d+)%]")) or 1
+            offset = tonumber(seg:match("%.(%d+)$")) or 0
+            break
+        end
+        local name = seg:match("^[%w:_%-]+")
+        if not name then return nil end
+        target[#target + 1] = {
+            name = name:lower():gsub("^.*:", ""),
+            index = tonumber(seg:match("%[(%d+)%]")) or 1,
+        }
+    end
+    return target, text_index, offset
+end
+
+local function text_length(text)
+    local plain = text:gsub("&[#%w]+;", "x")
+    return select(2, plain:gsub("[^\128-\191]", ""))
+end
+
+--- Where an xpointer is in a chapter, as the part of a CFI after the "!", such as
+-- /2/4/2/64/1:560. Yandex's positions always end in a text node, so a pointer at an
+-- element, such as a picture, gives the next text. Returns nil if there is no text at
+-- or after it.
+-- Elements count every sibling in even steps; text nodes sit between them in odd steps.
+function Cfi.locate(html, xp)
+    local target, text_index, offset = parse_xpointer(xp)
+    if not target or type(html) ~= "string" then return nil end
+
+    local body_step
+    local stack = { { n = 0, names = {}, on_target = true, is_target = #target == 0 } }
+    local seek = #target == 0 and not text_index
+    local runs = 0
+    local deepest, fallback, fallback_depth = 0, nil, -1
+
+    local function here(chars)
+        local steps = { "/2/" .. body_step }
+        for i = 2, #stack do steps[#steps + 1] = "/" .. stack[i].step end
+        steps[#steps + 1] = "/" .. 2 * stack[#stack].n + 1 .. ":" .. chars
+        return table.concat(steps)
+    end
+
+    --- Returns the answer if this piece of text is it.
+    local function on_text(text, before_element)
+        local top = stack[#stack]
+        local blank = not text:find("[^%s]")
+        -- crengine drops whitespace except between two elements in a line of text.
+        if blank and not (top.n > 0 and before_element) then return nil end
+        if not blank and seek then return here(0) end
+        if top.is_target and text_index then
+            runs = runs + 1
+            if runs == text_index and not blank then
+                return here(math.min(offset, text_length(text)))
+            end
+        end
+        if not blank and deepest > fallback_depth then
+            fallback, fallback_depth = here(0), deepest
+        end
+    end
+
+    local pos = 1
+    while true do
+        local s = html:find("<", pos, true)
+        if not s then return fallback end
+        if body_step then
+            local found = on_text(html:sub(pos, s - 1), html:sub(s + 1, s + 1) ~= "/")
+            if found then return found end
+        end
+        local e
+        if html:sub(s, s + 3) == "<!--" then
+            e = select(2, html:find("-->", s, true))
+        else
+            e = html:find(">", s, true)
+        end
+        if not e then return fallback end
+        pos = e + 1
+        local tag = html:sub(s, e)
+        local first = tag:sub(2, 2)
+        if first == "/" then
+            if body_step then
+                if not VOID[(tag:match("^</([%w:_%-]+)") or ""):lower()] then
+                    if #stack == 1 then return fallback end
+                    local closed = table.remove(stack)
+                    -- The text the pointer named is not there: settle for what follows.
+                    if closed.is_target then seek = true end
+                end
+            end
+        elseif first ~= "!" and first ~= "?" then
+            local name = tag:match("^<([%w:_%-]+)")
+            if name then
+                name = name:lower():gsub("^.*:", "")
+                local closes_itself = tag:sub(-2) == "/>" or VOID[name]
+                if not body_step then
+                    if name == "body" and not closes_itself then
+                        body_step = html:sub(1, s):lower():find("<head", 1, true) and 4 or 2
+                    end
+                else
+                    local top = stack[#stack]
+                    top.n = top.n + 1
+                    top.names[name] = (top.names[name] or 0) + 1
+                    local want = target[#stack]
+                    local on_target = top.on_target and want ~= nil and want.name == name
+                        and want.index == top.names[name]
+                    local is_target = on_target and #stack == #target
+                    if on_target then deepest = math.max(deepest, #stack) end
+                    if is_target and (closes_itself or not text_index) then seek = true end
+                    if not closes_itself then
+                        stack[#stack + 1] = { n = 0, names = {}, step = top.n * 2,
+                                              on_target = on_target, is_target = is_target }
+                    end
+                end
+            end
+        end
+    end
+end
+
 return Cfi

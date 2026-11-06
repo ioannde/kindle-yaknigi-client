@@ -23,6 +23,7 @@ cd "$KO" || exit 2
 {
     KO_HOME=$HOME_DIR YAKNIGI_APP=1 YAKNIGI_TEST_OUT=$OUT \
         YB_API_BASE=http://127.0.0.1:$PORT/api/v5 YB_OAUTH_BASE=http://127.0.0.1:$PORT \
+        YB_GRAPHQL_URL=http://127.0.0.1:$PORT/graphql \
         EMULATE_READER_W=1236 EMULATE_READER_H=1648 EMULATE_READER_DPI=300 \
         SDL_AUDIODRIVER=dummy \
         timeout 300 xvfb-run -a -s "-screen 0 1236x1648x24" ./luajit reader.lua -d "$OUT/empty" 2>&1
