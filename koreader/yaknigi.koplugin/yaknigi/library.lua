@@ -74,8 +74,12 @@ local function cover_box(item, w, h)
         -- It decodes at the first request for its size: a bad file must fail here.
         ok = ok and pcall(image.getSize, image)
         if ok then
-            return FrameContainer:new{ bordersize = 0, padding = 0,
-                CenterContainer:new{ dimen = Geom:new{ w = w, h = h }, image } }
+            local size = image:getSize()
+            return Kit.RoundedPicture:new{
+                inner_w = size.w,
+                inner_h = size.h,
+                CenterContainer:new{ dimen = Geom:new{ w = w, h = h }, image },
+            }
         end
     end
     -- No cover yet: a frame with the first letter of the title.
@@ -83,6 +87,7 @@ local function cover_box(item, w, h)
     return FrameContainer:new{
         bordersize = Kit.px(1),
         padding = 0,
+        radius = Kit.cover_radius(),
         color = Blitbuffer.COLOR_DARK_GRAY,
         CenterContainer:new{
             dimen = Geom:new{ w = w - 2 * Kit.px(1), h = h - 2 * Kit.px(1) },
@@ -262,13 +267,13 @@ function Library:searchBar(width)
     local text_w = width - clear_w - icon - Kit.px(32)
     local box = FrameContainer:new{
         bordersize = Kit.px(1),
-        radius = Kit.px(8),
+        radius = math.floor(height / 2),
         color = Blitbuffer.COLOR_DARK_GRAY,
         padding = 0,
         LeftContainer:new{
             dimen = Geom:new{ w = width - clear_w - 2 * Kit.px(1), h = height - 2 * Kit.px(1) },
             HorizontalGroup:new{ align = "center",
-                HorizontalSpan:new{ width = Kit.px(10) },
+                HorizontalSpan:new{ width = Kit.px(14) },
                 IconWidget:new{ icon = "appbar.search", width = icon, height = icon },
                 HorizontalSpan:new{ width = Kit.px(10) },
                 Kit.text(self.query or "Поиск", 17, {

@@ -22,6 +22,9 @@ local Screen = Device.screen
 local Kit = {}
 
 function Kit.px(n) return Screen:scaleBySize(n) end
+-- Corners of what lies on the page and of what holds a picture.
+function Kit.sheet_radius() return Kit.px(16) end
+function Kit.cover_radius() return Kit.px(6) end
 function Kit.face(size) return Font:getFace("cfont", size) end
 
 function Kit.text(text, size, opts)
@@ -46,11 +49,11 @@ function Kit.fixed(content, width)
     return LeftContainer:new{ dimen = Geom:new{ w = width, h = content:getSize().h }, content }
 end
 
---- A white panel of a fixed width.
-function Kit.panel(width, content, padding)
+--- A white panel of a fixed width. clear: what is under it (a Sheet) is its background.
+function Kit.panel(width, content, padding, clear)
     padding = padding or Kit.px(16)
     return FrameContainer:new{
-        background = Blitbuffer.COLOR_WHITE,
+        background = not clear and Blitbuffer.COLOR_WHITE or nil,
         bordersize = 0,
         padding = 0,
         padding_left = padding,
@@ -61,6 +64,98 @@ function Kit.panel(width, content, padding)
         content,
     }
 end
+
+-- How far a rounded corner stands from the side, row by row from the outermost.
+local function corner_inset(radius, row)
+    local dy = radius - row - 0.5
+    return radius - math.floor(math.sqrt(radius * radius - dy * dy) + 0.5)
+end
+
+-- A panel lying over the page, its free edge rounded and the page showing past the corners.
+-- edge: "top" or "bottom", the side of the screen it stands at.
+local Sheet = WidgetContainer:extend{ width = nil, edge = "bottom" }
+
+function Sheet:init()
+    self.dimen = Geom:new{ x = 0, y = 0, w = self.width, h = self[1]:getSize().h }
+end
+
+function Sheet:getSize()
+    return Geom:new{ w = self.dimen.w, h = self.dimen.h }
+end
+
+function Sheet:paintTo(bb, x, y)
+    self.dimen.x, self.dimen.y = x, y
+    local w, h, r = self.dimen.w, self.dimen.h, Kit.sheet_radius()
+    local at_bottom = self.edge == "bottom"
+    local white, ink = Blitbuffer.COLOR_WHITE, Blitbuffer.COLOR_DARK_GRAY
+    bb:paintRect(x, at_bottom and y + r or y, w, h - r, white)
+    local line = Kit.px(1)
+    local before = r
+    for i = 0, r - 1 do
+        local row = at_bottom and y + i or y + h - 1 - i
+        local inset = corner_inset(r, i)
+        bb:paintRect(x + inset, row, w - 2 * inset, 1, white)
+        if i < line then
+            bb:paintRect(x + inset, row, w - 2 * inset, 1, ink)
+        else
+            local run = math.max(1, before - inset) + line - 1
+            bb:paintRect(x + inset, row, run, 1, ink)
+            bb:paintRect(x + w - inset - run, row, run, 1, ink)
+        end
+        before = inset
+    end
+    self[1]:paintTo(bb, x, y)
+end
+
+Kit.Sheet = Sheet
+
+-- A picture with rounded corners and a thin edge, for covers: a white one has to end somewhere.
+-- Its content is a box in which a picture of inner_w by inner_h stands in the middle.
+local RoundedPicture = WidgetContainer:extend{ inner_w = nil, inner_h = nil }
+
+function RoundedPicture:paintTo(bb, x, y)
+    local size = self[1]:getSize()
+    self.dimen = Geom:new{ x = x, y = y, w = size.w, h = size.h }
+    self[1]:paintTo(bb, x, y)
+    local w, h, r = self.inner_w, self.inner_h, Kit.cover_radius()
+    local left, top = x + math.floor((size.w - w) / 2), y + math.floor((size.h - h) / 2)
+    local white = Blitbuffer.COLOR_WHITE
+    for i = 0, r - 1 do
+        local inset = corner_inset(r, i)
+        bb:paintRect(left, top + i, inset, 1, white)
+        bb:paintRect(left + w - inset, top + i, inset, 1, white)
+        bb:paintRect(left, top + h - 1 - i, inset, 1, white)
+        bb:paintRect(left + w - inset, top + h - 1 - i, inset, 1, white)
+    end
+    bb:paintBorder(left, top, w, h, Kit.px(1), Blitbuffer.COLOR_LIGHT_GRAY, r)
+end
+
+Kit.RoundedPicture = RoundedPicture
+
+-- A switch, as on the system's own settings. It shows; the row around it takes the tap.
+local Switch = WidgetContainer:extend{ on = false }
+
+function Switch.size() return Kit.px(52), Kit.px(30) end
+
+function Switch:init()
+    local w, h = Switch.size()
+    self.dimen = Geom:new{ x = 0, y = 0, w = w, h = h }
+end
+
+function Switch:paintTo(bb, x, y)
+    self.dimen.x, self.dimen.y = x, y
+    local w, h = self.dimen.w, self.dimen.h
+    local r = math.floor(h / 2)
+    local black, white = Blitbuffer.COLOR_BLACK, Blitbuffer.COLOR_WHITE
+    bb:paintRoundedRect(x, y, w, h, self.on and black or white, r)
+    bb:paintBorder(x, y, w, h, Kit.px(2), black, r)
+    local gap = Kit.px(5)
+    local knob = h - 2 * gap
+    bb:paintRoundedRect(self.on and x + w - gap - knob or x + gap, y + gap, knob, knob, self.on and white or black,
+        math.floor(knob / 2))
+end
+
+Kit.Switch = Switch
 
 -- Anything that can be tapped. The touch area is the size of the content.
 local Tappable = InputContainer:extend{ callback = nil }
@@ -114,11 +209,18 @@ Kit.Placed = Placed
 -- side. Centring the icon does not centre the drawing, and the two differ from icon to icon.
 local INK = {
     ["chevron.left"] = { left = 21 / 76, right = 25 / 76, top = 11 / 76, bottom = 15 / 76 },
+    ["chevron.right"] = { left = 25 / 76, right = 21 / 76, top = 11 / 76, bottom = 15 / 76 },
     ["appbar.menu"] = { left = 10 / 76, right = 7 / 76, top = 14 / 76, bottom = 15 / 76 },
     ["appbar.search"] = { left = 13 / 76, right = 6 / 76, top = 7 / 76, bottom = 11 / 76 },
 }
 local NO_INK = { left = 0, right = 0, top = 0, bottom = 0 }
 local ICON = 36
+
+--- Empty room at the right of an icon of the given side.
+function Kit.icon_right_room(name, side)
+    local ink = INK[name] or NO_INK
+    return math.floor(ink.right * side + 0.5)
+end
 
 --- Width of what is actually drawn in an icon.
 function Kit.icon_ink_width(name)
@@ -181,23 +283,32 @@ function Kit.action(top, caption, width, callback)
     return Kit.button(group, width, group:getSize().h + Kit.px(16), callback)
 end
 
---- A row of equal cells with one selected, shown inverted.
+-- A pill around its cells.
+local SegmentRow = HorizontalGroup:extend{}
+
+function SegmentRow:paintTo(bb, x, y)
+    local size = self:getSize()
+    bb:paintBorder(x, y, size.w, size.h, Kit.px(1), Blitbuffer.COLOR_DARK_GRAY, math.floor(size.h / 2))
+    HorizontalGroup.paintTo(self, bb, x, y)
+end
+
+--- A pill of equal cells, the selected one a black pill inside it.
 -- labels: array of strings; selected: index; on_select(index).
 function Kit.segments(labels, selected, width, on_select, height)
     height = height or Kit.px(44)
     local cell = math.floor(width / #labels)
-    local row = HorizontalGroup:new{ align = "center" }
+    local row = SegmentRow:new{ align = "center" }
     for i, label in ipairs(labels) do
         local on = i == selected
         local box = FrameContainer:new{
-            background = on and Blitbuffer.COLOR_BLACK or Blitbuffer.COLOR_WHITE,
-            bordersize = Kit.px(1),
-            color = Blitbuffer.COLOR_BLACK,
+            background = on and Blitbuffer.COLOR_BLACK or nil,
+            bordersize = 0,
             padding = 0,
             margin = 0,
+            radius = math.floor(height / 2),
             CenterContainer:new{
-                dimen = Geom:new{ w = cell - 2 * Kit.px(1), h = height - 2 * Kit.px(1) },
-                Kit.text(label, 17, { color = on and Blitbuffer.COLOR_WHITE or Blitbuffer.COLOR_BLACK, max_width = cell - Kit.px(4) }),
+                dimen = Geom:new{ w = cell, h = height },
+                Kit.text(label, 17, { color = on and Blitbuffer.COLOR_WHITE or Blitbuffer.COLOR_BLACK, max_width = cell - Kit.px(8) }),
             },
         }
         row[i] = Tappable:new{ callback = function() on_select(i) end, box }

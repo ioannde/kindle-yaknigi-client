@@ -70,10 +70,25 @@ if APP_MODE then
         require("apps/reader/readerui"):showFileManager()
         return false
     end
+
+    -- Nothing of the picture is to stay on the page: a flash to white, then what was underneath.
+    local Screensaver = require("ui/screensaver")
+    local close_widget = Screensaver.close_widget
+    Screensaver.close_widget = function(this)
+        local shown = this.screensaver_widget ~= nil
+        close_widget(this)
+        if shown then
+            Screen:clear()
+            Screen:refreshFull(0, 0, Screen:getWidth(), Screen:getHeight())
+            UIManager:setDirty("all", "full")
+        end
+    end
 end
 
 -- Survives the ReaderUI being rebuilt on reload. Keyed by book id.
 local workers = {}
+-- What is known of a book's cover from the card it was opened by. Keyed by book id.
+local book_covers = {}
 
 local Yaknigi = WidgetContainer:extend{
     name = "yaknigi",
@@ -325,8 +340,11 @@ function Yaknigi:showSettings()
     })
 end
 
-function Yaknigi:showLibrary()
+--- The library on the screen. quiet: only that, as when it comes up over a book being closed,
+-- and the file manager that comes after will show it again and bring it up to date.
+function Yaknigi:showLibrary(quiet)
     if self.library then UIManager:close(self.library) end
+    if shown_library and shown_library ~= self.library then UIManager:close(shown_library) end
     local signed_in = saved_token() ~= nil
     local cached = signed_in and read_json(LIBRARY_CACHE) or nil
     local items = {}
@@ -353,6 +371,7 @@ function Yaknigi:showLibrary()
     self.library = library
     shown_library = library
     UIManager:show(library)
+    if quiet then return end
     if signed_in then
         UIManager:nextTick(function() self:refreshLibrary(cached == nil) end)
         if cached then UIManager:nextTick(function() self:fetchCovers(cached) end) end
@@ -368,6 +387,13 @@ function Yaknigi:showLibrary()
     else
         UIManager:nextTick(function() self:showLogin() end)
     end
+end
+
+--- Out of the book: the library is up at once, whatever closing the book takes.
+function Yaknigi:leaveBook()
+    if self.store and self.shell then Session.save_reading(self.store.dir, self.shell:progress()) end
+    self:showLibrary(true)
+    UIManager:forceRePaint()
 end
 
 -- The request runs in a forked process: on a slow network it would hold up every tap.
@@ -506,6 +532,7 @@ end
 --- A book from the library opens at once. Any other shows what it is first, as opening it
 -- means adding it to the library.
 function Yaknigi:openFound(item)
+    book_covers[item.card.book.uuid] = item.card.book.cover
     local card = self:ownedCard(item.card.book.uuid)
     if card then
         self:openCard(card)
@@ -595,6 +622,7 @@ end
 
 function Yaknigi:openCard(card)
     local id = card.book and card.book.uuid
+    if id then book_covers[id] = card.book.cover or book_covers[id] end
     local store = Store.open(BOOKS, id)
     if store and store:is_whole() then
         -- Nothing to wait for, not even the network. The reader asks Yandex once it is open.
@@ -665,7 +693,7 @@ function Yaknigi:applyTextDefaults(path)
     local doc_settings = DocSettings:open(path)
     local font = G_reader_settings:readSetting("cre_font")
     if font then doc_settings:saveSetting("font_face", font) end
-    for _, name in ipairs { "font_size", "line_spacing", "h_page_margins" } do
+    for _, name in ipairs { "font_size", "line_spacing", "h_page_margins", "t_page_margin" } do
         local value = G_reader_settings:readSetting("copt_" .. name)
         if value ~= nil then doc_settings:saveSetting("copt_" .. name, value) end
     end
@@ -700,6 +728,35 @@ function Yaknigi:paths()
     return self.store and self.store.paths or {}
 end
 
+--- What is known of this book's cover, if the card it was opened by has gone.
+local function known_cover(id)
+    if book_covers[id] then return book_covers[id] end
+    for _, card in ipairs(read_json(LIBRARY_CACHE) or {}) do
+        if card.book and card.book.uuid == id then return card.book.cover end
+    end
+    return nil
+end
+
+--- What shows while the device sleeps: the original of the cover, and until it has arrived
+-- whatever picture of it there is. If this book has none yet, the last one stays.
+function Yaknigi:chooseSleepCover(store)
+    local best = Covers.find_best(COVERS, store.id)
+    local cover = best or store:cover_file() or Covers.find(COVERS, { book = { uuid = store.id } })
+    if cover then Prefs.apply_sleep_screen(cover) end
+    if best or not NetworkMgr:isOnline() then return end
+    local pid = Covers.fetch_best(COVERS, store.id, Prefs.sleep_cover_urls(known_cover(store.id)))
+    if not pid then return end
+    local function wait()
+        if not ffiutil.isSubProcessDone(pid) then
+            UIManager:scheduleIn(POLL_SECONDS, wait)
+            return
+        end
+        local arrived = not self.closed and Covers.find_best(COVERS, store.id)
+        if arrived then Prefs.apply_sleep_screen(arrived) end
+    end
+    UIManager:scheduleIn(POLL_SECONDS, wait)
+end
+
 function Yaknigi:onReaderReady()
     local store = self:readerStore()
     if not store or not store.manifest then return end
@@ -710,9 +767,7 @@ function Yaknigi:onReaderReady()
     if APP_MODE then
         self.shell = Shell.new(self.ui, self)
         self.shell:install()
-        -- What shows while the device sleeps. If this book has no picture yet, the last one stays.
-        local cover = store:cover_file() or Covers.find(COVERS, { book = { uuid = store.id } })
-        if cover then Prefs.apply_sleep_screen(cover) end
+        self:chooseSleepCover(store)
     end
     local state = workers[store.id] or {}
     workers[store.id] = state
@@ -993,7 +1048,7 @@ function Yaknigi:onResume()
     self.wake_try = 1
     self:exchange()
     -- The time on the page is hours behind.
-    if self.shell and self.ui.view then self.ui.view.footer:onUpdateFooter(true) end
+    if self.shell and self.ui.view then self.shell:onWake() end
 end
 
 function Yaknigi:onCloseDocument()
@@ -1025,6 +1080,8 @@ function Yaknigi:init()
     if self.ui.menu then self.ui.menu:registerToMainMenu(self) end
     -- Every return from a book makes a new file manager, which brings the library back.
     if APP_MODE and not self.ui.document then
+        -- It stands under the library and is never to be seen, not even for a moment.
+        self.ui.paintTo = function() end
         UIManager:nextTick(function() self:showLibrary() end)
     end
 end

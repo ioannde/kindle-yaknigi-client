@@ -18,33 +18,56 @@ function Status:init()
     self.dimen = Geom:new{ x = 0, y = 0, w = self.width, h = Status.height() }
 end
 
-local function right_text()
-    local NetworkMgr = require("ui/network/manager")
-    local parts = {}
-    if Device:hasWifiToggle() then
-        parts[1] = Prefs.network_symbol(NetworkMgr:isWifiOn(), NetworkMgr:isConnected())
+-- A battery lying on its side, as on the system's own strip. Returns its width.
+local function paint_battery(bb, right, middle, level, charging)
+    local w, h = Kit.px(24), Kit.px(12)
+    local nub_w, nub_h = Kit.px(2), Kit.px(6)
+    local line = Kit.px(1)
+    local black, white = Blitbuffer.COLOR_BLACK, Blitbuffer.COLOR_WHITE
+    local x, y = right - w, middle - math.floor(h / 2)
+    bb:paintRect(right, middle - math.floor(nub_h / 2), nub_w, nub_h, black)
+    bb:paintBorder(x, y, w, h, line, black, Kit.px(2))
+    local gap = line + Kit.px(1)
+    local inner_w, inner_h = w - 2 * gap, h - 2 * gap
+    bb:paintRect(x + gap, y + gap, math.floor(inner_w * math.max(0, math.min(100, level)) / 100 + 0.5), inner_h, black)
+    if charging then -- a plus, and a white edge so that it shows over the charge
+        local cx, cy = x + math.floor(w / 2), middle
+        local long, thick = Kit.px(10), Kit.px(2)
+        bb:paintRect(cx - math.floor(long / 2) - line, cy - math.floor(thick / 2) - line, long + 2 * line, thick + 2 * line, white)
+        bb:paintRect(cx - math.floor(thick / 2) - line, y, thick + 2 * line, h, white)
+        bb:paintRect(cx - math.floor(long / 2), cy - math.floor(thick / 2), long, thick, black)
+        bb:paintRect(cx - math.floor(thick / 2), cy - math.floor(long / 2), thick, long, black)
     end
-    if Device:hasBattery() then
-        local powerd = Device:getPowerDevice()
-        local level = powerd:getCapacity()
-        parts[#parts + 1] = powerd:getBatterySymbol(powerd:isCharged(), powerd:isCharging(), level)
-            .. " " .. level .. "%"
-    end
-    return table.concat(parts, "   ")
+    return w + nub_w
 end
 
 function Status:paintTo(bb, x, y)
     self.dimen.x, self.dimen.y = x, y
     local pad = Kit.px(16)
-    local function put(text, right)
+    local middle = y + math.floor(self.dimen.h / 2) + Kit.px(2)
+    local right = x + self.width - pad
+    local function put(text, left_edge)
         local widget = Kit.text(text, 13, { color = Blitbuffer.COLOR_BLACK })
         local size = widget:getSize()
-        widget:paintTo(bb, right and x + self.width - pad - size.w or x + pad,
-            y + math.floor((self.dimen.h - size.h) / 2) + Kit.px(2))
+        local left = left_edge or right - size.w
+        widget:paintTo(bb, left, middle - math.floor(size.h / 2))
         widget:free()
+        return size.w
     end
-    put(os.date("%H:%M"))
-    put(right_text(), true)
+    -- The time in the middle, what the device is up to at the right.
+    local time = Kit.text(os.date("%H:%M"), 13)
+    put(os.date("%H:%M"), x + math.floor((self.width - time:getSize().w) / 2))
+    time:free()
+    if Device:hasBattery() then
+        local powerd = Device:getPowerDevice()
+        local level = powerd:getCapacity()
+        right = right - paint_battery(bb, right - Kit.px(2), middle, level, powerd:isCharging()) - Kit.px(6)
+        right = right - put(level .. "%") - Kit.px(10)
+    end
+    if Device:hasWifiToggle() then
+        local NetworkMgr = require("ui/network/manager")
+        put(Prefs.network_symbol(NetworkMgr:isWifiOn(), NetworkMgr:isConnected()))
+    end
 end
 
 --- Keeps the strip of a screen up to date; returns what to call when the screen closes.
@@ -52,7 +75,7 @@ function Status.watch(owner)
     local region = Geom:new{ x = 0, y = 0, w = Screen:getWidth(), h = Status.height() }
     local tick
     tick = function()
-        UIManager:setDirty(owner, "ui", region)
+        if not Device.screen_saver_mode then UIManager:setDirty(owner, "ui", region) end
         UIManager:scheduleIn(61 - tonumber(os.date("%S")), tick)
     end
     UIManager:scheduleIn(61 - tonumber(os.date("%S")), tick)

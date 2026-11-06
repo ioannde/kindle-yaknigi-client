@@ -48,6 +48,45 @@ local function cover_urls(card)
     return urls
 end
 
+-- A picture bigger than this is more than the device should decode on its way to sleep.
+local BIGGEST_COVER = 6 * 1024 * 1024
+
+--- Path of the cover for the whole screen, nil until it has arrived.
+function Covers.find_best(root, uuid)
+    local base = base_path(root, { book = { uuid = uuid } })
+    if not base then return nil end
+    for _, ext in ipairs { ".jpg", ".png" } do
+        if readable(base .. ".large" .. ext) then return base .. ".large" .. ext end
+    end
+    return nil
+end
+
+--- Downloads the first picture of urls that can be had. Returns the pid, or nil.
+function Covers.fetch_best(root, uuid, urls)
+    local base = base_path(root, { book = { uuid = uuid } })
+    if not base or #urls == 0 then return nil end
+    base = base .. ".large"
+    return ffiutil.runInSubProcess(function()
+        pcall(function() ffi.C.nice(10) end)
+        local http = Http.new(Net.connect)
+        for _, url in ipairs(urls) do
+            local status, body = http:request("GET", url, { ["User-Agent"] = "okhttp/4.12.0" })
+            local ext = status == 200 and #body <= BIGGEST_COVER and extension(body)
+            if ext then
+                local f = io.open(base .. ".tmp", "wb")
+                if f then
+                    f:write(body)
+                    f:close()
+                    os.rename(base .. ".tmp", base .. ext)
+                end
+                break
+            end
+        end
+        http:close()
+        os.exit(0)
+    end)
+end
+
 --- Downloads what is missing. The covers' host gets no token. Returns the pid, or nil
 -- when there is nothing to do.
 function Covers.fetch(root, cards)

@@ -61,7 +61,7 @@ function SearchBox:init()
     local row = HorizontalGroup:new{ align = "center",
         FrameContainer:new{
             bordersize = border,
-            radius = Kit.px(8),
+            radius = math.floor(self.height / 2),
             color = Blitbuffer.COLOR_BLACK,
             padding = 0,
             LeftContainer:new{

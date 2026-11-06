@@ -1,8 +1,13 @@
 -- Turns the KOReader reader into a plain reading screen: left and right turn pages, the
 -- middle brings up our panels, and none of KOReader's own menus come up by themselves.
 -- All of it works on this reader's instances, so KOReader's code stays unmodified.
+local Device = require("device")
 local Event = require("ui/event")
+local Geom = require("ui/geometry")
+local WidgetContainer = require("ui/widget/container/widgetcontainer")
+local Screen = Device.screen
 
+local Kit = require("yaknigi/kit")
 local Prefs = require("yaknigi/prefs")
 
 local Shell = {}
@@ -15,6 +20,22 @@ local CENTER_ZONE = { ratio_x = 1 / 3, ratio_y = 0, ratio_w = 1 / 3, ratio_h = 1
 -- As on a Kindle: the top of the page brings up the panels too, whichever column it is in.
 local TOP_ZONE = { ratio_x = 0, ratio_y = 0, ratio_w = 1, ratio_h = 0.2 }
 local BACK_REST_ZONE = { ratio_x = 1 / 4, ratio_y = 0, ratio_w = 1 / 3 - 1 / 4, ratio_h = 1 }
+
+-- The clock, in the margin above the text.
+local Clock = WidgetContainer:extend{}
+
+function Clock.region()
+    return Geom:new{ x = 0, y = 0, w = Screen:getWidth(), h = Screen:scaleBySize(Prefs.PAGE_TOP_MARGIN) }
+end
+
+function Clock:paintTo(bb, x, y)
+    if not Prefs.reading_clock() then return end
+    local widget = Kit.text(os.date("%H:%M"), 13)
+    local size = widget:getSize()
+    local region = Clock.region()
+    widget:paintTo(bb, x + math.floor((region.w - size.w) / 2), y + math.floor((region.h - size.h) / 2))
+    widget:free()
+end
 
 --- plugin must answer stubs() (a table of fragments) and paths() (the book's chapters).
 function Shell.new(ui, plugin)
@@ -38,29 +59,51 @@ function Shell:install()
     local shell = self
     ui.view.footer.getBookProgress = function() return shell:progress() end
     -- KOReader puts a symbol before the number, whichever prefix style is chosen.
-    ui.view.footer.genFooterText = function()
-        local text = shell:progressText()
-        if Prefs.reading_clock() then text = os.date("%H:%M") .. " · " .. text end
-        return text
-    end
+    ui.view.footer.genFooterText = function() return shell:progressText() end
     for _, id in ipairs(HIGHLIGHT_BUTTONS_REMOVED) do
         ui.highlight:removeFromHighlightDialog(id)
     end
     self:registerZone()
+    -- The corner mark big enough to be found again on a page.
+    local dogear = ui.view.dogear
+    dogear.dogear_max_size = math.ceil(Screen:getWidth() * 0.05)
+    dogear:setupDogear(math.min(dogear.dogear_max_size, Kit.px(Prefs.PAGE_TOP_MARGIN)))
+    ui.view:registerViewModule("yaknigi_clock", Clock:new{})
     ui.view.footer:onUpdateFooter(true)
     self:startClock()
 end
 
---- Each minute's turn of the clock on the page, unless something is over the page.
+--- Repaints the time at the top of the page, unless the device sleeps or the page is covered.
+function Shell:paintClock()
+    local ui = self.ui
+    if Device.screen_saver_mode or not Prefs.reading_clock() or not ui.view.footer:shouldBeRepainted() then
+        return
+    end
+    require("ui/uimanager"):setDirty(ui.view.dialog, "ui", Clock.region())
+end
+
+--- Each minute's turn of the clock on the page.
 function Shell:startClock()
     local UIManager = require("ui/uimanager")
     local function next_minute() return 61 - tonumber(os.date("%S")) end
     self.clock_tick = function()
-        local footer = self.ui.view.footer
-        if Prefs.reading_clock() then footer:onUpdateFooter(footer:shouldBeRepainted()) end
+        self:paintClock()
         UIManager:scheduleIn(next_minute(), self.clock_tick)
     end
     UIManager:scheduleIn(next_minute(), self.clock_tick)
+end
+
+--- Awake again. The screensaver may still be up, and nothing may be drawn over it.
+function Shell:onWake()
+    local footer = self.ui.view.footer
+    if not Device.screen_saver_mode then footer:onUpdateFooter(footer:shouldBeRepainted()) end
+    self:paintClock()
+end
+
+--- A tap on the progress on the page: it shows the next thing.
+function Shell:nextProgress()
+    Prefs.next_progress()
+    self.ui.view.footer:onUpdateFooter(true)
 end
 
 function Shell:stop()
@@ -72,7 +115,30 @@ end
 
 function Shell:registerZone()
     local ui = self.ui
+    local W, H = Screen:getWidth(), Screen:getHeight()
+    local footer_h = math.max(ui.view.footer:getHeight() + Kit.px(12), Kit.px(44))
     ui:registerTouchZones({
+        {
+            -- A square of a tenth of the width, at the corner where the mark appears.
+            id = "yaknigi_bookmark",
+            ges = "tap",
+            screen_zone = { ratio_x = 0.9, ratio_y = 0, ratio_w = 0.1, ratio_h = 0.1 * W / H },
+            overrides = { "tap_forward", "tap_backward", "yaknigi_top", "yaknigi_center", "yaknigi_back_rest" },
+            handler = function()
+                ui.bookmark:onToggleBookmark()
+                return true
+            end,
+        },
+        {
+            id = "yaknigi_progress",
+            ges = "tap",
+            screen_zone = { ratio_x = 0.2, ratio_y = 1 - footer_h / H, ratio_w = 0.6, ratio_h = footer_h / H },
+            overrides = { "tap_forward", "tap_backward", "yaknigi_center", "yaknigi_back_rest", "readerfooter_tap" },
+            handler = function()
+                self:nextProgress()
+                return true
+            end,
+        },
         {
             id = "yaknigi_top",
             ges = "tap",
@@ -96,7 +162,7 @@ function Shell:registerZone()
         },
     })
     -- Links and highlights still come first.
-    for _, id in ipairs { "yaknigi_top", "yaknigi_center", "yaknigi_back_rest" } do
+    for _, id in ipairs { "yaknigi_progress", "yaknigi_top", "yaknigi_center", "yaknigi_back_rest" } do
         for _, zone in ipairs { "tap_link", "readerhighlight_tap", "readerhighlight_tap_select_mode" } do
             ui.touch_zone_dg:addNodeDep(id, zone)
         end

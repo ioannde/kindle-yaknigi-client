@@ -157,8 +157,9 @@ function TextPanel:build()
     end)
     rows[#rows + 1] = self.advanced
 
-    local panel = Kit.panel(W, rows, pad)
-    local body = VerticalGroup:new{ align = "left", Kit.line(W), panel }
+    local body = Kit.Sheet:new{ width = W, edge = "bottom",
+        Kit.panel(W, rows, pad, true),
+    }
     local h = body:getSize().h
     self.area = Geom:new{ x = 0, y = H - h, w = W, h = h }
     self[1] = body

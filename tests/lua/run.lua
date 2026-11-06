@@ -100,6 +100,23 @@ eq(Prefs.progress_text("book", at), "До конца книги: 300 стр. · 
 for _, format in ipairs(Prefs.PROGRESS) do
     eq(Prefs.progress_text(format, { ratio = 0.5 }), "50%", "no pages yet: " .. format)
 end
+eq(Prefs.following(Prefs.PROGRESS, "percent"), "page", "the next progress")
+eq(Prefs.following(Prefs.PROGRESS, "book"), "percent", "after the last progress")
+eq(Prefs.following(Prefs.PROGRESS, "gone"), "percent", "an unknown progress")
+do
+    local urls = Prefs.sleep_cover_urls({
+        small = "https://h/a/b-thumb.jpg?image_hash=1",
+        large = "https://h/a/b-large.jpg?image_hash=1",
+    })
+    eq(urls[1], "https://h/a/b-original.jpg?image_hash=1", "the original first")
+    eq(urls[2], "https://h/a/b-ipad.jpg?image_hash=1", "then the next size")
+    eq(urls[3], "https://h/a/b-large.jpg?image_hash=1", "then what the card says")
+    eq(urls[4], "https://h/a/b-thumb.jpg?image_hash=1", "and the smallest")
+    eq(#urls, 4, "no more")
+    local plain = Prefs.sleep_cover_urls({ url = "https://h/cover/3.png" })
+    eq(#plain, 1, "no size in the name: nothing else to try")
+    eq(#Prefs.sleep_cover_urls(nil), 0, "no cover")
+end
 eq(Prefs.network_symbol(true, true), "\u{ECA8}", "connected")
 eq(Prefs.network_symbol(true, false), "\u{ECA9}", "no connection")
 eq(Prefs.network_symbol(false, false), "\u{F072}", "airplane")

@@ -75,7 +75,7 @@ function BookCard:init()
             background = Blitbuffer.COLOR_BLACK,
             bordersize = 0,
             padding = 0,
-            radius = Kit.px(8),
+            radius = math.floor(button_h / 2),
             CenterContainer:new{
                 dimen = Geom:new{ w = inner, h = button_h },
                 Kit.text("Читать", 22, { bold = true, color = Blitbuffer.COLOR_WHITE }),

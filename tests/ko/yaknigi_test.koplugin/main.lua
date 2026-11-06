@@ -383,14 +383,24 @@ local function test_reading_screen()
     wait("the panels to close", is_named("ReaderUI"))
 
     -- Bookmark.
+    tap_at(W - math.floor(W * 0.05), math.floor(W * 0.05))
+    if top().name ~= "ReaderUI" then fail("the corner opened " .. tostring(top().name)) end
+    if not reader().bookmark:isPageBookmarked() then fail("the bookmark was not set") end
+    shot("12-page-bookmarked")
+    tap_at(W - math.floor(W * 0.05), math.floor(W * 0.05))
+    if reader().bookmark:isPageBookmarked() then fail("the bookmark was not removed") end
+    -- Beside the corner it is the top of the page again.
+    tap_at(W - math.floor(W * 0.15), math.floor(W * 0.05))
+    wait("the panels beside the corner", is_named("YaknigiChrome"))
+    if reader().bookmark:isPageBookmarked() then fail("a bookmark beside the corner") end
+    tap_at(W / 2, H / 2)
+    wait("the panels to close", is_named("ReaderUI"))
+    -- ... and in the menu, for whoever does not know of the corner.
     tap_at(W / 2, H / 2)
     wait("the panels", is_named("YaknigiChrome"))
     chrome = top()
-    tap_widget(chrome.bookmark_button)
-    if not reader().bookmark:isPageBookmarked() then fail("the bookmark was not set") end
-    shot("12-chrome-bookmarked")
-    tap_widget(chrome.bookmark_button)
-    if reader().bookmark:isPageBookmarked() then fail("the bookmark was not removed") end
+    tap_at(W / 2, H / 2)
+    wait("the panels to close", is_named("ReaderUI"))
 
     -- Slider: a tap at the middle goes to the middle of the book.
     local pages = doc:getPageCount()
@@ -498,6 +508,12 @@ local function test_reading_screen()
     wait("the contents", function() return top().name ~= "YaknigiChrome" and top().name ~= "ReaderUI" end)
     shot("14-contents")
     close_stock("the contents")
+    -- The way to it that does not have to be found.
+    tap_at(W / 2, H / 2)
+    wait("the panels", is_named("YaknigiChrome"))
+    tap_widget(top().toc_button)
+    wait("the contents", function() return top().name ~= "YaknigiChrome" and top().name ~= "ReaderUI" end)
+    close_stock("the contents")
     bookmark:onShowBookmark()
     close_stock("KOReader's bookmarks")
 
@@ -575,6 +591,52 @@ local function test_reading_screen()
     tap_at(W / 2, 100)
     wait("the page", is_named("ReaderUI"))
 
+    -- The progress is changed where it is: by a tap on it.
+    local footer = reader().view.footer
+    local function line() return footer.genFooterText() end
+    local cur, count = doc:getCurrentPage(), doc:getPageCount()
+    G_reader_settings:saveSetting("yaknigi_progress", "percent")
+    if line():find(":%d%d") then fail("a clock in the footer: " .. line()) end
+    if not reader().view.view_modules.yaknigi_clock then fail("no clock at the top of the page") end
+    local function tap_progress()
+        tap_at(W / 2, H - 8)
+        if top().name ~= "ReaderUI" then fail("a tap on the progress opened " .. tostring(top().name)) end
+        UIManager:forceRePaint()
+        return line()
+    end
+    if doc:getCurrentPage() ~= cur then fail("a tap on the progress turned the page") end
+    if tap_progress() ~= tostring(cur) then fail("page: " .. line()) end
+    if tap_progress() ~= ("%d из %d"):format(cur, count) then fail("page of pages: " .. line()) end
+    if not tap_progress():match("^До конца главы: %d+ стр%. · %d+%%$") then fail("chapter: " .. line()) end
+    say("the page says:", line())
+    shot("18b-progress-chapter")
+    if not tap_progress():find("До конца книги: " .. (count - cur) .. " стр. · ", 1, true) then fail("book: " .. line()) end
+    say("the page says:", line())
+    if not tap_progress():match("^%d+%%$") then fail("percent again: " .. line()) end
+    if doc:getCurrentPage() ~= cur then fail("tapping the progress turned the page") end
+    if G_reader_settings:readSetting("yaknigi_progress") ~= "percent" then fail("the progress is not kept") end
+    -- The panels have the same tap.
+    tap_at(W / 2, H / 2)
+    wait("the panels", is_named("YaknigiChrome"))
+    tap_widget(top().progress_label)
+    if G_reader_settings:readSetting("yaknigi_progress") ~= "page" then fail("the panels' progress does not change") end
+    G_reader_settings:saveSetting("yaknigi_progress", "percent")
+    tap_at(W / 2, H / 2)
+    wait("the panels to close", is_named("ReaderUI"))
+
+    -- While the device sleeps nothing is drawn over the screensaver, not even the time.
+    local Device = require("device")
+    local dirty, set_dirty = 0, UIManager.setDirty
+    UIManager.setDirty = function(...) dirty = dirty + 1; return set_dirty(...) end
+    local update, updates = footer.onUpdateFooter, 0
+    footer.onUpdateFooter = function(...) updates = updates + 1; return update(...) end
+    Device.screen_saver_mode = true
+    reader().yaknigi.shell:paintClock()
+    reader().yaknigi.shell:onWake()
+    Device.screen_saver_mode = false
+    UIManager.setDirty, footer.onUpdateFooter = set_dirty, nil
+    if dirty ~= 0 or updates ~= 0 then fail("drawn over the screensaver: " .. dirty .. " " .. updates) end
+
     -- The settings, from the panels' menu.
     tap_at(W / 2, H / 2)
     wait("the panels", is_named("YaknigiChrome"))
@@ -583,48 +645,87 @@ local function test_reading_screen()
     shot("19-more-menu")
     local Settings = require("yaknigi/settings")
     UIManager:close(top())
-    UIManager:show(Settings:new{ ui = reader() })
+    UIManager:show(Settings:new{ ui = reader(), all_rows = true })
     UIManager:forceRePaint()
     local settings = top()
     if settings.name ~= "YaknigiSettings" then fail("no settings: " .. tostring(settings.name)) end
     shot("20-settings")
 
-    local footer = reader().view.footer
-    local function line() return footer.genFooterText() end
-    tap_widget(settings.clock[2])
+    -- The settings say nothing of the progress any more: that is changed on the page.
+    if settings.rows.progress then fail("the progress is still in the settings") end
+    tap_widget(settings.rows.clock)
     if G_reader_settings:isTrue("yaknigi_reading_clock") then fail("the clock did not go off") end
-    if line():find(":%d%d ") then fail("a clock with the clock off: " .. line()) end
-    local cur, count = doc:getCurrentPage(), doc:getPageCount()
-    tap_widget(settings.progress[1])
-    if not line():match("^%d+%%$") then fail("percent: " .. line()) end
-    tap_widget(settings.progress[2])
-    if line() ~= tostring(cur) then fail("page: " .. line()) end
-    tap_widget(settings.progress[3])
-    if line() ~= ("%d из %d"):format(cur, count) then fail("page of pages: " .. line()) end
-    tap_widget(settings.progress_left[1])
-    if not line():match("^До конца главы: %d+ стр%. · %d+%%$") then fail("chapter: " .. line()) end
-    say("the page says:", line())
-    tap_widget(settings.progress_left[2])
-    if not line():find("До конца книги: " .. (count - cur) .. " стр. · ", 1, true) then fail("book: " .. line()) end
-    say("the page says:", line())
-    shot("20b-settings-chosen")
-    tap_widget(settings.clock[1])
-    if not line():match("^%d%d:%d%d · До конца книги") then fail("clock on: " .. line()) end
+    tap_widget(settings.rows.clock)
+    if not G_reader_settings:isTrue("yaknigi_reading_clock") then fail("the clock did not come back") end
+    shot("20b-settings-switched")
 
-    tap_widget(settings.sleep_time[4])
+    -- A row with choices opens them, a choice comes back to the list.
+    tap_widget(settings.rows.refresh)
+    if not settings.choice then fail("the choices of the refresh did not open") end
+    UIManager:forceRePaint()
+    shot("20c-settings-refresh")
+    tap_widget(settings.back)
+    if settings.choice then fail("back does not leave the choices") end
+    tap_widget(settings.rows.refresh)
+    tap_widget(settings.options[2])
+    if settings.choice then fail("a choice did not come back to the list") end
+    if UIManager:getRefreshRate() ~= 3 then fail("refresh rate: " .. tostring(UIManager:getRefreshRate())) end
+    if G_reader_settings:readSetting("full_refresh_count") ~= 3 then fail("refresh rate not saved") end
+    tap_widget(settings.rows.refresh)
+    tap_widget(settings.options[3])
+    if UIManager:getRefreshRate() ~= 6 then fail("refresh rate back: " .. tostring(UIManager:getRefreshRate())) end
+
+    tap_widget(settings.rows.sleep_time)
+    tap_widget(settings.options[4])
     if reader().autosuspend and reader().autosuspend.auto_suspend_timeout_seconds ~= 30 * 60 then
         fail("sleep time did not reach the plugin")
     end
     if G_reader_settings:readSetting("auto_suspend_timeout_seconds") ~= 30 * 60 then fail("sleep time not saved") end
 
     -- The sleep screen: the cover of the open book, or the page as it is.
-    tap_widget(settings.sleep_screen[2])
+    tap_widget(settings.rows.sleep_screen)
+    tap_widget(settings.options[2])
     if G_reader_settings:readSetting("screensaver_type") ~= "disable" then fail("sleep screen stays on the cover") end
-    tap_widget(settings.sleep_screen[1])
+    tap_widget(settings.rows.sleep_screen)
+    tap_widget(settings.options[1])
     if G_reader_settings:readSetting("screensaver_type") ~= "document_cover" then fail("sleep screen: no cover") end
-    local cover = G_reader_settings:readSetting("screensaver_document_cover")
-    local store = reader().yaknigi.store
-    if cover ~= store:cover_file() then fail("sleep screen shows " .. tostring(cover)) end
+    -- The original of the cover comes after the book has opened.
+    local cover = wait("the cover's original", function()
+        local file = G_reader_settings:readSetting("screensaver_document_cover")
+        return file and file:find(".large.", 1, true) and file
+    end, 15)
+    say("sleep screen shows", cover:match("[^/]*$"))
+    if G_reader_settings:readSetting("screensaver_img_background") ~= "white" then fail("no flash before the sleep screen") end
+
+    -- What does not fit turns page, here on a list made short: the device's strip and fonts
+    -- may leave less room than the emulator has.
+    local short = Settings:new{ ui = reader(), all_rows = true, body_height = Screen:scaleBySize(330) }
+    UIManager:show(short)
+    UIManager:forceRePaint()
+    if short.pages < 2 then fail("the short list has " .. short.pages .. " page") end
+    shot("20d-settings-short")
+    local function swipe(direction)
+        UIManager:forceRePaint()
+        UIManager:sendEvent(Event:new("Gesture", {
+            ges = "swipe",
+            direction = direction,
+            distance = 200,
+            pos = Geom:new{ x = W / 2, y = H / 2, w = 0, h = 0 },
+            time = require("ui/time").now(),
+        }))
+        UIManager:forceRePaint()
+    end
+    swipe("west")
+    if short.page ~= 2 then fail("a swipe does not turn the settings: " .. short.page) end
+    shot("20e-settings-short-2")
+    swipe("east")
+    if short.page ~= 1 then fail("a swipe does not turn the settings back: " .. short.page) end
+    tap_widget(short.pager_next)
+    if short.page ~= 2 then fail("the arrow does not turn the settings: " .. short.page) end
+    for _ = 1, short.pages do swipe("west") end
+    if short.page ~= short.pages or not short.rows.sleep_time then fail("the last row cannot be reached") end
+    short:close()
+    UIManager:forceRePaint()
     settings:close()
     UIManager:forceRePaint()
     if top().name ~= "YaknigiChrome" then fail("settings did not go back to the panels") end
@@ -638,8 +739,10 @@ local function test_reading_screen()
         UIManager:forceRePaint()
         shot("21-sleep-cover")
         Screensaver:close_widget()
+        shot("21b-after-sleep")
         Screensaver:cleanup()
     end)
+    require("device").screen_saver_mode = false
     if not ok then fail("sleep screen: " .. tostring(err)) end
     UIManager:forceRePaint()
     G_reader_settings:saveSetting("yaknigi_progress", "percent")
@@ -805,11 +908,21 @@ local function script()
     reader().rolling:onGotoViewRel(3)
     local read_to = reader().document:getCurrentPage()
     local percent = math.floor(reader().yaknigi.shell:progress() * 100 + 0.5)
-    reader():onHome()
+    -- The library is up the moment "back" is tapped, while the book is still closing, and
+    -- nothing of KOReader is ever painted.
+    local screen_w, screen_h = Screen:getWidth(), Screen:getHeight()
+    tap_at(screen_w / 2, screen_h / 2)
+    wait("the panels", is_named("YaknigiChrome"))
+    tap_widget(top().back)
+    local first_library = top()
+    if not first_library.item_table then fail("back shows " .. tostring(first_library.name)) end
     menu = wait("the library again", function()
         local w = top()
-        return w.item_table and #w.item_table == 21 and w
+        return w ~= first_library and w.item_table and #w.item_table == 21 and w
     end)
+    local file_manager = require("apps/filemanager/filemanager").instance
+    if not rawget(file_manager, "paintTo") then fail("the file manager can be painted") end
+    shot("30b-library-after-back")
     if find_item(menu, "Книга номер 0").mandatory ~= percent .. "%" then
         fail("the library does not show how far the book is read: "
             .. tostring(find_item(menu, "Книга номер 0").mandatory) .. ", read " .. percent)
@@ -1047,7 +1160,7 @@ local function script()
     UIManager:forceRePaint()
     local settings = top()
     if settings.name ~= "YaknigiSettings" then fail("no settings from the library") end
-    if not settings.sign_out then fail("no way out of the account in the settings") end
+    if not settings.rows.sign_out then fail("no way out of the account in the settings") end
     shot("46-settings-library")
     -- Airplane mode, as far as it can be seen: the Wi-Fi is off.
     local NetworkMgr = require("ui/network/manager")
