@@ -36,8 +36,8 @@ function BookCard:init()
     local header_h = Status.height() + Kit.px(HEADER_H)
     self.stop_status = Status.watch(self)
 
-    self.back_button = Kit.icon_button("chevron.left", Kit.px(56), function() UIManager:close(self) end,
-        { edge = "left", margin = pad })
+    self.back_button = Kit.icon_button("chevron.left", Kit.px(HEADER_H), function() UIManager:close(self) end,
+        { edge = "left", margin = pad, width = Kit.px(56) })
     local header = VerticalGroup:new{ align = "left", Status:new{ width = W }, self.back_button }
 
     local cover_h = Kit.px(TOP_H) - Kit.px(30)
