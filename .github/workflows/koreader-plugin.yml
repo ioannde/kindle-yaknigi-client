@@ -1,0 +1,38 @@
+name: KOReader plugin
+on:
+  push:
+    branches: [claude/kindle-client-mvp]
+    paths: ['koreader/**', 'tests/ko/**', 'tests/lua/**', 'tools/mock/**', '.github/workflows/koreader-plugin.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  KO_VERSION: v2026.07.1
+jobs:
+  integration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb libsdl2-2.0-0 luajit
+          gh release download "$KO_VERSION" -R koreader/koreader -p "koreader-linux-x86_64-$KO_VERSION.tar.xz" -O ko.tar.xz
+          mkdir ko && tar xf ko.tar.xz -C ko
+          echo "KO_DIR=$(dirname "$(find "$PWD/ko" -maxdepth 3 -name luajit | head -1)")" >> "$GITHUB_ENV"
+      - name: Pure Lua tests
+        run: luajit tests/lua/run.lua
+      - name: Certificate checks
+        run: cd "$KO_DIR" && ./luajit "$GITHUB_WORKSPACE/tests/ko/tls_check.lua" "$GITHUB_WORKSPACE/koreader/yaknigi.koplugin"
+      - name: UI against the mock server
+        run: tests/ko/run.sh "$KO_DIR" "$PWD/ko-out"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ko-out
+          path: |
+            ko-out/*.png
+            ko-out/koreader.log

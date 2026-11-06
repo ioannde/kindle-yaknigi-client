@@ -3,14 +3,18 @@
 
 Accepts only the code "abc123" and only with the correct PKCE verifier for the
 challenge the client sent, so that it fails if the client's PKCE is wrong.
-Usage: server.py PORT
+Usage: server.py PORT [koreader]
+
+With "koreader", books have many chapters, a stylesheet, a table of contents and a
+reading position, and chapters take a moment to arrive, as for the KOReader plugin.
 """
 import base64
 import hashlib
 import json
 import subprocess
 import sys
-from http.server import BaseHTTPRequestHandler, HTTPServer
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 KEY = bytes(range(32))
@@ -28,6 +32,44 @@ PARAGRAPH = (
 BOOKS = 21
 
 
+BIG_CHAPTERS = 40
+BIG_OPF = (
+    '<package xmlns="http://www.idpf.org/2007/opf" xmlns:dc="http://purl.org/dc/elements/1.1/">'
+    '<metadata><dc:title>Большая книга</dc:title></metadata><manifest>'
+    '<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>'
+    '<item id="css" href="s.css" media-type="text/css"/>'
+    + "".join(f'<item id="c{i}" href="c{i}.html" media-type="application/xhtml+xml"/>'
+              for i in range(BIG_CHAPTERS))
+    + '</manifest><spine toc="ncx">'
+    + "".join(f'<itemref idref="c{i}"/>' for i in range(BIG_CHAPTERS))
+    + "</spine></package>"
+).encode()
+BIG_NCX = (
+    '<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1"><navMap>'
+    + "".join(f'<navPoint id="n{i}" playOrder="{i + 1}"><navLabel><text>Глава {i + 1}</text></navLabel>'
+              f'<content src="c{i}.html"/></navPoint>' for i in range(BIG_CHAPTERS))
+    + "</navMap></ncx>"
+).encode()
+BIG_CONTAINER = (
+    b'<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+    b'<rootfiles><rootfile full-path="OEBPS/c.opf" media-type="application/oebps-package+xml"/>'
+    b"</rootfiles></container>"
+)
+# Chapter 31 (zero-based 30), second-level: div > p number 3, as the app's CFI points.
+BIG_CFI = "/6/62!,/2/4/2/6/1:7,/2/4/2/6/1:9"
+CHAPTER_DELAY = 0.1
+
+
+def big_chapter(path):
+    number = int(path.split("/c")[-1].split(".")[0]) + 1
+    paragraphs = "".join(f"<p>Глава {number}, абзац {i + 1}. {PARAGRAPH * 4}</p>" for i in range(30))
+    return (
+        '<?xml version="1.0" encoding="utf-8"?><html xmlns="http://www.w3.org/1999/xhtml">'
+        f'<head><title>Глава {number}</title><link rel="stylesheet" href="s.css"/></head>'
+        f"<body><div>{paragraphs}</div></body></html>"
+    )
+
+
 def encrypted(data):
     out = subprocess.run(
         ["openssl", "enc", "-aes-256-cbc", "-K", KEY.hex(), "-iv", IV.hex()],
@@ -42,6 +84,8 @@ def chapter(path):
 
 
 class Handler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
     def log_message(self, *args):
         pass
 
@@ -92,6 +136,11 @@ class Handler(BaseHTTPRequestHandler):
                 }
                 for i in range(start, min(start + 10, BOOKS))
             ]
+            if self.server.big:
+                for n, card in enumerate(cards):
+                    card["accessed_at"] = f"2026-10-{28 - (start + n):02d}T10:00:00Z" if start + n < 20 else None
+                    card["cfi"] = BIG_CFI if start + n == 0 else None
+                    card["progress"] = 77 if start + n == 0 else 0
             if page == 1:
                 cards[3]["book"]["uuid"] = "serial-1"
                 cards[3]["book"]["title"] = "Сериал"
@@ -99,16 +148,28 @@ class Handler(BaseHTTPRequestHandler):
         elif "serial" in url.path:
             self.reply(404, b"")
         elif url.path.endswith("/metadata/v4"):
-            self.reply_json(200, {"document_uuid": "d1", "opf": encrypted(OPF), "container": encrypted(CONTAINER)})
+            if self.server.big:
+                self.reply_json(200, {"document_uuid": "d1", "opf": encrypted(BIG_OPF),
+                                      "container": encrypted(BIG_CONTAINER), "ncx": encrypted(BIG_NCX)})
+            else:
+                self.reply_json(200, {"document_uuid": "d1", "opf": encrypted(OPF), "container": encrypted(CONTAINER)})
         elif url.path.endswith("/metadata_secret"):
             self.reply_json(200, {"secret": base64.b64encode(KEY).decode()})
         elif url.path.endswith("/content"):
-            self.reply(200, chapter(query["path"][0]).encode())
+            path = query["path"][0]
+            if not self.server.big:
+                self.reply(200, chapter(path).encode())
+            elif path.endswith(".css"):
+                self.reply(200, b"p { margin: 0; }")
+            else:
+                time.sleep(CHAPTER_DELAY)
+                self.reply(200, big_chapter(path).encode())
         else:
             self.reply(404, b"")
 
 
 if __name__ == "__main__":
-    server = HTTPServer(("127.0.0.1", int(sys.argv[1])), Handler)
+    server = ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), Handler)
     server.challenge = None
+    server.big = len(sys.argv) > 2 and sys.argv[2] == "koreader"
     server.serve_forever()
