@@ -136,10 +136,11 @@ function Session.note_news(dir, card)
     os.rename(dir .. "/news.tmp", dir .. "/news")
 end
 
---- The book opens at the position saved here.
+--- The book opens at the position saved here. If the card has another, it is not taken
+-- as news: the list may be from before this device's last answer. The reader asks Yandex.
 function Session.opening_here(store, card, moved)
     if moved then
-        Session.note_news(store.dir, card)
+        write_card(store.dir, card)
     else
         Session.remember(store, card)
     end
