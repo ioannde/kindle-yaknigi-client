@@ -530,7 +530,21 @@ local function test_reading_screen()
     -- KOReader's own Exit leaves no screens: that must bring the library, not end the app.
     reader():handleEvent(Event:new("Exit"))
     local after_exit = library_with(21)
+    -- While it opens: what the book is called, not where its file is.
+    local said = {}
+    local show_widget = UIManager.show
+    UIManager.show = function(manager, widget, ...)
+        if widget.text then said[#said + 1] = widget.text end
+        return show_widget(manager, widget, ...)
+    end
     open(after_exit, "Книга номер 0")
+    UIManager.show = show_widget
+    local said_title = false
+    for _, text in ipairs(said) do
+        if text:find("epub", 1, true) or text:find("Opening", 1, true) then fail("opening says: " .. text) end
+        said_title = said_title or text:find("Открываю Книга номер 0", 1, true) ~= nil
+    end
+    if not said_title then fail("opening does not name the book") end
     reader().rolling:onGotoXPointer("/body/DocFragment[31]")
     doc = reader().document
 

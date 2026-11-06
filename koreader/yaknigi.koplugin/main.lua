@@ -117,6 +117,31 @@ local function message(text, timeout)
     UIManager:show(InfoMessage:new{ text = text, timeout = timeout })
 end
 
+local function opening_text(card)
+    local title = card and card.book and card.book.title
+    return title and title ~= "" and ("Открываю " .. title) or "Открываю…"
+end
+
+-- What the reader says while the book is opened: the title, where KOReader says the file's path.
+local opening_message = "Открываю…"
+local function install_opening_message(ReaderUI)
+    if ReaderUI.yaknigi_opening_message then return end
+    ReaderUI.yaknigi_opening_message = true
+    local show_coroutine = ReaderUI.showReaderCoroutine
+    ReaderUI.showReaderCoroutine = function(this, file, provider, seamless)
+        if not seamless then
+            -- Its message is the first thing it shows, and only that is replaced.
+            local show = UIManager.show
+            UIManager.show = function(manager, widget, ...)
+                UIManager.show = show
+                widget:free()
+                return show(manager, InfoMessage:new{ text = opening_message, timeout = 0.0 }, ...)
+            end
+        end
+        return show_coroutine(this, file, provider, seamless)
+    end
+end
+
 local function read_json(path)
     local f = io.open(path, "rb")
     if not f then return nil end
@@ -685,7 +710,7 @@ function Yaknigi:takeFound(item, screen)
     NetworkMgr:runWhenOnline(function()
         if self.taking then return end
         self.taking = true
-        local wait = InfoMessage:new{ text = "Открываю…" }
+        local wait = InfoMessage:new{ text = opening_text(item.card) }
         UIManager:show(wait)
         os.remove(TAKE_RESULT)
         local token, uuid = saved_token(), item.card.book.uuid
@@ -755,6 +780,7 @@ end
 function Yaknigi:openCard(card)
     local id = card.book and card.book.uuid
     if id then book_covers[id] = card.book.cover or book_covers[id] end
+    opening_message = opening_text(card)
     local store = Store.open(BOOKS, id)
     if store and store:is_whole() then
         -- Nothing to wait for, not even the network. The reader asks Yandex once it is open.
@@ -773,7 +799,7 @@ function Yaknigi:openCard(card)
 end
 
 function Yaknigi:loadAndOpen(card, store)
-    local wait = InfoMessage:new{ text = "Открываю…" }
+    local wait = InfoMessage:new{ text = opening_text(card) }
     UIManager:show(wait)
     UIManager:forceRePaint()
 
@@ -809,6 +835,7 @@ function Yaknigi:showBook(store, xpointer, target, stubs, text_start)
     state.text_start = text_start or state.text_start
     self:applyTextDefaults(store.epub)
     local ReaderUI = require("apps/reader/readerui")
+    install_opening_message(ReaderUI)
     ReaderUI:showReader(store.epub, nil, false, nil, function(ui)
         if xpointer then ui.rolling:onGotoXPointer(xpointer) end
         -- Only reading moves the position. Sending this one back would be a step behind

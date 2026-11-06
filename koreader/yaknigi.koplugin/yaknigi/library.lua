@@ -264,7 +264,8 @@ local function heading_row(name, count, width, height, callback, size, icon)
     local left = HorizontalGroup:new{ align = "center" }
     if icon then
         local side = Kit.px(26)
-        left[1] = IconWidget:new{ icon = icon, width = side, height = side }
+        local file = icon:match("%.svg$") and icon or nil
+        left[1] = IconWidget:new{ icon = not file and icon or nil, file = file, width = side, height = side }
         left[2] = HorizontalSpan:new{ width = Kit.px(14) }
         title_w = title_w - side - Kit.px(14)
     end
@@ -314,7 +315,8 @@ function Library:strip(id, books, width, cover_h, with_progress)
     }
 end
 
-local SHELF_ICONS = { all = "book.opened", finished = "check", device = "move.down" }
+local HERE = debug.getinfo(1, "S").source:match("^@(.*)/[^/]*$") or "."
+local SHELF_ICONS = { all = "book.opened", finished = "check", device = HERE .. "/icons/cloud.down.svg" }
 
 function Library:shelfRow(id, width)
     local row = heading_row(Shelves.name(id), #Shelves.list(self.item_table, id), width, Kit.px(SHELF_ROW_H),
