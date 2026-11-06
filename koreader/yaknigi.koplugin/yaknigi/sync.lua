@@ -56,6 +56,7 @@ function Sync.send(api, dir)
     -- coming back from Yandex it would look like reading on another device.
     Session.note_sent(dir, position.start)
     local ok, kind, detail = api:send_position(position)
+    if not ok then logger.info("yaknigi: send failed:", kind, detail) end
     local rejected = kind == "not_found" or (kind == "http" and detail ~= "graphql" and (tonumber(detail) or 500) < 500)
     if ok or rejected then
         local now = read_waiting(dir)

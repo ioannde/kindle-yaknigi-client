@@ -62,6 +62,7 @@ BIG_CONTAINER = (
 # Chapter 31 (zero-based 30), second-level: div > p number 3, as the app's CFI points.
 BIG_CFI = "/6/62!,/2/4/2/6/1:7,/2/4/2/6/1:9"
 CHAPTER_DELAY = 0.1
+PROGRESS_UPDATED = ("mutation ProgressUpdated($textbookProgresses: [TextbookProgressUpdatedInput!], $textSerialProgresses: [TextSerialProgressUpdatedInput!], $audiobookProgresses: [AudiobookProgressUpdatedInput!], $comicbookProgresses: [ComicbookProgressUpdatedInput!]) { progressUpdated(textbookProgresses: $textbookProgresses, textSerialProgresses: $textSerialProgresses, audiobookProgresses: $audiobookProgresses, comicbookProgresses: $comicbookProgresses) { value } }")
 
 
 def cover_png(n):
@@ -251,13 +252,17 @@ class Handler(BaseHTTPRequestHandler):
             self.server.fail_writes -= 1
             self.reply(500, b"")
             return
+        # The real server takes only queries on its whitelist, to the letter.
+        if body["query"] != PROGRESS_UPDATED:
+            self.reply_json(200, {"errors": [{"message": "Whitelist: query not found"}]})
+            return
         for p in body["variables"]["textbookProgresses"]:
             good = (isinstance(p["timespent"], int) and p["timespent"] > 0
                     and p["consumptionType"] == "CONSUMPTION"
                     and re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}\+00:00", p["readAt"])
                     and re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-8[0-9a-f]{3}-[0-9a-f]{12}", p["sessionId"])
                     and p["documentUuid"] == "d1" and "!/" in p["cfi"]["start"] and "!/" in p["cfi"]["end"]
-                    and "ProgressUpdated" in body["query"])
+                    )
             if not good:
                 print("bad ProgressUpdated:", p, flush=True)
                 self.reply_json(200, {"errors": [{"message": "bad input"}], "data": None})

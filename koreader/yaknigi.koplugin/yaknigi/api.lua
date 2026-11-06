@@ -3,6 +3,7 @@ local Crypt = require("yaknigi/crypt")
 local Http = require("yaknigi/http")
 local Net = require("yaknigi/net")
 local json = require("rapidjson")
+local logger = require("logger")
 
 local API_BASE = os.getenv("YB_API_BASE") or "https://api.bookmate.yandex.net/api/v5"
 local GRAPHQL_URL = os.getenv("YB_GRAPHQL_URL") or "https://api-gateway.bookmate.yandex.net/graphql"
@@ -75,8 +76,8 @@ local function status_error(status, detail)
     return nil, "http", tostring(status)
 end
 
-local PROGRESS_UPDATED = "mutation ProgressUpdated($textbookProgresses: [TextbookProgressUpdatedInput!]) "
-    .. "{ progressUpdated(textbookProgresses: $textbookProgresses) { value } }"
+-- Yandex takes only queries it knows, to the letter, or answers "Whitelist: query not found".
+local PROGRESS_UPDATED = "mutation ProgressUpdated($textbookProgresses: [TextbookProgressUpdatedInput!], $textSerialProgresses: [TextSerialProgressUpdatedInput!], $audiobookProgresses: [AudiobookProgressUpdatedInput!], $comicbookProgresses: [ComicbookProgressUpdatedInput!]) { progressUpdated(textbookProgresses: $textbookProgresses, textSerialProgresses: $textSerialProgresses, audiobookProgresses: $audiobookProgresses, comicbookProgresses: $comicbookProgresses) { value } }"
 
 --- Tells Yandex where the book is being read. Takes two requests, as in the phone app:
 -- ProgressUpdated moves the position that other devices see; the library card holds the
@@ -100,6 +101,7 @@ function Api:send_position(p)
     local answer = json.decode(body)
     -- GraphQL says what went wrong in a successful response.
     if type(answer) ~= "table" or (answer.errors and answer.errors ~= json.null) then
+        logger.warn("yaknigi: Yandex refused the position:", answer and answer.errors and answer.errors[1] and answer.errors[1].message)
         return nil, "http", "graphql"
     end
 
