@@ -605,7 +605,7 @@ local function test_reading_screen()
     if not line():match("^До конца главы: %d+ стр%. · %d+%%$") then fail("chapter: " .. line()) end
     say("the page says:", line())
     tap_widget(settings.progress_left[2])
-    if line():sub(1, 28) ~= "До конца книги: " .. (count - cur) then fail("book: " .. line()) end
+    if not line():find("До конца книги: " .. (count - cur) .. " стр. · ", 1, true) then fail("book: " .. line()) end
     say("the page says:", line())
     shot("20b-settings-chosen")
     tap_widget(settings.clock[1])
