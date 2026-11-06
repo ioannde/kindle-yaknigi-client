@@ -320,11 +320,13 @@ local function script()
     tap_widget(menu.next_button)
     if menu.page ~= 2 then fail("the arrow did not turn the library") end
     shot("03b-library-page-2")
-    tap_widget(menu.next_button)
-    tap_widget(menu.next_button) -- past the end: stays on the last page
+    for _ = 2, menu.total_pages do -- one more than needed: stays on the last page
+        tap_widget(menu.next_button)
+    end
     if menu.page ~= menu.total_pages then fail("library went to page " .. menu.page) end
-    tap_widget(menu.prev_button)
-    tap_widget(menu.prev_button)
+    for _ = 2, menu.total_pages do
+        tap_widget(menu.prev_button)
+    end
     if menu.page ~= 1 then fail("the arrow did not turn the library back") end
     tap_at(40, 40) -- the corner of the way back from a book: not a way out of the app
     UIManager:forceRePaint()
