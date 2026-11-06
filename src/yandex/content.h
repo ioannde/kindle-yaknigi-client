@@ -13,7 +13,9 @@
  *   6. XHTML -> reader document
  *
  * Loads a book's full text into `out` (zeroed first). Returns 0 on success,
- * negative on error. Uses only the user's own legal access (their token). */
+ * negative on error. If any spine chapter cannot be fetched the whole load
+ * fails and `out` is left empty, so a partial book is never shown as complete.
+ * Uses only the user's own legal access (their token). */
 int yb_content_load_book(const char *token, const char *book_uuid, yb_document *out);
 
 #endif /* YB_YANDEX_CONTENT_H */

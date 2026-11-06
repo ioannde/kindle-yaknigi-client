@@ -5,7 +5,9 @@
 
 /* Parse an EPUB file into a normalized document: reads the OPF via
  * META-INF/container.xml, walks the spine in order, and converts each XHTML
- * chapter into text blocks. Returns 0 on success, -1 on error. */
+ * chapter into text blocks. Returns 0 on success, -1 on error (`out` is then
+ * empty). A book whose spine names chapters absent from the archive still
+ * loads: check out->missing_chapters and do not present it as the whole book. */
 int yb_epub_load(const char *path, yb_document *out);
 
 #endif /* YB_READER_EPUB_H */

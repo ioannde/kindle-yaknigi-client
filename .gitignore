@@ -18,3 +18,10 @@ __pycache__/
 
 # Phase 0 capture output
 tools/phase0/out/
+
+# OS / IDE
+.DS_Store
+.idea/
+
+# Local books (copyrighted, never commit)
+/books/

@@ -18,6 +18,7 @@ typedef struct {
     yb_block *blocks;
     size_t    count;
     size_t    cap;
+    size_t    missing_chapters; /* spine chapters that could not be read */
 } yb_document;
 
 void yb_document_init(yb_document *d);

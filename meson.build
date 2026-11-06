@@ -78,7 +78,7 @@ executable('yb-render', 'src/tools/render.c',
 # --- tests ------------------------------------------------------------------
 test_inc = include_directories('src', 'tests')
 
-foreach t : ['test_buf', 'test_url', 'test_models', 'test_zip', 'test_layout', 'test_base64', 'test_opf', 'test_crypto']
+foreach t : ['test_buf', 'test_url', 'test_models', 'test_zip', 'test_layout', 'test_base64', 'test_opf', 'test_crypto', 'test_epub']
   exe = executable(t, 'tests/' + t + '.c',
     include_directories : test_inc,
     dependencies : yb_dep,

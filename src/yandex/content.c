@@ -174,17 +174,17 @@ int yb_content_load_book(const char *token, const char *book_uuid, yb_document *
     free(opf);
 
     int chapters = 0;
-    for (size_t i = 0; i < nhrefs; ++i) {
+    for (size_t i = 0; i < nhrefs && !out->missing_chapters; ++i) {
         if (!is_html_href(hrefs[i])) continue;
 
         /* build internal path prefix + href, url-encode for ?path= */
         size_t plen = strlen(prefix) + strlen(hrefs[i]) + 1;
         char *path = malloc(plen);
-        if (!path) continue;
+        if (!path) { out->missing_chapters++; continue; }
         snprintf(path, plen, "%s%s", prefix, hrefs[i]);
         char *enc = yb_url_encode(path);
         free(path);
-        if (!enc) continue;
+        if (!enc) { out->missing_chapters++; continue; }
 
         char url[768];
         snprintf(url, sizeof(url), "%s/documents/%s/content?path=%s",
@@ -196,6 +196,10 @@ int yb_content_load_book(const char *token, const char *book_uuid, yb_document *
             yb_html_to_blocks(html, out);
             chapters++;
             free(html);
+        } else {
+            YB_ERR("content: chapter %zu/%zu failed: %s", i + 1, nhrefs, hrefs[i]);
+            free(html);
+            out->missing_chapters++;
         }
     }
 
@@ -205,5 +209,9 @@ int yb_content_load_book(const char *token, const char *book_uuid, yb_document *
 
     YB_INFO("content: loaded '%s' — %d chapter(s), %zu block(s)",
             out->title ? out->title : "(untitled)", chapters, out->count);
-    return out->count > 0 ? 0 : -1;
+    if (out->missing_chapters || out->count == 0) {
+        yb_document_free(out);
+        return -1;
+    }
+    return 0;
 }

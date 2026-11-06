@@ -106,6 +106,9 @@ int yb_epub_load(const char *path, yb_document *out) {
             yb_html_to_blocks(doc, out);
             chapters++;
             free(doc);
+        } else {
+            YB_WARN("epub: spine chapter missing: %s", hrefs[i]);
+            out->missing_chapters++;
         }
         free(full);
     }
@@ -114,7 +117,9 @@ int yb_epub_load(const char *path, yb_document *out) {
     free(opf_path);
     yb_zip_close(z);
 
-    YB_INFO("epub: loaded '%s' — %d chapter(s), %zu block(s)",
-            out->title ? out->title : "(untitled)", chapters, out->count);
-    return out->count > 0 ? 0 : -1;
+    YB_INFO("epub: loaded '%s' — %d chapter(s), %zu missing, %zu block(s)",
+            out->title ? out->title : "(untitled)", chapters,
+            out->missing_chapters, out->count);
+    if (out->count == 0) { yb_document_free(out); return -1; }
+    return 0;
 }

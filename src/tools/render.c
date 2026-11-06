@@ -43,6 +43,8 @@ int main(int argc, char **argv) {
     }
     printf("Title: %s\n", doc.title ? doc.title : "(untitled)");
     printf("Blocks: %zu\n", doc.count);
+    if (doc.missing_chapters)
+        printf("WARNING: incomplete book, %zu chapter(s) missing\n", doc.missing_chapters);
 
     int w = env_int("YB_SCREEN_W", 1236);      /* PW5 default */
     int h = env_int("YB_SCREEN_H", 1648);
