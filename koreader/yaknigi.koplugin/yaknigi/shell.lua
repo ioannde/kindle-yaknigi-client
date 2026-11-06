@@ -1,6 +1,7 @@
 -- Turns the KOReader reader into a plain reading screen: left and right turn pages, the
 -- middle brings up our panels, and none of KOReader's own menus come up by themselves.
 -- All of it works on this reader's instances, so KOReader's code stays unmodified.
+local Blitbuffer = require("ffi/blitbuffer")
 local Device = require("device")
 local Event = require("ui/event")
 local Geom = require("ui/geometry")
@@ -29,6 +30,15 @@ function Clock.region()
     return Geom:new{ x = 0, y = 0, w = Screen:getWidth(), h = Screen:scaleBySize(Prefs.PAGE_TOP_MARGIN) }
 end
 
+--- Only the time itself: what is repainted each minute.
+function Clock.patch()
+    local region = Clock.region()
+    local widget = Kit.text("00:00", 13)
+    local w = widget:getSize().w + 2 * Kit.px(10)
+    widget:free()
+    return Geom:new{ x = math.floor((region.w - w) / 2), y = 0, w = w, h = region.h }
+end
+
 function Clock:paintTo(bb, x, y)
     if not Prefs.reading_clock() then return end
     local widget = Kit.text(os.date("%H:%M"), 13)
@@ -36,6 +46,33 @@ function Clock:paintTo(bb, x, y)
     local region = Clock.region()
     widget:paintTo(bb, x + math.floor((region.w - size.w) / 2), y + math.floor((region.h - size.h) / 2))
     widget:free()
+end
+
+-- The bookmark as the system's own reader has it: a ribbon hanging from the top of the page,
+-- a little way from the corner, with a notch cut into its end.
+local Ribbon = {}
+
+function Ribbon.region()
+    local W = Screen:getWidth()
+    local w = math.floor(W * 0.033)
+    local h = math.min(math.floor(W * 0.045), Screen:scaleBySize(Prefs.PAGE_TOP_MARGIN))
+    return Geom:new{ x = W - math.floor(W * 0.045) - w, y = 0, w = w, h = h }
+end
+
+function Ribbon.paint(bb, x, y)
+    local box = Ribbon.region()
+    local color = Blitbuffer.Color8(0x44)
+    local left, top = x + box.x, y + box.y
+    local half = math.floor(box.w / 2)
+    local notch = math.floor(box.h * 0.2)
+    bb:paintRect(left, top, box.w, box.h - notch, color)
+    for row = 0, notch - 1 do
+        -- The cut widens from the middle, down to the two points of the ribbon.
+        local leg = half - math.floor((row + 1) / notch * half + 0.5)
+        local line = top + box.h - notch + row
+        bb:paintRect(left, line, leg, 1, color)
+        bb:paintRect(left + box.w - leg, line, leg, 1, color)
+    end
 end
 
 --- plugin must answer stubs() (a table of fragments) and paths() (the book's chapters).
@@ -92,10 +129,9 @@ function Shell:install()
         ui.highlight:removeFromHighlightDialog(id)
     end
     self:registerZone()
-    -- The corner mark big enough to be found again on a page.
     local dogear = ui.view.dogear
-    dogear.dogear_max_size = math.ceil(Screen:getWidth() * 0.05)
-    dogear:setupDogear(math.min(dogear.dogear_max_size, Kit.px(Prefs.PAGE_TOP_MARGIN)))
+    dogear.paintTo = function(_, bb, x, y) Ribbon.paint(bb, x, y) end
+    dogear.getRefreshRegion = function() return Ribbon.region() end
     ui.view:registerViewModule("yaknigi_clock", Clock:new{})
     -- KOReader's note that the page numbers are being worked out says nothing to a reader.
     ui.view.flipping.getRollingRenderingStateIconWidget = function() return nil end
@@ -109,7 +145,9 @@ function Shell:paintClock()
     if Device.screen_saver_mode or not Prefs.reading_clock() or not ui.view.footer:shouldBeRepainted() then
         return
     end
-    require("ui/uimanager"):setDirty(ui.view.dialog, "ui", Clock.region())
+    -- Flashed clean, on its small patch alone: a quiet refresh of the same spot leaves the
+    -- last minute's digits showing through the new ones.
+    require("ui/uimanager"):setDirty(ui.view.dialog, "flashui", Clock.patch())
 end
 
 --- Each minute's turn of the clock on the page.

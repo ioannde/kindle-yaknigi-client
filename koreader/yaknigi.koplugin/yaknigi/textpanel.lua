@@ -1,19 +1,27 @@
--- The "Aa" panel: light, theme, font, size, line spacing and margins. The page stays
--- visible above it, so that each change can be seen at once.
+-- The "Aa" panel, laid out as the phone's: light and warmth, font and size, line spacing and
+-- margins. The page stays visible above it, so that each change can be seen at once.
 local Blitbuffer = require("ffi/blitbuffer")
+local CenterContainer = require("ui/widget/container/centercontainer")
 local Device = require("device")
 local Event = require("ui/event")
+local Font = require("ui/font")
+local FrameContainer = require("ui/widget/container/framecontainer")
 local Geom = require("ui/geometry")
 local GestureRange = require("ui/gesturerange")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local HorizontalSpan = require("ui/widget/horizontalspan")
+local IconWidget = require("ui/widget/iconwidget")
 local InputContainer = require("ui/widget/container/inputcontainer")
+local LineWidget = require("ui/widget/linewidget")
+local OverlapGroup = require("ui/widget/overlapgroup")
 local UIManager = require("ui/uimanager")
 local VerticalGroup = require("ui/widget/verticalgroup")
 local cre = require("document/credocument"):engineInit()
 local Screen = Device.screen
 
 local Kit = require("yaknigi/kit")
+
+local HERE = debug.getinfo(1, "S").source:match("^@(.*)/[^/]*$") or "."
 
 local TextPanel = InputContainer:extend{
     name = "YaknigiTextPanel",
@@ -69,13 +77,96 @@ function TextPanel:init()
     local full = Geom:new{ x = 0, y = 0, w = Screen:getWidth(), h = Screen:getHeight() }
     self.ges_events = {
         TapOutside = { GestureRange:new{ ges = "tap", range = full } },
+        SwipeFont = { GestureRange:new{ ges = "swipe", range = full } },
     }
     self.fonts = font_list()
     self:build()
 end
 
-function TextPanel:label(text)
-    return Kit.text(text, 15, { color = Blitbuffer.COLOR_DARK_GRAY })
+--- A slider between the two drawings of what it changes.
+local function slider_row(slider, left, left_side, right, right_side, box)
+    local function icon(name, side)
+        return CenterContainer:new{ dimen = Geom:new{ w = box, h = slider:getSize().h },
+            IconWidget:new{ file = HERE .. "/icons/" .. name .. ".svg", width = side, height = side } }
+    end
+    return HorizontalGroup:new{ align = "center", icon(left, left_side), slider, icon(right, right_side) }
+end
+
+--- The name of a font, in that font if it can be had.
+local function font_name_widget(name, size, width)
+    local filename, index = cre.getFontFaceFilenameAndFaceIndex(name)
+    local face
+    if filename then
+        local ok, got = pcall(Font.getFace, Font, filename, size, index)
+        face = ok and got or nil
+    end
+    return Kit.text(name, size, { face = face, max_width = width })
+end
+
+local function mark_color(on)
+    return on and Blitbuffer.COLOR_BLACK or Blitbuffer.COLOR_DARK_GRAY
+end
+
+--- Lines of a page, closer or further apart.
+local function spacing_mark(lines, on)
+    return Kit.Drawn:new{ width = Kit.px(58), height = Kit.px(38), draw = function(bb, x, y, w, h)
+        local thick = on and Kit.px(2) + 1 or Kit.px(1) + 1
+        for i = 0, lines - 1 do
+            bb:paintRect(x, y + math.floor(i * (h - thick) / (lines - 1)), w, thick, mark_color(on))
+        end
+    end }
+end
+
+--- A page, open below as if it went on, with its text further from the edges or closer.
+local function margin_mark(inset, on)
+    return Kit.Drawn:new{ width = Kit.px(58), height = Kit.px(38), draw = function(bb, x, y, w, h)
+        local thick = on and Kit.px(2) + 1 or Kit.px(1) + 1
+        local color = mark_color(on)
+        bb:paintRect(x, y, w, thick, color)
+        bb:paintRect(x, y, thick, h, color)
+        bb:paintRect(x + w - thick, y, thick, h, color)
+        local start = y + 2 * thick + Kit.px(3)
+        for i = 0, 4 do
+            bb:paintRect(x + inset, start + math.floor(i * (h - (start - y) - thick) / 4), w - 2 * inset, thick, color)
+        end
+    end }
+end
+
+--- A choice of three drawings; returns the cells and the row of them.
+local function marks(drawings, selected, width, on_select)
+    local cell = math.floor(width / #drawings)
+    local cells, row = {}, HorizontalGroup:new{ align = "center" }
+    for i, draw in ipairs(drawings) do
+        cells[i] = Kit.button(draw(i == selected), cell, Kit.px(54), function() on_select(i) end)
+        row[i] = cells[i]
+    end
+    return cells, row
+end
+
+--- Where in the list of fonts we are: at most this many dots, around the current one.
+local MAX_DOTS = 7
+
+local function font_dots(count, current, width)
+    local shown = math.min(count, MAX_DOTS)
+    local first = math.max(1, math.min(current - math.floor(shown / 2), count - shown + 1))
+    return Kit.Drawn:new{ width = width, height = Kit.px(18), draw = function(bb, x, y, w, h)
+        local r, step = Kit.px(4), Kit.px(20)
+        local left = x + math.floor((w - (shown - 1) * step) / 2)
+        local middle = y + math.floor(h / 2)
+        for i = 0, shown - 1 do
+            local on = first + i == current
+            bb:paintRoundedRect(left + i * step - r, middle - r, 2 * r, 2 * r, mark_color(on), r)
+        end
+    end }
+end
+
+--- The minus and the plus, cut square rather than borrowed from a font: they centre exactly.
+local function size_mark(plus)
+    return Kit.Drawn:new{ width = Kit.px(22), height = Kit.px(22), draw = function(bb, x, y, w, h)
+        local thick = Kit.px(2) + 1
+        bb:paintRect(x, y + math.floor((h - thick) / 2), w, thick, Blitbuffer.COLOR_BLACK)
+        if plus then bb:paintRect(x + math.floor((w - thick) / 2), y, thick, h, Blitbuffer.COLOR_BLACK) end
+    end }
 end
 
 function TextPanel:build()
@@ -84,74 +175,100 @@ function TextPanel:build()
     local inner = W - 2 * pad
     local ui = self.ui
     local config = ui.document.configurable
-    local rows = VerticalGroup:new{ align = "left" }
+    local rows = VerticalGroup:new{ align = "center" }
 
     local powerd = Device:hasFrontlight() and Device:getPowerDevice()
     if powerd then
-        rows[#rows + 1] = self:label("Подсветка")
+        local box = Kit.px(44)
+        local slider_w = inner - 2 * box
         local set_light = only_changes(function(v) powerd:setIntensity(v) end)
         self.light = Kit.Slider:new{
-            width = inner,
+            width = slider_w,
             ratio = powerd:frontlightIntensity() / powerd.fl_max,
             show_dirty = self,
             on_drag = function(r) set_light(math.floor(r * powerd.fl_max + 0.5)) end,
             on_commit = function(r) set_light(math.floor(r * powerd.fl_max + 0.5)); self:rebuild() end,
         }
-        rows[#rows + 1] = self.light
+        rows[#rows + 1] = slider_row(self.light, "sun", Kit.px(22), "sun", Kit.px(34), box)
         if Device:hasNaturalLight() then
-            rows[#rows + 1] = self:label("Теплота")
             local set_warmth = only_changes(function(v) powerd:setWarmth(v) end)
             self.warmth = Kit.Slider:new{
-                width = inner,
+                width = slider_w,
                 ratio = powerd:frontlightWarmth() / 100,
                 show_dirty = self,
                 on_drag = function(r) set_warmth(math.floor(r * 100 + 0.5)) end,
                 on_commit = function(r) set_warmth(math.floor(r * 100 + 0.5)); self:rebuild() end,
             }
-            rows[#rows + 1] = self.warmth
+            rows[#rows + 1] = slider_row(self.warmth, "cold", Kit.px(26), "warm", Kit.px(28), box)
         end
+        rows[#rows + 1] = Kit.gap(Kit.px(12))
     end
 
-    local night = G_reader_settings:isTrue("night_mode")
-    self.theme = Kit.segments({ "Светлая", "Тёмная" }, night and 2 or 1, inner, function(i)
-        if (i == 2) ~= night then UIManager:broadcastEvent(Event:new("ToggleNightMode")) end
-        self:rebuild(true)
-    end)
-    rows[#rows + 1] = self.theme
-    rows[#rows + 1] = Kit.gap(Kit.px(14))
+    -- Two columns: the font and the spacing on the left, the size and the margins on the right.
+    local between = Kit.px(16)
+    local col = math.floor((inner - between) / 2)
+    local name_h = Kit.px(56)
 
-    -- Font on the left, size on the right.
-    local side = Kit.px(48)
+    local current = 1
     local font_name = ui.font.font_face or ""
-    local name_width = math.floor(inner * 0.62) - 2 * side
-    self.font_prev = Kit.button(Kit.text("‹", 28), side, side, function() self:stepFont(-1) end)
-    self.font_next = Kit.button(Kit.text("›", 28), side, side, function() self:stepFont(1) end)
-    self.size_down = Kit.button(Kit.text("A−", 18), side, side, function() self:stepSize(-1) end)
-    self.size_up = Kit.button(Kit.text("A+", 24), side, side, function() self:stepSize(1) end)
-    local size_label_width = inner - math.floor(inner * 0.62) - 2 * side
-    rows[#rows + 1] = HorizontalGroup:new{ align = "center",
-        self.font_prev,
-        Kit.button(Kit.text(font_name, 18, { max_width = name_width }), name_width, side, function() self:stepFont(1) end),
-        self.font_next,
-        self.size_down,
-        Kit.button(Kit.text(tostring(math.floor(config.font_size)), 18), size_label_width, side, function() end),
-        self.size_up,
+    for i, name in ipairs(self.fonts) do
+        if name == font_name then current = i end
+    end
+    -- Half of the name goes back and half goes forward; a swipe across it does the same.
+    local nothing = HorizontalSpan:new{ width = 0 }
+    self.font_prev = Kit.button(nothing, math.floor(col / 2), name_h, function() self:stepFont(-1) end)
+    self.font_next = Kit.button(nothing, col - math.floor(col / 2), name_h, function() self:stepFont(1) end)
+    local name_box = Geom:new{ w = col, h = name_h }
+    local font_column = VerticalGroup:new{ align = "center",
+        OverlapGroup:new{ dimen = name_box:copy(), allow_mirroring = false,
+            CenterContainer:new{ dimen = name_box:copy(), font_name_widget(font_name, 28, col - Kit.px(8)) },
+            HorizontalGroup:new{ self.font_prev, self.font_next },
+        },
     }
-    rows[#rows + 1] = Kit.gap(Kit.px(14))
+    if #self.fonts > 1 then font_column[2] = font_dots(#self.fonts, current, col) end
 
-    local half = math.floor((inner - Kit.px(16)) / 2)
-    self.spacing = Kit.segments({ "Плотный", "Обычный", "Широкий" }, nearest(self.LINE_SPACING, config.line_spacing), half,
-        function(i) self:setLineSpacing(self.LINE_SPACING[i]) end)
-    local margin = config.h_page_margins and config.h_page_margins[1] or 20
-    self.margins = Kit.segments({ "Узкие", "Обычные", "Широкие" }, nearest(self.MARGINS, margin), half,
-        function(i) self:setMargins(self.MARGINS[i]) end)
-    rows[#rows + 1] = HorizontalGroup:new{ align = "top",
-        VerticalGroup:new{ align = "left", self:label("Интервал"), self.spacing },
-        HorizontalSpan:new{ width = Kit.px(16) },
-        VerticalGroup:new{ align = "left", self:label("Поля"), self.margins },
+    local pill_h = Kit.px(52)
+    local pill_w = math.min(col, Kit.px(250))
+    local border = Kit.px(1) + 1
+    local cell = math.floor((pill_w - 2 * border - border) / 2)
+    self.size_down = Kit.button(size_mark(false), cell, pill_h - 2 * border, function() self:stepSize(-1) end)
+    self.size_up = Kit.button(size_mark(true), cell, pill_h - 2 * border, function() self:stepSize(1) end)
+    local pill = FrameContainer:new{
+        bordersize = border, padding = 0, margin = 0,
+        radius = math.floor(pill_h / 2),
+        color = Blitbuffer.COLOR_BLACK,
+        HorizontalGroup:new{ align = "center",
+            self.size_down,
+            LineWidget:new{ dimen = Geom:new{ w = border, h = pill_h - 2 * border }, background = Blitbuffer.COLOR_BLACK },
+            self.size_up,
+        },
+    }
+    rows[#rows + 1] = HorizontalGroup:new{ align = "center",
+        font_column,
+        HorizontalSpan:new{ width = between },
+        CenterContainer:new{ dimen = Geom:new{ w = col, h = font_column:getSize().h }, pill },
     }
     rows[#rows + 1] = Kit.gap(Kit.px(10))
-    self.advanced = Kit.button(Kit.text("Другие настройки", 15), inner, Kit.px(40), function()
+
+    local spacing_row, margins_row
+    self.spacing, spacing_row = marks({
+        function(on) return spacing_mark(5, on) end,
+        function(on) return spacing_mark(4, on) end,
+        function(on) return spacing_mark(3, on) end,
+    }, nearest(self.LINE_SPACING, config.line_spacing), col, function(i) self:setLineSpacing(self.LINE_SPACING[i]) end)
+    local margin = config.h_page_margins and config.h_page_margins[1] or 20
+    self.margins, margins_row = marks({
+        function(on) return margin_mark(Kit.px(5), on) end,
+        function(on) return margin_mark(Kit.px(12), on) end,
+        function(on) return margin_mark(Kit.px(18), on) end,
+    }, nearest(self.MARGINS, margin), col, function(i) self:setMargins(self.MARGINS[i]) end)
+    rows[#rows + 1] = HorizontalGroup:new{ align = "center",
+        spacing_row,
+        HorizontalSpan:new{ width = between },
+        margins_row,
+    }
+    rows[#rows + 1] = Kit.gap(Kit.px(12))
+    self.advanced = Kit.button(Kit.text("ДОПОЛНИТЕЛЬНЫЕ НАСТРОЙКИ", 14), inner, Kit.px(44), function()
         self:close()
         UIManager:nextTick(function() ui.config:onShowConfigMenu() end)
     end)
@@ -164,6 +281,15 @@ function TextPanel:build()
     self.area = Geom:new{ x = 0, y = H - h, w = W, h = h }
     self[1] = body
     self.dimen = self.area:copy()
+end
+
+--- A swipe across the name of the font goes on to the next one, as on the phone.
+function TextPanel:onSwipeFont(_, ges)
+    local on_name = ges.pos:intersectWith(self.font_prev.dimen) or ges.pos:intersectWith(self.font_next.dimen)
+    if not on_name then return end
+    if ges.direction == "west" then self:stepFont(1)
+    elseif ges.direction == "east" then self:stepFont(-1) end
+    return true
 end
 
 function TextPanel:paintTo(bb)

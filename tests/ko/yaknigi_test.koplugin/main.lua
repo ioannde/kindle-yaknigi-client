@@ -394,6 +394,17 @@ local function test_reading_screen()
     if top().name ~= "ReaderUI" then fail("the corner opened " .. tostring(top().name)) end
     if not reader().bookmark:isPageBookmarked() then fail("the bookmark was not set") end
     shot("12-page-bookmarked")
+    -- The ribbon hangs from the top, away from the corner, with a notch in its end.
+    do
+        local function dark(x, y) return Screen.bb:getPixel(x, y):getColor8().a < 128 end
+        local gap, width = math.floor(W * 0.045), math.floor(W * 0.033)
+        local middle = W - gap - math.floor(width / 2)
+        if not dark(middle, 2) then fail("no ribbon at the top of the page") end
+        if dark(W - 2, 2) then fail("the mark is in the very corner") end
+        local tip = math.min(math.floor(W * 0.045), Screen:scaleBySize(28)) - 2
+        if dark(middle, tip) then fail("the ribbon has no notch") end
+        if not dark(W - gap - width + 1, tip) then fail("the ribbon has no legs") end
+    end
     tap_at(W - math.floor(W * 0.05), math.floor(W * 0.05))
     if reader().bookmark:isPageBookmarked() then fail("the bookmark was not removed") end
     -- Beside the corner it is the top of the page again.
@@ -587,11 +598,13 @@ local function test_reading_screen()
     tap_widget(top().text_button)
     wait("the text panel", is_named("YaknigiTextPanel"))
     panel = top()
-    tap_widget(panel.theme[2])
+    UIManager:broadcastEvent(Event:new("ToggleNightMode"))
     if not G_reader_settings:isTrue("night_mode") then fail("night mode did not turn on") end
+    UIManager:setDirty("all", "full")
     shot("18-night")
-    tap_widget(top().theme[1])
+    UIManager:broadcastEvent(Event:new("ToggleNightMode"))
     if G_reader_settings:isTrue("night_mode") then fail("night mode did not turn off") end
+    UIManager:setDirty("all", "full")
     tap_at(W / 2, 100)
     wait("the page", is_named("ReaderUI"))
 
@@ -640,6 +653,16 @@ local function test_reading_screen()
     Device.screen_saver_mode = false
     UIManager.setDirty, footer.onUpdateFooter = set_dirty, nil
     if dirty ~= 0 or updates ~= 0 then fail("drawn over the screensaver: " .. dirty .. " " .. updates) end
+
+    -- The time's refresh leaves nothing of the last minute, and touches nothing else.
+    do
+        local mode, region
+        UIManager.setDirty = function(_, _, refresh, where) mode, region = refresh, where end
+        reader().yaknigi.shell:paintClock()
+        UIManager.setDirty = set_dirty
+        if mode ~= "flashui" then fail("the clock's refresh is " .. tostring(mode)) end
+        if region.w > W / 4 then fail("the clock flashes " .. region.w .. " wide") end
+    end
 
     -- The settings, from the panels' menu.
     tap_at(W / 2, H / 2)

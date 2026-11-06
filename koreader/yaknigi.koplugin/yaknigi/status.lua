@@ -69,11 +69,19 @@ function Status:paintTo(bb, x, y)
 end
 
 --- Keeps the strip of a screen up to date; returns what to call when the screen closes.
+-- The time is flashed clean, on its small patch alone: a quiet refresh of the same spot leaves
+-- the last minute's digits showing through the new ones.
 function Status.watch(owner)
-    local region = Geom:new{ x = 0, y = 0, w = Screen:getWidth(), h = Status.height() }
+    local W, H = Screen:getWidth(), Status.height()
+    local time_w = Kit.px(16) + Kit.px(70)
+    local time_region = Geom:new{ x = 0, y = 0, w = time_w, h = H }
+    local rest_region = Geom:new{ x = time_w, y = 0, w = W - time_w, h = H }
     local tick
     tick = function()
-        if not Device.screen_saver_mode then UIManager:setDirty(owner, "ui", region) end
+        if not Device.screen_saver_mode then
+            UIManager:setDirty(owner, "flashui", time_region)
+            UIManager:setDirty(owner, "ui", rest_region)
+        end
         UIManager:scheduleIn(61 - tonumber(os.date("%S")), tick)
     end
     UIManager:scheduleIn(61 - tonumber(os.date("%S")), tick)

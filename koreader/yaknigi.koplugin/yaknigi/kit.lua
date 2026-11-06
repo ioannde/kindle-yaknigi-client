@@ -32,7 +32,7 @@ function Kit.text(text, size, opts)
     opts = opts or {}
     return TextWidget:new{
         text = text,
-        face = Kit.face(size),
+        face = opts.face or Kit.face(size),
         bold = opts.bold,
         fgcolor = opts.color,
         max_width = opts.max_width,
@@ -206,6 +206,20 @@ end
 
 Kit.Placed = Placed
 
+-- A box of a known size that draws itself: draw(bb, x, y, w, h).
+local Drawn = WidgetContainer:extend{ width = 0, height = 0, draw = nil }
+
+function Drawn:init()
+    self.dimen = Geom:new{ x = 0, y = 0, w = self.width, h = self.height }
+end
+
+function Drawn:paintTo(bb, x, y)
+    self.dimen.x, self.dimen.y = x, y
+    self.draw(bb, x, y, self.width, self.height)
+end
+
+Kit.Drawn = Drawn
+
 -- How much empty room KOReader's icons have around what is drawn, as a share of the icon's
 -- side. Centring the icon does not centre the drawing, and the two differ from icon to icon.
 local INK = {
@@ -341,7 +355,7 @@ local Slider = InputContainer:extend{
 
 function Slider:init()
     local touch = Kit.px(48) -- a thin bar is hard to hit with a finger
-    self.knob = Kit.px(12)
+    self.knob = Kit.px(10)
     -- The handle's middle reaches the ends of the track, and all of it stays on the screen.
     self.track = self.width - 2 * self.knob
     self.bar = ProgressWidget:new{
@@ -351,7 +365,8 @@ function Slider:init()
         margin_h = 0,
         margin_v = 0,
         radius = Kit.px(4),
-        bordersize = Kit.px(1),
+        bordersize = 0,
+        bgcolor = Blitbuffer.COLOR_LIGHT_GRAY,
         fillcolor = Blitbuffer.COLOR_BLACK,
         ticks = nil,
     }
@@ -377,8 +392,7 @@ function Slider:paintTo(bb, x, y)
     local r = self.knob
     local cx = x + r + math.floor(self.ratio * self.track + 0.5)
     local cy = y + math.floor(self.dimen.h / 2)
-    bb:paintRoundedRect(cx - r, cy - r, 2 * r, 2 * r, Blitbuffer.COLOR_WHITE, r)
-    bb:paintBorder(cx - r, cy - r, 2 * r, 2 * r, Kit.px(2), Blitbuffer.COLOR_BLACK, r)
+    bb:paintRoundedRect(cx - r, cy - r, 2 * r, 2 * r, Blitbuffer.COLOR_BLACK, r)
 end
 
 function Slider:ratioAt(pos)
