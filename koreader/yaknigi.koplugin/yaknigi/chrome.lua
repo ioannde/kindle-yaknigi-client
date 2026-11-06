@@ -17,6 +17,7 @@ local Screen = Device.screen
 
 local Kit = require("yaknigi/kit")
 local Notes = require("yaknigi/notes")
+local Settings = require("yaknigi/settings")
 local TextPanel = require("yaknigi/textpanel")
 
 local Chrome = InputContainer:extend{
@@ -45,15 +46,16 @@ function Chrome:build()
 
     -- Top bar: back to the library, what is being read, more.
     local side = Kit.px(56)
-    local title_width = inner - 2 * side - Kit.px(16)
+    local icon_w = Kit.px(44) -- the drawings stand at the panel's edges, the title close to them
+    local title_width = inner - 2 * icon_w - Kit.px(16)
     local names = VerticalGroup:new{ align = "left",
         Kit.text(props.title or "", 18, { bold = true, max_width = title_width }),
     }
     if props.authors and props.authors ~= "" then
         names[2] = Kit.text(props.authors:gsub("\n", ", "), 15, { color = Blitbuffer.COLOR_DARK_GRAY, max_width = title_width })
     end
-    self.back = Kit.icon_button("chevron.left", side, function() self:goBack() end)
-    self.more = Kit.icon_button("appbar.menu", side, function() self:showMore() end)
+    self.back = Kit.icon_button("chevron.left", side, function() self:goBack() end, { edge = "left", width = icon_w })
+    self.more = Kit.icon_button("appbar.menu", side, function() self:showMore() end, { edge = "right", width = icon_w })
     self.top_panel = Kit.panel(W, VerticalGroup:new{ align = "left",
         HorizontalGroup:new{ align = "center",
             self.back,
@@ -106,7 +108,7 @@ function Chrome:build()
     self.bottom_panel = Kit.panel(W, VerticalGroup:new{ align = "center",
         self.chapter_row,
         self.slider,
-        Kit.text(("%d%% книги"):format(math.floor(ratio * 100 + 0.5)), 15, { color = Blitbuffer.COLOR_DARK_GRAY }),
+        Kit.text(self.shell:progressText(true), 15, { color = Blitbuffer.COLOR_DARK_GRAY, max_width = inner }),
         Kit.gap(Kit.px(8)),
         HorizontalGroup:new{ align = "center",
             self.notes_button, self.bookmark_button, self.search_button, self.text_button,
@@ -180,6 +182,7 @@ function Chrome:showMore()
         buttons = {
             item("Оглавление", function() ui.toc:onShowToc() end),
             item("Перейти на страницу", function() ui.gotopage:onShowGotoDialog() end),
+            item("Настройки", function() UIManager:show(Settings:new{ ui = ui }) end),
             item("Настройки KOReader", function() ui.menu:onShowMenu() end),
         },
     }

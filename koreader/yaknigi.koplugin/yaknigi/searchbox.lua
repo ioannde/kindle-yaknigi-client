@@ -11,6 +11,7 @@ local IconWidget = require("ui/widget/iconwidget")
 local InputContainer = require("ui/widget/container/inputcontainer")
 local InputText = require("ui/widget/inputtext")
 local LeftContainer = require("ui/widget/container/leftcontainer")
+local RightContainer = require("ui/widget/container/rightcontainer")
 local UIManager = require("ui/uimanager")
 
 local Kit = require("yaknigi/kit")
@@ -33,23 +34,30 @@ function SearchBox:init()
     local W, H = Screen:getWidth(), Screen:getHeight()
     local border = Kit.px(2)
     local icon = Kit.px(26)
-    local find_w = Kit.px(76)
+    local find_text = Kit.text("Найти", 17, { bold = true })
+    local find_w = find_text:getSize().w + Kit.px(12)
     local box_w = W - 2 * self.side - find_w
+    local before_icon, after_icon = Kit.px(9), Kit.px(10) -- with the border, as in the bar it replaces
+    local face = Kit.face(17)
     self.input = InputText:new{
         parent = self,
         text = self.text,
         hint = self.hint,
-        face = Kit.face(17),
-        width = box_w - icon - Kit.px(30),
-        height = Kit.px(30), -- a line: longer text scrolls inside it
+        face = face,
+        width = box_w - 2 * border - before_icon - icon - after_icon - Kit.px(6),
+        -- Exactly a line: its text is at the top of the box, and only then is it in the middle
+        -- of the row. Longer text scrolls inside it.
+        height = math.floor(1.3 * face.size + 0.5),
         scroll = true,
         padding = 0,
         margin = 0,
         bordersize = 0,
         enter_callback = function() self:find() end,
     }
-    self.find_button = Kit.button(Kit.text("Найти", 17, { bold = true }), find_w, self.height,
-        function() self:find() end)
+    self.find_button = Kit.Tappable:new{
+        callback = function() self:find() end,
+        RightContainer:new{ dimen = Geom:new{ w = find_w, h = self.height }, find_text },
+    }
     local row = HorizontalGroup:new{ align = "center",
         FrameContainer:new{
             bordersize = border,
@@ -59,9 +67,9 @@ function SearchBox:init()
             LeftContainer:new{
                 dimen = Geom:new{ w = box_w - 2 * border, h = self.height - 2 * border },
                 HorizontalGroup:new{ align = "center",
-                    HorizontalSpan:new{ width = Kit.px(8) },
+                    HorizontalSpan:new{ width = before_icon },
                     IconWidget:new{ icon = "appbar.search", width = icon, height = icon },
-                    HorizontalSpan:new{ width = Kit.px(10) },
+                    HorizontalSpan:new{ width = after_icon },
                     self.input,
                 },
             },

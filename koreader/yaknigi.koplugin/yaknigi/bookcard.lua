@@ -16,6 +16,7 @@ local Screen = Device.screen
 
 local Kit = require("yaknigi/kit")
 local Library = require("yaknigi/library")
+local Status = require("yaknigi/status")
 
 local HEADER_H, TOP_H, BUTTON_H, NOTE_H = 60, 230, 60, 34
 
@@ -32,10 +33,12 @@ function BookCard:init()
     local pad = Kit.px(16)
     local inner = W - 2 * pad
     local item = self.item
-    local header_h = Kit.px(HEADER_H)
+    local header_h = Status.height() + Kit.px(HEADER_H)
+    self.stop_status = Status.watch(self)
 
-    self.back_button = Kit.icon_button("chevron.left", Kit.px(56), function() UIManager:close(self) end)
-    local header = HorizontalGroup:new{ align = "center", self.back_button }
+    self.back_button = Kit.icon_button("chevron.left", Kit.px(56), function() UIManager:close(self) end,
+        { edge = "left", margin = pad })
+    local header = VerticalGroup:new{ align = "left", Status:new{ width = W }, self.back_button }
 
     local cover_h = Kit.px(TOP_H) - Kit.px(30)
     local cover_w = math.floor(cover_h * 2 / 3)
@@ -118,6 +121,7 @@ function BookCard:onShow()
 end
 
 function BookCard:onCloseWidget()
+    self.stop_status()
     UIManager:setDirty(nil, "partial") -- the library is back, and the screen must show it
 end
 

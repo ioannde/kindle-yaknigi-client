@@ -89,6 +89,25 @@ local function tap_widget(widget)
     UIManager:forceRePaint()
 end
 
+--- Any gesture, with what the detector would give it.
+local function gesture(name, x, y, extra)
+    UIManager:forceRePaint()
+    local ges = {
+        ges = name,
+        pos = Geom:new{ x = x, y = y, w = 0, h = 0 },
+        time = require("ui/time").now(),
+    }
+    for key, point in pairs(extra or {}) do
+        ges[key] = Geom:new{ x = point[1], y = point[2], w = 0, h = 0 }
+    end
+    UIManager:sendEvent(Event:new("Gesture", ges))
+    UIManager:forceRePaint()
+end
+
+local function near(got, want, what)
+    if math.abs(got - want) > 0.03 then fail(what .. ": " .. tostring(got) .. ", wanted " .. tostring(want)) end
+end
+
 local function is_named(name) return function() return top().name == name end end
 
 local function find_item(menu, needle)
@@ -339,12 +358,21 @@ local function test_reading_screen()
     -- A plain page: no KOReader panel opens from any band of the screen.
     shot("10-reading")
     local page = doc:getCurrentPage()
-    tap_at(W - 40, 40) -- top right, KOReader's menu band: turns the page
-    wait("a page turn from the top band", function() return doc:getCurrentPage() == page + 1 end)
-    if top().name ~= "ReaderUI" then fail("top band opened " .. tostring(top().name)) end
+    tap_at(W - 40, math.floor(H * 0.3))
+    wait("a page turn on the right", function() return doc:getCurrentPage() == page + 1 end)
+    if top().name ~= "ReaderUI" then fail("a page turn opened " .. tostring(top().name)) end
     tap_at(40, H - 40) -- bottom left, KOReader's settings band: turns back
     wait("a page back from the bottom band", function() return doc:getCurrentPage() == page end)
     if top().name ~= "ReaderUI" then fail("bottom band opened " .. tostring(top().name)) end
+
+    -- The top of the screen brings up the panels, whichever column.
+    for _, x in ipairs { 40, math.floor(W / 2), W - 40 } do
+        tap_at(x, math.floor(H * 0.15))
+        wait("the panels from the top at x=" .. x, is_named("YaknigiChrome"))
+        if doc:getCurrentPage() ~= page then fail("the top of the screen turned the page") end
+        tap_at(W / 2, H / 2)
+        wait("the panels to close", is_named("ReaderUI"))
+    end
 
     -- The middle brings up the panels, a tap on the text takes them away.
     tap_at(W / 2, H / 2)
@@ -370,6 +398,33 @@ local function test_reading_screen()
     local now = doc:getCurrentPage()
     if math.abs(now - pages / 2) > pages * 0.02 then fail("slider went to " .. now .. " of " .. pages) end
     shot("13-chrome-slider")
+
+    -- A quick drag is a swipe, and the finger may leave the strip: where it left counts.
+    chrome = top()
+    local bar = chrome.slider.dimen
+    local mid_y = bar.y + math.floor(bar.h / 2)
+    local function at(share) return bar.x + math.floor(bar.w * share) end
+    gesture("swipe", at(0.5), mid_y, { end_pos = { at(0.75), mid_y - 300 } })
+    near(doc:getCurrentPage() / pages, 0.75, "a swipe along the slider")
+    -- A slow one ends in a release, a finger that rested first in a hold's.
+    chrome = top()
+    bar = chrome.slider.dimen
+    gesture("pan", at(0.4), bar.y + 5, { start_pos = { at(0.75), bar.y + 5 } })
+    gesture("pan_release", at(0.4), bar.y + 5)
+    near(doc:getCurrentPage() / pages, 0.4, "a slow drag")
+    chrome = top()
+    bar = chrome.slider.dimen
+    gesture("hold_pan", at(0.6), bar.y + 5, { start_pos = { at(0.4), bar.y + 5 } })
+    gesture("hold_release", at(0.6), bar.y + 5)
+    near(doc:getCurrentPage() / pages, 0.6, "a drag after resting")
+    -- A drag that began elsewhere is not the slider's.
+    chrome = top()
+    bar = chrome.slider.dimen
+    local before = doc:getCurrentPage()
+    gesture("pan", at(0.1), bar.y + 5, { start_pos = { at(0.1), 300 } })
+    if top().slider and top().slider.dragging then fail("the slider took another drag") end
+    if doc:getCurrentPage() ~= before then fail("another drag moved the book") end
+    shot("13b-chrome-slider-knob")
     tap_at(W / 2, H / 2)
     wait("the panels to close", is_named("ReaderUI"))
     reader().rolling:onGotoXPointer("/body/DocFragment[31]")
@@ -479,6 +534,30 @@ local function test_reading_screen()
     if config.h_page_margins[1] ~= 35 then fail("margins are " .. tostring(config.h_page_margins[1])) end
     shot("17-text-panel-wide")
     tap_widget(panel.margins[2])
+    -- The warmth and the light follow a drag, not only a tap, wherever it ends.
+    local powerd = require("device"):getPowerDevice()
+    local function drag_test(name, read)
+        local slider = top()[name]
+        if not slider then
+            say("note: no " .. name .. " slider on this device")
+            return
+        end
+        local d = slider.dimen
+        local y = d.y + math.floor(d.h / 2)
+        local function x_of(share) return d.x + slider.knob + math.floor(slider.track * share) end
+        gesture("pan", x_of(0.3), y, { start_pos = { x_of(0.8), y } })
+        near(read(), 0.3, name .. " during a drag")
+        gesture("swipe", x_of(0.8), y, { end_pos = { x_of(0.2), y + 400 } })
+        near(read(), 0.2, name .. " after a swipe")
+        slider = top()[name]
+        d = slider.dimen
+        gesture("hold_pan", x_of(0.6), y, { start_pos = { x_of(0.2), y } })
+        gesture("hold_release", x_of(0.6), y)
+        near(read(), 0.6, name .. " after a hold")
+    end
+    drag_test("light", function() return powerd:frontlightIntensity() / powerd.fl_max end)
+    drag_test("warmth", function() return powerd:frontlightWarmth() / 100 end)
+    shot("17b-text-panel-sliders")
     tap_at(W / 2, 100)
     wait("the page", is_named("ReaderUI"))
 
@@ -495,6 +574,74 @@ local function test_reading_screen()
     if G_reader_settings:isTrue("night_mode") then fail("night mode did not turn off") end
     tap_at(W / 2, 100)
     wait("the page", is_named("ReaderUI"))
+
+    -- The settings, from the panels' menu.
+    tap_at(W / 2, H / 2)
+    wait("the panels", is_named("YaknigiChrome"))
+    top():showMore()
+    UIManager:forceRePaint()
+    shot("19-more-menu")
+    local Settings = require("yaknigi/settings")
+    UIManager:close(top())
+    UIManager:show(Settings:new{ ui = reader() })
+    UIManager:forceRePaint()
+    local settings = top()
+    if settings.name ~= "YaknigiSettings" then fail("no settings: " .. tostring(settings.name)) end
+    shot("20-settings")
+
+    local footer = reader().view.footer
+    local function line() return footer.genFooterText() end
+    tap_widget(settings.clock[2])
+    if G_reader_settings:isTrue("yaknigi_reading_clock") then fail("the clock did not go off") end
+    if line():find(":%d%d ") then fail("a clock with the clock off: " .. line()) end
+    local cur, count = doc:getCurrentPage(), doc:getPageCount()
+    tap_widget(settings.progress[1])
+    if not line():match("^%d+%%$") then fail("percent: " .. line()) end
+    tap_widget(settings.progress[2])
+    if line() ~= tostring(cur) then fail("page: " .. line()) end
+    tap_widget(settings.progress[3])
+    if line() ~= ("%d из %d"):format(cur, count) then fail("page of pages: " .. line()) end
+    tap_widget(settings.progress_left[1])
+    if not line():match("^До конца главы: %d+ стр%. · %d+%%$") then fail("chapter: " .. line()) end
+    say("the page says:", line())
+    tap_widget(settings.progress_left[2])
+    if line():sub(1, 28) ~= "До конца книги: " .. (count - cur) then fail("book: " .. line()) end
+    say("the page says:", line())
+    shot("20b-settings-chosen")
+    tap_widget(settings.clock[1])
+    if not line():match("^%d%d:%d%d · До конца книги") then fail("clock on: " .. line()) end
+
+    tap_widget(settings.sleep_time[4])
+    if reader().autosuspend and reader().autosuspend.auto_suspend_timeout_seconds ~= 30 * 60 then
+        fail("sleep time did not reach the plugin")
+    end
+    if G_reader_settings:readSetting("auto_suspend_timeout_seconds") ~= 30 * 60 then fail("sleep time not saved") end
+
+    -- The sleep screen: the cover of the open book, or the page as it is.
+    tap_widget(settings.sleep_screen[2])
+    if G_reader_settings:readSetting("screensaver_type") ~= "disable" then fail("sleep screen stays on the cover") end
+    tap_widget(settings.sleep_screen[1])
+    if G_reader_settings:readSetting("screensaver_type") ~= "document_cover" then fail("sleep screen: no cover") end
+    local cover = G_reader_settings:readSetting("screensaver_document_cover")
+    local store = reader().yaknigi.store
+    if cover ~= store:cover_file() then fail("sleep screen shows " .. tostring(cover)) end
+    settings:close()
+    UIManager:forceRePaint()
+    if top().name ~= "ReaderUI" then fail("settings did not close") end
+    -- This is KOReader's own screen, as it would come up on the way to sleep.
+    local Screensaver = require("ui/screensaver")
+    local ok, err = pcall(function()
+        Screensaver:setup("suspend")
+        Screensaver:show()
+        UIManager:forceRePaint()
+        shot("21-sleep-cover")
+        Screensaver:close_widget()
+        Screensaver:cleanup()
+    end)
+    if not ok then fail("sleep screen: " .. tostring(err)) end
+    UIManager:forceRePaint()
+    G_reader_settings:saveSetting("yaknigi_progress", "percent")
+    footer:onUpdateFooter(true)
 end
 
 local function script()
@@ -626,6 +773,7 @@ local function script()
     local store = plugin_r.store
     if not store then fail("no store in the reader") end
     if store:is_whole() then fail("book is already whole: nothing went to the background") end
+    if not store:cover_file() then fail("the book opened before its cover came") end
     local pages_skeleton = reader().document:getPageCount()
 
     -- The rest arrives in the background and the reader swaps to it.
@@ -885,7 +1033,30 @@ local function script()
     tap_widget(menu.search_bar)
     wait("the shelf's box", function() return menu.search_box end)
     if menu.search_box.hint ~= "Поиск по библиотеке" then fail("search on a shelf: " .. menu.search_box.hint) end
+    shot("44-search-box-aligned")
     menu.search_box:dismiss()
+
+    -- The settings from the library, with the strip above them, and the way out of the account.
+    menu:showMenu()
+    UIManager:forceRePaint()
+    shot("45-library-menu")
+    UIManager:close(top())
+    menu.on_settings()
+    UIManager:forceRePaint()
+    local settings = top()
+    if settings.name ~= "YaknigiSettings" then fail("no settings from the library") end
+    if not settings.sign_out then fail("no way out of the account in the settings") end
+    shot("46-settings-library")
+    -- Airplane mode, as far as it can be seen: the Wi-Fi is off.
+    local NetworkMgr = require("ui/network/manager")
+    local wifi_on = NetworkMgr.isWifiOn
+    NetworkMgr.isWifiOn = function() return false end
+    settings:build()
+    UIManager:setDirty(settings, "ui")
+    shot("47-settings-wifi-off")
+    NetworkMgr.isWifiOn = wifi_on
+    tap_widget(settings.back)
+    wait("the library after the settings", function() return top() == menu end)
     local f = io.open(OUT .. "/PASS", "w")
     f:write("ok\n")
     f:close()

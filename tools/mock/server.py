@@ -39,7 +39,8 @@ BOOKS = 21
 BIG_CHAPTERS = 40
 BIG_OPF = (
     '<package xmlns="http://www.idpf.org/2007/opf" xmlns:dc="http://purl.org/dc/elements/1.1/">'
-    '<metadata><dc:title>Большая книга</dc:title></metadata><manifest>'
+    '<metadata><dc:title>Большая книга</dc:title><meta name="cover" content="cov"/></metadata><manifest>'
+    '<item id="cov" href="cover.png" media-type="image/png"/>'
     '<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>'
     '<item id="css" href="s.css" media-type="text/css"/>'
     + "".join(f'<item id="c{i}" href="c{i}.html" media-type="application/xhtml+xml"/>'
@@ -440,6 +441,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.reply(200, chapter(path).encode())
             elif path.endswith(".css"):
                 self.reply(200, b"p { margin: 0; }")
+            elif path.endswith(".png"):
+                self.reply(200, cover_png(5))
             else:
                 time.sleep(self.server.chapter_delay)
                 self.reply(200, big_chapter(path).encode())

@@ -27,6 +27,8 @@ local Covers = require("yaknigi/covers")
 local Cfi = require("yaknigi/cfi")
 local Crypt = require("yaknigi/crypt")
 local Library = require("yaknigi/library")
+local Prefs = require("yaknigi/prefs")
+local Settings = require("yaknigi/settings")
 local Shelves = require("yaknigi/shelves")
 local Session = require("yaknigi/session")
 local Shell = require("yaknigi/shell")
@@ -58,6 +60,7 @@ local catalogue_requests = 0
 if APP_MODE then
     -- A crash or a dead battery should cost a minute of reading, not KOReader's usual 15.
     G_reader_settings:saveSetting("auto_save_settings_interval_minutes", 1)
+    Prefs.init()
 
     UIManager._gated_quit = function(this)
         -- UIManager:quit() empties the stack too, and only sets the exit code first. That
@@ -315,6 +318,13 @@ function Yaknigi:signOut()
     })
 end
 
+function Yaknigi:showSettings()
+    UIManager:show(Settings:new{
+        ui = self.ui,
+        on_sign_out = saved_token() and function() self:signOut() end or nil,
+    })
+end
+
 function Yaknigi:showLibrary()
     if self.library then UIManager:close(self.library) end
     local signed_in = saved_token() ~= nil
@@ -338,7 +348,7 @@ function Yaknigi:showLibrary()
             if APP_MODE then UIManager:quit() end
         end,
         on_refresh = function() self:refreshLibrary(true) end,
-        on_sign_out = signed_in and function() self:signOut() end or nil,
+        on_settings = function() self:showSettings() end,
     }
     self.library = library
     shown_library = library
@@ -700,6 +710,9 @@ function Yaknigi:onReaderReady()
     if APP_MODE then
         self.shell = Shell.new(self.ui, self)
         self.shell:install()
+        -- What shows while the device sleeps. If this book has no picture yet, the last one stays.
+        local cover = store:cover_file() or Covers.find(COVERS, { book = { uuid = store.id } })
+        if cover then Prefs.apply_sleep_screen(cover) end
     end
     local state = workers[store.id] or {}
     workers[store.id] = state
@@ -979,10 +992,13 @@ function Yaknigi:onResume()
     -- The phone may have been read while this one slept.
     self.wake_try = 1
     self:exchange()
+    -- The time on the page is hours behind.
+    if self.shell and self.ui.view then self.ui.view.footer:onUpdateFooter(true) end
 end
 
 function Yaknigi:onCloseDocument()
     self:stopPoll()
+    if self.shell then self.shell:stop() end
     -- KOReader closes the document before its last SaveSettings, so that one is too late.
     self:saveReading()
     self.closed = true

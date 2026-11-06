@@ -54,6 +54,17 @@ local function nearest(values, value)
     return best
 end
 
+--- A drag asks for the same value many times over, and each change goes to the hardware.
+local function only_changes(set)
+    local last
+    return function(value)
+        if value ~= last then
+            last = value
+            set(value)
+        end
+    end
+end
+
 function TextPanel:init()
     local full = Geom:new{ x = 0, y = 0, w = Screen:getWidth(), h = Screen:getHeight() }
     self.ges_events = {
@@ -78,21 +89,24 @@ function TextPanel:build()
     local powerd = Device:hasFrontlight() and Device:getPowerDevice()
     if powerd then
         rows[#rows + 1] = self:label("Подсветка")
+        local set_light = only_changes(function(v) powerd:setIntensity(v) end)
         self.light = Kit.Slider:new{
             width = inner,
             ratio = powerd:frontlightIntensity() / powerd.fl_max,
             show_dirty = self,
-            on_drag = function(r) powerd:setIntensity(math.floor(r * powerd.fl_max + 0.5)) end,
-            on_commit = function(r) powerd:setIntensity(math.floor(r * powerd.fl_max + 0.5)); self:rebuild() end,
+            on_drag = function(r) set_light(math.floor(r * powerd.fl_max + 0.5)) end,
+            on_commit = function(r) set_light(math.floor(r * powerd.fl_max + 0.5)); self:rebuild() end,
         }
         rows[#rows + 1] = self.light
         if Device:hasNaturalLight() then
             rows[#rows + 1] = self:label("Теплота")
+            local set_warmth = only_changes(function(v) powerd:setWarmth(v) end)
             self.warmth = Kit.Slider:new{
                 width = inner,
                 ratio = powerd:frontlightWarmth() / 100,
                 show_dirty = self,
-                on_commit = function(r) powerd:setWarmth(math.floor(r * 100 + 0.5)); self:rebuild() end,
+                on_drag = function(r) set_warmth(math.floor(r * 100 + 0.5)) end,
+                on_commit = function(r) set_warmth(math.floor(r * 100 + 0.5)); self:rebuild() end,
             }
             rows[#rows + 1] = self.warmth
         end

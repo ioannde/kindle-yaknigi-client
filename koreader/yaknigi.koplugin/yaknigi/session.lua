@@ -5,6 +5,9 @@ local Store = require("yaknigi/store")
 
 local Session = {}
 
+-- A chapter's first pictures, enough for its first page. The rest come in the background.
+local PICTURES_BEFORE_OPENING = 3
+
 --- Returns the store ready to be opened, the stubs, and the xpointer to jump to (or
 -- nil to stay at the saved position; the reader then asks, if Yandex has another).
 -- On failure returns nil, kind, detail.
@@ -43,6 +46,25 @@ function Session.prepare(root, api, card, local_fragment)
                 local ok, err = store:write(p, data)
                 if not ok then return nil, "disk", err end
             elseif p == store.paths[target] or kind == "auth" then
+                return nil, kind, detail
+            end
+        end
+    end
+
+    -- A page without its picture stays blank, as the first page does without the cover. The
+    -- book opens all the same if they cannot be had: they will be tried again in the background.
+    local pictures = { store.cover }
+    for _, p in ipairs(store:pictures_of(store.paths[target])) do
+        if #pictures >= PICTURES_BEFORE_OPENING + (store.cover and 1 or 0) then break end
+        pictures[#pictures + 1] = p
+    end
+    for _, p in ipairs(pictures) do
+        if not store:has(p) then
+            local data, kind, detail = api:content(store.manifest.document_uuid, p)
+            if data then
+                local ok, err = store:write(p, data)
+                if not ok then return nil, "disk", err end
+            elseif kind == "auth" then
                 return nil, kind, detail
             end
         end

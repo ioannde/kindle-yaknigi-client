@@ -25,6 +25,7 @@ local Catalogue = require("yaknigi/catalogue")
 local Kit = require("yaknigi/kit")
 local SearchBox = require("yaknigi/searchbox")
 local Shelves = require("yaknigi/shelves")
+local Status = require("yaknigi/status")
 
 -- item_table holds { text, title, authors, mandatory, card, sign_in, whole, cover, shelf }.
 local Library = InputContainer:extend{
@@ -40,7 +41,7 @@ local Library = InputContainer:extend{
     onMenuSelect = nil, -- function(self, item)
     close_callback = nil,
     on_refresh = nil,
-    on_sign_out = nil,
+    on_settings = nil,
     on_catalogue = nil, -- function(state): asks for the next books found
 }
 
@@ -55,6 +56,7 @@ function Library:init()
         self.view, self.query = "home", nil
     end
     self.dimen = Geom:new{ x = 0, y = 0, w = Screen:getWidth(), h = Screen:getHeight() }
+    self.stop_status = Status.watch(self)
     self.ges_events = {
         Swipe = { GestureRange:new{ ges = "swipe", range = self.dimen } },
     }
@@ -280,7 +282,19 @@ function Library:searchBar(width)
     local row = HorizontalGroup:new{ align = "center", self.search_bar }
     self.clear_button = nil
     if self.query then
-        self.clear_button = Kit.button(Kit.text("×", 30), clear_w, height, function() self:search("") end)
+        -- Its middle is under the middle of the menu's icon, at the right of the header.
+        local cross = Kit.text("×", 30)
+        local size = cross:getSize()
+        self.clear_button = Kit.Tappable:new{
+            callback = function() self:search("") end,
+            Kit.Placed:new{
+                width = clear_w,
+                height = height,
+                dx = clear_w - math.floor(Kit.icon_ink_width("appbar.menu") / 2) - math.floor(size.w / 2) - Kit.px(1),
+                dy = math.floor((height - size.h) / 2) - Kit.px(1),
+                cross,
+            },
+        }
         row[2] = self.clear_button
     end
     return CenterContainer:new{ dimen = Geom:new{ w = width, h = Kit.px(SEARCH_H) }, row }
@@ -351,7 +365,8 @@ function Library:build()
     local W, H = Screen:getWidth(), Screen:getHeight()
     local pad = Kit.px(16)
     local inner = W - 2 * pad
-    local header_h, footer_h = Kit.px(HEADER_H), Kit.px(FOOTER_H)
+    local row_h, footer_h = Kit.px(HEADER_H), Kit.px(FOOTER_H)
+    local header_h = Status.height() + row_h
     local items = self.item_table or {}
     self.item_table = items
     local side = Kit.px(56)
@@ -386,7 +401,7 @@ function Library:build()
 
     -- On the first screen nothing is up in the left corner: the way back from a book is
     -- there, and one tap too many must do no more than go back a screen.
-    self.menu_button = Kit.icon_button("appbar.menu", side, function() self:showMenu() end)
+    self.menu_button = Kit.icon_button("appbar.menu", side, function() self:showMenu() end, { edge = "right", margin = pad })
     self.back_button, self.search_button = nil, nil
     local title = "Мои книги"
     local left = HorizontalSpan:new{ width = side }
@@ -398,19 +413,22 @@ function Library:build()
             right = HorizontalGroup:new{ align = "center", self.search_button, self.menu_button }
         end
     else
-        self.back_button = Kit.icon_button("chevron.left", side, function() self:goHome() end)
+        self.back_button = Kit.icon_button("chevron.left", side, function() self:goHome() end, { edge = "left", margin = pad })
         left = self.back_button
         title = self.view == "catalogue" and "Все книги Яндекса"
             or ("%s · %d"):format(Shelves.name(self.view), self.shown or 0)
     end
     local side_w = math.max(side, right:getSize().w)
-    local header = HorizontalGroup:new{ align = "center",
-        Kit.fixed(left, side_w),
-        CenterContainer:new{
-            dimen = Geom:new{ w = W - 2 * side_w, h = header_h },
-            Kit.text(title, 20, { bold = true, max_width = W - 2 * side_w }),
+    local header = VerticalGroup:new{ align = "left",
+        Status:new{ width = W },
+        HorizontalGroup:new{ align = "center",
+            Kit.fixed(left, side_w),
+            CenterContainer:new{
+                dimen = Geom:new{ w = W - 2 * side_w, h = row_h },
+                Kit.text(title, 20, { bold = true, max_width = W - 2 * side_w }),
+            },
+            RightContainer:new{ dimen = Geom:new{ w = side_w, h = row_h }, right },
         },
-        RightContainer:new{ dimen = Geom:new{ w = side_w, h = header_h }, right },
     }
 
     local pager
@@ -490,7 +508,7 @@ function Library:showSearch()
     self.search_box = SearchBox:new{
         text = self.query or "",
         hint = (self.view == "home" or self.view == "catalogue") and "Поиск по всем книгам" or "Поиск по библиотеке",
-        top = Kit.px(HEADER_H) + Kit.px(1),
+        top = Status.height() + Kit.px(HEADER_H) + Kit.px(1),
         side = Kit.px(16),
         height = Kit.px(44),
         strip_h = Kit.px(SEARCH_H),
@@ -504,6 +522,7 @@ function Library:showSearch()
 end
 
 function Library:onCloseWidget()
+    self.stop_status()
     if self.search_box then self.search_box:dismiss() end
 end
 
@@ -557,7 +576,7 @@ function Library:showMenu()
     else
         buttons[1] = item("Обновить", function() self.on_refresh() end)
     end
-    if self.on_sign_out then buttons[#buttons + 1] = item("Выйти из аккаунта", function() self.on_sign_out() end) end
+    buttons[#buttons + 1] = item("Настройки", function() self.on_settings() end)
     buttons[#buttons + 1] = item("Закрыть приложение", function() self:onClose() end)
     dialog = ButtonDialog:new{ buttons = buttons }
     UIManager:show(dialog)

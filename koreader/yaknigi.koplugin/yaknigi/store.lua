@@ -80,6 +80,7 @@ function Store:use_manifest(manifest)
             self.resources[#self.resources + 1] = p
         end
     end
+    self.cover = self.book.cover and normalize(prefix .. self.book.cover) or nil
 end
 
 function Store:set_manifest(manifest)
@@ -121,17 +122,51 @@ function Store:spine_index_of_fragment(fragment)
     return nil
 end
 
+--- The cover as a file a picture viewer can open, if it is here.
+function Store:cover_file()
+    local p = self.cover
+    if not p or not self:has(p) then return nil end
+    local suffix = p:lower():match("%.(%a+)$")
+    if suffix == "jpg" or suffix == "jpeg" or suffix == "png" or suffix == "gif" then
+        return self.dir .. "/files/" .. file_name(p)
+    end
+end
+
+--- Resources a chapter shows, in order. Empty until the chapter is here.
+function Store:pictures_of(chapter)
+    local html = self:read(chapter)
+    local out = {}
+    if not html then return out end
+    local known = {}
+    for _, p in ipairs(self.resources) do known[p] = true end
+    local dir = Opf.dirname(chapter)
+    local function add(ref)
+        local p = normalize(dir .. (ref:gsub("[#?].*$", "")))
+        if known[p] then
+            known[p] = nil
+            out[#out + 1] = p
+        end
+    end
+    for _, ref in ipairs(Opf.pictures(html)) do add(ref) end
+    return out
+end
+
 --- Paths of everything still to fetch, chapters nearest to `around` first and
 -- forward before backward, then resources. Stylesheets go first of all, since they
--- change how every chapter looks.
+-- change how every chapter looks, and the cover after them: it is the first page of many
+-- a book, and what shows while the device sleeps.
 function Store:missing(around)
-    local out = {}
+    local out, seen = {}, {}
     local function add(p)
-        if p and not self:has(p) then out[#out + 1] = p end
+        if p and not seen[p] and not self:has(p) then
+            seen[p] = true
+            out[#out + 1] = p
+        end
     end
     for _, p in ipairs(self.resources) do
         if p:lower():match("%.css$") then add(p) end
     end
+    add(self.cover)
     local n = #self.paths
     local c = math.max(1, math.min(around or 1, n))
     add(self.paths[c])

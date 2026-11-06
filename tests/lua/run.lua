@@ -6,6 +6,7 @@ local Cfi = require("yaknigi/cfi")
 local Http = require("yaknigi/http")
 local Shelves = require("yaknigi/shelves")
 local Catalogue = require("yaknigi/catalogue")
+local Prefs = require("yaknigi/prefs")
 
 local failed, passed = 0, 0
 local function eq(got, want, name)
@@ -67,6 +68,41 @@ eq(book.spine[1], "a&1.html", "spine order and unescape")
 eq(book.spine[2], "b.html", "spine second")
 eq(book.ncx, "t.ncx", "ncx")
 eq(#book.items, 5, "items")
+
+-- the cover and a chapter's pictures
+eq(book.cover, nil, "an unnamed picture is not a cover")
+local function cover_of(metadata, items)
+    return Opf.parse("<package><metadata>" .. metadata .. "</metadata><manifest>" .. items .. "</manifest></package>").cover
+end
+eq(cover_of([[<meta name="cover" content="x"/>]], [[<item id="x" href="i/1.jpg" media-type="image/jpeg"/>]]),
+   "i/1.jpg", "cover from a meta")
+eq(cover_of("", [[<item id="x" href="1.png" media-type="image/png" properties="cover-image"/>]]),
+   "1.png", "cover from properties")
+eq(cover_of("", [[<item id="x" href="i/Cover.jpeg" media-type="image/jpeg"/>]]), "i/Cover.jpeg", "cover from a name")
+eq(cover_of([[<meta name="cover" content="x"/>]], [[<item id="x" href="cover.html" media-type="application/xhtml+xml"/>]]),
+   nil, "a page is not a cover picture")
+local pics = Opf.pictures([[<p class="a"><IMG alt="" src="../i/a&amp;b.png"/></p><svg:image xlink:href="c.jpg"/>
+  <image width="1" href='d.gif'></image><a href="no.html">x</a><img alt="no source"/>]])
+eq(#pics, 3, "pictures of a chapter")
+eq(pics[1], "../i/a&b.png", "img src")
+eq(pics[2], "c.jpg", "svg image")
+eq(pics[3], "d.gif", "image href")
+
+-- what the page says about progress
+local at = { ratio = 0.7, page = 723, pages = 1023, chapter_left = 9, chapter_pages = 12 }
+eq(Prefs.progress_text("percent", at), "70%", "percent")
+eq(Prefs.progress_text("percent", at, true), "70% книги", "percent, long")
+eq(Prefs.progress_text("page", at), "723", "page")
+eq(Prefs.progress_text("page", at, true), "Страница 723", "page, long")
+eq(Prefs.progress_text("page_of", at), "723 из 1023", "page of pages")
+eq(Prefs.progress_text("chapter", at), "До конца главы: 9 стр. · 75%", "chapter")
+eq(Prefs.progress_text("book", at), "До конца книги: 300 стр. · 29%", "book")
+for _, format in ipairs(Prefs.PROGRESS) do
+    eq(Prefs.progress_text(format, { ratio = 0.5 }), "50%", "no pages yet: " .. format)
+end
+eq(Prefs.network_symbol(true, true), "\u{ECA8}", "connected")
+eq(Prefs.network_symbol(true, false), "\u{ECA9}", "no connection")
+eq(Prefs.network_symbol(false, false), "\u{F072}", "airplane")
 
 -- cfi
 eq(Cfi.spine_index("/6/54!,/2/4/2/1:0,/2/4/2/1:9"), 26, "spine index")

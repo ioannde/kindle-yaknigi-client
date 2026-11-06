@@ -83,7 +83,7 @@ function Notes:build()
     self.page = math.max(1, math.min(self.page, pages))
     self.pages = pages
 
-    self.back = Kit.icon_button("chevron.left", side, function() self:close() end)
+    self.back = Kit.icon_button("chevron.left", side, function() self:close() end, { edge = "left", margin = pad })
     local header = HorizontalGroup:new{ align = "center",
         self.back,
         CenterContainer:new{

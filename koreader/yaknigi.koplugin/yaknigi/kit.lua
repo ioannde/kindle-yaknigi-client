@@ -16,6 +16,7 @@ local TextWidget = require("ui/widget/textwidget")
 local UIManager = require("ui/uimanager")
 local VerticalGroup = require("ui/widget/verticalgroup")
 local VerticalSpan = require("ui/widget/verticalspan")
+local WidgetContainer = require("ui/widget/container/widgetcontainer")
 local Screen = Device.screen
 
 local Kit = {}
@@ -95,9 +96,63 @@ function Kit.button(content, width, height, callback)
     }
 end
 
-function Kit.icon_button(name, side, callback)
-    local icon = Kit.px(36)
-    return Kit.button(IconWidget:new{ icon = name, width = icon, height = icon }, side, side, callback)
+-- Content moved inside a box of a fixed size, for what no container can align by itself.
+local Placed = WidgetContainer:extend{ width = 0, height = 0, dx = 0, dy = 0 }
+
+function Placed:init()
+    self.dimen = Geom:new{ x = 0, y = 0, w = self.width, h = self.height }
+end
+
+function Placed:paintTo(bb, x, y)
+    self.dimen.x, self.dimen.y = x, y
+    self[1]:paintTo(bb, x + self.dx, y + self.dy)
+end
+
+Kit.Placed = Placed
+
+-- How much empty room KOReader's icons have around what is drawn, as a share of the icon's
+-- side. Centring the icon does not centre the drawing, and the two differ from icon to icon.
+local INK = {
+    ["chevron.left"] = { left = 21 / 76, right = 25 / 76, top = 11 / 76, bottom = 15 / 76 },
+    ["appbar.menu"] = { left = 10 / 76, right = 7 / 76, top = 14 / 76, bottom = 15 / 76 },
+    ["appbar.search"] = { left = 13 / 76, right = 6 / 76, top = 7 / 76, bottom = 11 / 76 },
+}
+local NO_INK = { left = 0, right = 0, top = 0, bottom = 0 }
+local ICON = 36
+
+--- Width of what is actually drawn in an icon.
+function Kit.icon_ink_width(name)
+    local ink = INK[name] or NO_INK
+    return math.floor(Kit.px(ICON) * (1 - ink.left - ink.right) + 0.5)
+end
+
+--- The drawing is what gets aligned: centred in a box side by side, or with opts.edge
+-- ("left" or "right") at opts.margin from that edge of the box. opts.width narrows the box.
+function Kit.icon_button(name, side, callback, opts)
+    opts = opts or {}
+    local icon = Kit.px(ICON)
+    local width = opts.width or side
+    local ink = INK[name] or NO_INK
+    local left, right = math.floor(ink.left * icon + 0.5), math.floor(ink.right * icon + 0.5)
+    local top, bottom = math.floor(ink.top * icon + 0.5), math.floor(ink.bottom * icon + 0.5)
+    local dx
+    if opts.edge == "left" then
+        dx = (opts.margin or 0) - left
+    elseif opts.edge == "right" then
+        dx = width - (opts.margin or 0) - icon + right
+    else
+        dx = math.floor((width - (icon - left - right)) / 2) - left
+    end
+    return Tappable:new{
+        callback = callback,
+        Placed:new{
+            width = width,
+            height = side,
+            dx = dx,
+            dy = math.floor((side - (icon - top - bottom)) / 2) - top,
+            IconWidget:new{ icon = name, width = icon, height = icon },
+        },
+    }
 end
 
 --- ‹ page / pages ›. on_turn gets -1 or 1. Returns the row and both arrows.
@@ -150,8 +205,8 @@ function Kit.segments(labels, selected, width, on_select, height)
     return row
 end
 
--- A progress bar that answers to tapping and dragging. on_commit gets the final ratio;
--- on_drag, if given, gets each step of a drag.
+-- A bar with a round handle, that answers to tapping and dragging. on_commit gets the final
+-- ratio; on_drag, if given, gets each step of a drag.
 local Slider = InputContainer:extend{
     width = nil,
     ratio = 0,
@@ -160,11 +215,13 @@ local Slider = InputContainer:extend{
 }
 
 function Slider:init()
-    local bar_height = Kit.px(10)
     local touch = Kit.px(48) -- a thin bar is hard to hit with a finger
+    self.knob = Kit.px(12)
+    -- The handle's middle reaches the ends of the track, and all of it stays on the screen.
+    self.track = self.width - 2 * self.knob
     self.bar = ProgressWidget:new{
-        width = self.width,
-        height = bar_height,
+        width = self.track,
+        height = Kit.px(8),
         percentage = self.ratio,
         margin_h = 0,
         margin_v = 0,
@@ -175,16 +232,38 @@ function Slider:init()
     }
     self[1] = CenterContainer:new{ dimen = Geom:new{ w = self.width, h = touch }, self.bar }
     self.dimen = Geom:new{ x = 0, y = 0, w = self.width, h = touch }
+    -- A finger wanders off so thin a strip, and a drag still belongs to where it began. How it
+    -- ends depends on the speed: a quick one is a swipe, with the finger's way in one piece.
+    local screen = Geom:new{ x = 0, y = 0, w = Screen:getWidth(), h = Screen:getHeight() }
+    local function anywhere(ges) return { GestureRange:new{ ges = ges, range = screen } } end
     self.ges_events = {
         TapSlider = { GestureRange:new{ ges = "tap", range = self.dimen } },
-        PanSlider = { GestureRange:new{ ges = "pan", range = self.dimen } },
-        PanReleaseSlider = { GestureRange:new{ ges = "pan_release", range = self.dimen } },
+        PanSlider = anywhere("pan"),
+        HoldPanSlider = anywhere("hold_pan"),
+        PanReleaseSlider = anywhere("pan_release"),
+        HoldReleaseSlider = anywhere("hold_release"),
+        SwipeSlider = anywhere("swipe"),
+        MultiswipeSlider = anywhere("multiswipe"),
     }
 end
 
+function Slider:paintTo(bb, x, y)
+    InputContainer.paintTo(self, bb, x, y)
+    local r = self.knob
+    local cx = x + r + math.floor(self.ratio * self.track + 0.5)
+    local cy = y + math.floor(self.dimen.h / 2)
+    bb:paintRoundedRect(cx - r, cy - r, 2 * r, 2 * r, Blitbuffer.COLOR_WHITE, r)
+    bb:paintBorder(cx - r, cy - r, 2 * r, 2 * r, Kit.px(2), Blitbuffer.COLOR_BLACK, r)
+end
+
 function Slider:ratioAt(pos)
-    local ratio = (pos.x - self.dimen.x) / self.width
+    local ratio = (pos.x - self.dimen.x - self.knob) / self.track
     return math.max(0, math.min(1, ratio))
+end
+
+function Slider:has(pos)
+    local d = self.dimen
+    return pos.x >= d.x and pos.x < d.x + d.w and pos.y >= d.y and pos.y < d.y + d.h
 end
 
 function Slider:show(ratio)
@@ -200,16 +279,29 @@ function Slider:onTapSlider(_, ges)
 end
 
 function Slider:onPanSlider(_, ges)
+    if not self.dragging then
+        if not self:has(ges.start_pos or ges.pos) then return end -- someone else's drag
+        self.dragging = true
+    end
     self:show(self:ratioAt(ges.pos))
     if self.on_drag then self.on_drag(self.ratio) end
     return true
 end
 
+Slider.onHoldPanSlider = Slider.onPanSlider
+
+--- A swipe's pos is where it began and end_pos where the finger left; the others have pos.
 function Slider:onPanReleaseSlider(_, ges)
-    self.ratio = self:ratioAt(ges.pos)
+    if not self.dragging and not self:has(ges.pos) then return end
+    self.dragging = nil
+    self.ratio = self:ratioAt(ges.end_pos or ges.pos)
     self.on_commit(self.ratio)
     return true
 end
+
+Slider.onHoldReleaseSlider = Slider.onPanReleaseSlider
+Slider.onSwipeSlider = Slider.onPanReleaseSlider
+Slider.onMultiswipeSlider = Slider.onPanReleaseSlider
 
 Kit.Slider = Slider
 
