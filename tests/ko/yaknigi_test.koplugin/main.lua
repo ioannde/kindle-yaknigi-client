@@ -944,6 +944,21 @@ local function test_books_and_memory(settings)
     shot("59-row-saved")
     local card = menu:inLibrary(item).card
 
+    -- It opens from what was saved, and is read to somewhere for the place to be kept.
+    menu:onMenuSelect(item)
+    wait("the saved book to open", function()
+        return reader() and reader().document and top().name == "ReaderUI"
+            and reader().document.file:find("/" .. id .. "/", 1, true)
+    end)
+    reader().rolling:onGotoXPointer("/body/DocFragment[5]/body/p")
+    if fragment() ~= 5 then fail("the jump in the saved book: " .. tostring(fragment())) end
+    reader():onHome()
+    menu = wait("the results after reading", function()
+        local w = top()
+        return w.item_table and w.view == "catalogue" and w
+    end)
+    UIManager:forceRePaint()
+
     -- Saved: a check, and the menu takes it off the device with the place in it left alone.
     local place = books .. "/" .. id .. "/to_send"
     local f = io.open(place, "w")
@@ -969,6 +984,8 @@ local function test_books_and_memory(settings)
         return reader() and reader().document and top().name == "ReaderUI"
             and reader().document.file:find("/" .. id .. "/", 1, true)
     end)
+    wait("the place in the book to be kept", function() return fragment() == 5 end)
+    say("the place survived taking the book off the device")
     reader():onHome()
     menu = wait("the library again", function() return top().item_table and top() end)
     menu = to_library()
