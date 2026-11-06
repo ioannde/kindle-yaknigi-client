@@ -165,6 +165,13 @@ function Session.read_news(dir)
     return { uuid = uuid, state = state, cfi = cfi, progress = tonumber(progress) }
 end
 
+--- The reader has chosen. Once this position is overwritten it would look new again, so
+-- the question must go now.
+function Session.answered(store, news, moved)
+    Session.remember(store, news, moved)
+    os.remove(store.dir .. "/news")
+end
+
 function Session.note_sent(dir, start)
     local sent = sent_positions(dir)
     if sent[#sent] == start then return end

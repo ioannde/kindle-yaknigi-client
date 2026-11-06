@@ -706,7 +706,7 @@ function Yaknigi:goToNews()
     local store = self.store
     local news = Session.read_news(store.dir)
     if not news then return end
-    Session.remember(store, news, true)
+    Session.answered(store, news, true)
     self.queued = nil
     self.ui.link:addCurrentLocationToStack()
     local state = workers[store.id]
@@ -735,7 +735,7 @@ function Yaknigi:stayHere()
     local store = self.store
     local news = Session.read_news(store.dir)
     if not news then return end
-    Session.remember(store, news)
+    Session.answered(store, news)
     workers[store.id].jump_cfi = nil
     -- What was held back can go now.
     if Sync.waiting(store.dir) then self:exchange() end
