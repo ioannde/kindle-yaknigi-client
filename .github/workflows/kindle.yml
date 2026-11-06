@@ -23,7 +23,7 @@ jobs:
       - name: Install build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y meson ninja-build pkg-config cmake qemu-user fonts-dejavu-core
+          sudo apt-get install -y meson ninja-build pkg-config cmake qemu-user libc6-armhf-cross fonts-dejavu-core
 
       - name: Install the toolchain
         run: |
@@ -57,19 +57,22 @@ jobs:
           for b in yb-probe yb-smoke; do
             needed=$("$TC-readelf" -d "build-kindle/$b" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p')
             echo "$b needs:" $needed
+            echo "$b newest glibc symbol:" $("$TC-readelf" -V "build-kindle/$b" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1)
             if echo "$needed" | grep -vE '^(libc|libm|libdl|libpthread|librt|ld-linux-armhf)\.so'; then
               echo "::error::$b links to an unexpected library"
               exit 1
             fi
           done
 
+      # The toolchain's own ld.so 2.20 aborts under qemu-arm at startup, so this
+      # uses Ubuntu's armhf glibc, which still runs binaries linked against 2.20.
       - name: Run the tests on emulated ARM
         run: |
-          sysroot=$("$TC-gcc" -print-sysroot)
           cd build-kindle
           for t in test_*; do
             [ -x "$t" ] && [ -f "$t" ] || continue
-            qemu-arm -L "$sysroot" "./$t"
+            echo "== $t"
+            qemu-arm -L /usr/arm-linux-gnueabihf "./$t"
           done
 
       - name: Package the KUAL extension
