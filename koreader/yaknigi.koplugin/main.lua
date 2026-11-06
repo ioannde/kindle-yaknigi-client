@@ -42,7 +42,10 @@ local POLL_SECONDS = 2
 -- KOReader quits when its last screen closes, which its own Exit and any failure to open
 -- something would do. Only "Закрыть приложение" should end the app: go back to the library.
 if APP_MODE then
-    UIManager._gated_quit = function()
+    UIManager._gated_quit = function(this)
+        -- UIManager:quit() empties the stack too, and only sets the exit code first. That
+        -- is someone asking to end the app, and they must get what they asked for.
+        if this._exit_code then return true end
         logger.warn("yaknigi: no screens left, back to the library")
         require("apps/reader/readerui"):showFileManager()
         return false

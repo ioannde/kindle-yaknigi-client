@@ -26,4 +26,10 @@ KO_HOME=$HOME_DIR YAKNIGI_APP=1 YAKNIGI_TEST_OUT=$OUT \
     SDL_AUDIODRIVER=dummy \
     timeout 300 xvfb-run -a -s "-screen 0 1236x1648x24" ./luajit reader.lua -d "$OUT/empty" 2>&1 \
     | tee "$OUT/koreader.log" | grep -E '\[driver\]|Traceback|attempt to|error' 
+STATUS=${PIPESTATUS[0]}
+# The script's last step closes the app, so running into the time limit means it did not end.
+if [ "$STATUS" = 124 ]; then
+    echo "the app did not end when asked to" >&2
+    exit 1
+fi
 test -f "$OUT/PASS"
