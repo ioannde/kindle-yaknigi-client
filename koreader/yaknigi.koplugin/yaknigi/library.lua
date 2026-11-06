@@ -10,7 +10,6 @@ local HorizontalGroup = require("ui/widget/horizontalgroup")
 local HorizontalSpan = require("ui/widget/horizontalspan")
 local IconWidget = require("ui/widget/iconwidget")
 local ImageWidget = require("ui/widget/imagewidget")
-local InputDialog = require("ui/widget/inputdialog")
 local InputContainer = require("ui/widget/container/inputcontainer")
 local LeftContainer = require("ui/widget/container/leftcontainer")
 local OverlapGroup = require("ui/widget/overlapgroup")
@@ -24,6 +23,7 @@ local Screen = Device.screen
 
 local Catalogue = require("yaknigi/catalogue")
 local Kit = require("yaknigi/kit")
+local SearchBox = require("yaknigi/searchbox")
 local Shelves = require("yaknigi/shelves")
 
 -- item_table holds { text, title, authors, mandatory, card, sign_in, whole, cover, shelf }.
@@ -252,7 +252,7 @@ function Library:homeBody(width, area)
     return body
 end
 
---- A box to tap for the keyboard, and a way to drop what was searched for.
+--- A box to tap for typing (see SearchBox), and a way to drop what was searched for.
 function Library:searchBar(width)
     local height = Kit.px(44)
     local clear_w = self.query and height or 0
@@ -481,33 +481,30 @@ function Library:search(query)
 end
 
 function Library:showSearch()
+    if self.search_box then return end
     -- The books are mostly in Russian, and the sign-in code leaves the Latin keyboard on.
     if #(G_reader_settings:readSetting("keyboard_layouts") or {}) == 0 then
         G_reader_settings:saveSetting("keyboard_layouts", { "ru", "en" })
     end
     G_reader_settings:saveSetting("keyboard_layout", "ru")
-    local dialog
-    dialog = InputDialog:new{
-        title = (self.view == "home" or self.view == "catalogue") and "Поиск по всем книгам" or "Поиск по библиотеке",
-        input = self.query or "",
-        input_hint = "Название или автор",
-        buttons = { {
-            { text = "Отмена", id = "close", callback = function() UIManager:close(dialog) end },
-            {
-                text = "Найти",
-                id = "find",
-                is_enter_default = true,
-                callback = function()
-                    local query = dialog:getInputText()
-                    UIManager:close(dialog)
-                    UIManager:nextTick(function() self:search(query) end)
-                end,
-            },
-        } },
+    self.search_box = SearchBox:new{
+        text = self.query or "",
+        hint = (self.view == "home" or self.view == "catalogue") and "Поиск по всем книгам" or "Поиск по библиотеке",
+        top = Kit.px(HEADER_H) + Kit.px(1),
+        side = Kit.px(16),
+        height = Kit.px(44),
+        strip_h = Kit.px(SEARCH_H),
+        on_find = function(text)
+            if not self.query and not text:find("%S") then return false end
+            UIManager:nextTick(function() self:search(text) end)
+        end,
+        on_close = function() self.search_box = nil end,
     }
-    self.search_dialog = dialog
-    UIManager:show(dialog)
-    dialog:onShowKeyboard()
+    self.search_box:open()
+end
+
+function Library:onCloseWidget()
+    if self.search_box then self.search_box:dismiss() end
 end
 
 function Library:refreshScreen()

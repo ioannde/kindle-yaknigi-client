@@ -555,9 +555,9 @@ local function script()
 
     -- Search within a shelf, in any case.
     local function search(query)
-        wait("the search dialog", function() return menu.search_dialog and UIManager:isWidgetShown(menu.search_dialog) end)
-        menu.search_dialog:setInputText(query)
-        menu.search_dialog.button_table:getButtonById("find").callback()
+        wait("the search box", function() return menu.search_box and UIManager:isWidgetShown(menu.search_box) end)
+        menu.search_box:setText(query)
+        tap_widget(menu.search_box.find_button)
         wait("the search results", function() return menu.query == (query ~= "" and query or nil) end)
         UIManager:forceRePaint()
     end
@@ -568,6 +568,10 @@ local function script()
     wait("the keyboard", function() return top().name == "VirtualKeyboard" or top().keyboard_layer end)
     UIManager:forceRePaint()
     shot("03e-library-keyboard")
+    -- The box opens right over the bar.
+    if menu.search_box.dimen.y ~= menu.search_bar.dimen.y - math.floor((menu.search_box.dimen.h - menu.search_bar.dimen.h) / 2) then
+        fail("the search box is not where the bar is")
+    end
     G_reader_settings:saveSetting("virtual_keyboard_enabled", false)
     if G_reader_settings:readSetting("keyboard_layout") ~= "ru" then fail("search does not start in Russian") end
     search("КНИГА НОМЕР 12")
@@ -741,8 +745,11 @@ local function script()
     menu:goHome()
     mock_get("/test/fail_search?n=1")
     tap_widget(menu.search_button)
-    wait("the catalogue's dialog", function() return menu.search_dialog and UIManager:isWidgetShown(menu.search_dialog) end)
-    if menu.search_dialog.title ~= "Поиск по всем книгам" then fail("search from home: " .. menu.search_dialog.title) end
+    wait("the catalogue's box", function() return menu.search_box and UIManager:isWidgetShown(menu.search_box) end)
+    if menu.search_box.hint ~= "Поиск по всем книгам" then fail("search from home: " .. menu.search_box.hint) end
+    -- Nothing typed: the button waits for something to look for.
+    tap_widget(menu.search_box.find_button)
+    if not menu.search_box or menu.view ~= "home" then fail("searched for nothing") end
     search("достоевский")
     if menu.view ~= "catalogue" then fail("search from home is not in the catalogue: " .. menu.view) end
     wait("the search to fail", function() return menu.retry_button end)
@@ -852,20 +859,33 @@ local function script()
     UIManager:forceRePaint()
     if #menu.rows ~= 0 then fail("found what is not there") end
     shot("25-catalogue-not-found")
-    local old_dialog = menu.search_dialog
     tap_widget(menu.clear_button)
-    wait("the dialog to type anew", function() return menu.search_dialog ~= old_dialog end)
-    if menu.query or menu.search_dialog:getInputText() ~= "" then fail("the search was not cleared") end
-    UIManager:close(menu.search_dialog)
+    wait("the box to type anew", function() return menu.search_box end)
+    if menu.query or menu.search_box:getText() ~= "" then fail("the search was not cleared") end
+    -- The Enter key on the keyboard looks for it too.
+    menu.search_box:setText("нет такой книги")
+    menu.search_box.input:addChars("\n")
+    wait("Enter to search", function() return menu.query == "нет такой книги" and not menu.search_box end)
+    wait("nothing found again", function() return menu.catalogue.finished end)
+    -- A tap elsewhere leaves the search as it was.
+    tap_widget(menu.search_bar)
+    wait("the box", function() return menu.search_box end)
+    local kept = menu.query
+    tap_at(math.floor(Screen:getWidth() / 2), math.floor(Screen:getHeight() / 2))
+    if menu.search_box or menu.query ~= kept then fail("a tap elsewhere did not leave the search") end
+    UIManager:forceRePaint()
+    tap_widget(menu.clear_button)
+    wait("the box after the cross", function() return menu.search_box end)
+    menu.search_box:dismiss()
     UIManager:forceRePaint()
     tap_widget(menu.back_button)
     if menu.view ~= "home" then fail("the way back from the catalogue") end
     -- A shelf still searches only itself.
     menu:openShelf("finished")
     tap_widget(menu.search_bar)
-    wait("the shelf's dialog", function() return UIManager:isWidgetShown(menu.search_dialog) end)
-    if menu.search_dialog.title ~= "Поиск по библиотеке" then fail("search on a shelf: " .. menu.search_dialog.title) end
-    UIManager:close(menu.search_dialog)
+    wait("the shelf's box", function() return menu.search_box end)
+    if menu.search_box.hint ~= "Поиск по библиотеке" then fail("search on a shelf: " .. menu.search_box.hint) end
+    menu.search_box:dismiss()
     local f = io.open(OUT .. "/PASS", "w")
     f:write("ok\n")
     f:close()
