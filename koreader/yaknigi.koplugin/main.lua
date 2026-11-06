@@ -563,14 +563,20 @@ function Yaknigi:onPageUpdate()
     end
 end
 
-function Yaknigi:onCloseDocument()
-    self:stopPoll()
-end
-
-function Yaknigi:onSaveSettings()
+function Yaknigi:saveReading()
     if self.shell and self.store and self.ui.document then
         Session.save_reading(self.store.dir, self.shell:progress())
     end
+end
+
+function Yaknigi:onCloseDocument()
+    self:stopPoll()
+    -- KOReader closes the document before its last SaveSettings, so that one is too late.
+    self:saveReading()
+end
+
+function Yaknigi:onSaveSettings()
+    self:saveReading()
 end
 
 function Yaknigi:onSetDimensions()
