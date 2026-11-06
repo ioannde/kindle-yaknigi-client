@@ -663,7 +663,8 @@ local function script()
     if n ~= far_chapter then fail("not waiting in the chapter: " .. tostring(xp)) end
     mock_get("/test/chapter_delay?s=0.1")
     wait("the phone's chapter", function()
-        return reader() and top().name == "ReaderUI" and page_text():find("абзац", 1, true)
+        -- A page of a long paragraph may not show where it starts, so no looking for words.
+        return reader() and reader().document and top().name == "ReaderUI"
             and not reader().yaknigi:stubs()[far_chapter]
     end, 30)
     local doc = reader().document
