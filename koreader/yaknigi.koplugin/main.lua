@@ -181,7 +181,7 @@ function Yaknigi:libraryItems(cards)
         local progress = tonumber(card.progress)
         items[#items + 1] = {
             text = ((store and store:is_whole()) and "✓ " or "") .. card_title(card),
-            mandatory = progress and (math.floor(progress) .. "%") or nil,
+            mandatory = progress and progress > 0 and (math.floor(progress) .. "%") or nil,
             card = card,
         }
     end
@@ -318,10 +318,21 @@ function Yaknigi:readerStore()
     return id and Store.open(BOOKS, id) or nil
 end
 
+-- A position saved on a stub does not exist once the real chapter is in the file, and
+-- KOReader would answer with page 1 of the book. Go to the start of that chapter.
+function Yaknigi:keepChapter()
+    local doc = self.ui.document
+    local saved = self.ui.doc_settings:readSetting("last_xpointer")
+    if not saved or doc:isXPointerInDocument(saved) then return end
+    local fragment = saved:match("^/body/DocFragment%[%d+%]")
+    if fragment then self.ui.rolling:onGotoXPointer(fragment) end
+end
+
 function Yaknigi:onReaderReady()
     local store = self:readerStore()
     if not store or not store.manifest then return end
     self.store = store
+    self:keepChapter()
     local state = workers[store.id] or {}
     workers[store.id] = state
     if store:is_whole() and not next(state.stubs or {}) then return end

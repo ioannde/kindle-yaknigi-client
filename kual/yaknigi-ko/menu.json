@@ -1,0 +1,11 @@
+{
+  "items": [
+    {
+      "name": "Яндекс Книги (новая версия)",
+      "priority": 0,
+      "action": "/bin/sh",
+      "params": "/mnt/us/extensions/yaknigi-ko/run.sh",
+      "exitmenu": true
+    }
+  ]
+}

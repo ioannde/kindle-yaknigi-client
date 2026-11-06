@@ -4,4 +4,6 @@ return {
     ["quickstart_shown_version"] = 999999999999,
     ["start_with"] = "filemanager",
     ["auto_restore_files"] = false,
+    -- Would extract book info in the background from each skeleton in the book's folder.
+    ["plugins_disabled"] = { ["coverbrowser"] = true },
 }
