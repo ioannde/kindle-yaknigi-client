@@ -23,6 +23,7 @@ local VerticalGroup = require("ui/widget/verticalgroup")
 local Screen = Device.screen
 
 local Kit = require("yaknigi/kit")
+local Power = require("yaknigi/power")
 local Prefs = require("yaknigi/prefs")
 local Status = require("yaknigi/status")
 local Tabs = require("yaknigi/tabs")
@@ -112,13 +113,6 @@ function Settings:entries()
         list[#list + 1] = { key = "sign_out", title = "Выйти из аккаунта", action = function()
             self:close()
             UIManager:nextTick(self.on_sign_out)
-        end }
-    end
-    if self.on_close_app then
-        heading("Приложение")
-        list[#list + 1] = { key = "close_app", title = "Закрыть приложение", action = function()
-            self:close()
-            UIManager:nextTick(self.on_close_app)
         end }
     end
     return list
@@ -251,6 +245,13 @@ local function paginate(rows, height)
     return pages
 end
 
+function Settings:showPower()
+    self.power_dialog = Power.show(function()
+        self:close()
+        UIManager:nextTick(self.on_close_app)
+    end, self.all_rows)
+end
+
 function Settings:build()
     local W = self.dimen.w
     -- As a tab it stands in line with the library's header.
@@ -285,6 +286,13 @@ function Settings:build()
                 Kit.text(title, 20, { bold = true, max_width = W - 2 * Kit.px(64) }) },
             self.back,
         }
+    end
+    self.power = nil
+    if self.on_close_app and not choice then
+        self.power = Power.button(bar_h, function() self:showPower() end)
+        self.power.overlap_align = "right"
+        header_row = OverlapGroup:new{ dimen = Geom:new{ w = W, h = bar_h }, allow_mirroring = false,
+            header_row, self.power }
     end
     local header = VerticalGroup:new{ align = "left",
         Status:new{ width = W },

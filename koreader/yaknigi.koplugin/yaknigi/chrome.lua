@@ -225,7 +225,12 @@ function Chrome:showMore()
             item(ui.bookmark:isPageBookmarked() and "Убрать закладку" or "Поставить закладку",
                 function() ui.bookmark:onToggleBookmark() end),
             item("Перейти на страницу", function() ui.gotopage:onShowGotoDialog() end),
-            item("Настройки", function() UIManager:show(Settings:new{ ui = ui }) end),
+            item("Настройки", function()
+                UIManager:show(Settings:new{ ui = ui, on_close_app = function()
+                    ui:onClose()
+                    UIManager:quit()
+                end })
+            end),
             item("Настройки KOReader", function() ui.menu:onShowMenu() end),
         },
     }

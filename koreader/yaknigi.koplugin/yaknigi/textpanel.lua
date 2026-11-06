@@ -189,7 +189,7 @@ function TextPanel:build()
             on_drag = function(r) set_light(math.floor(r * powerd.fl_max + 0.5)) end,
             on_commit = function(r) set_light(math.floor(r * powerd.fl_max + 0.5)); self:rebuild() end,
         }
-        rows[#rows + 1] = slider_row(self.light, "sun", Kit.px(22), "sun", Kit.px(34), box)
+        rows[#rows + 1] = slider_row(self.light, "sun", Kit.px(24), "sun", Kit.px(36), box)
         if Device:hasNaturalLight() then
             local set_warmth = only_changes(function(v) powerd:setWarmth(v) end)
             self.warmth = Kit.Slider:new{
@@ -199,7 +199,7 @@ function TextPanel:build()
                 on_drag = function(r) set_warmth(math.floor(r * 100 + 0.5)) end,
                 on_commit = function(r) set_warmth(math.floor(r * 100 + 0.5)); self:rebuild() end,
             }
-            rows[#rows + 1] = slider_row(self.warmth, "cold", Kit.px(26), "warm", Kit.px(28), box)
+            rows[#rows + 1] = slider_row(self.warmth, "cold", Kit.px(30), "warm", Kit.px(30), box)
         end
         rows[#rows + 1] = Kit.gap(Kit.px(12))
     end

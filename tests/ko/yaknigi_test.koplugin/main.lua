@@ -672,11 +672,32 @@ local function test_reading_screen()
     shot("19-more-menu")
     local Settings = require("yaknigi/settings")
     UIManager:close(top())
-    UIManager:show(Settings:new{ ui = reader(), all_rows = true })
+    local app_closed = false
+    UIManager:show(Settings:new{ ui = reader(), all_rows = true, on_close_app = function() app_closed = true end })
     UIManager:forceRePaint()
     local settings = top()
     if settings.name ~= "YaknigiSettings" then fail("no settings: " .. tostring(settings.name)) end
     shot("20-settings")
+
+    -- The button at the top: out of the app, to sleep, off. Each is asked for, none is done here.
+    local Power = require("yaknigi/power")
+    local function power_choice(id)
+        tap_widget(settings.power)
+        UIManager:forceRePaint()
+        return settings.power_dialog.buttontable:getButtonById(id)
+    end
+    local suspend, power_off, slept, off = UIManager.suspend, Power.off, false, false
+    UIManager.suspend = function() slept = true end
+    Power.off = function() off = true end
+    local choice = power_choice("sleep")
+    shot("20a-settings-power")
+    tap_widget(choice)
+    wait("the sleep asked for", function() return slept end)
+    tap_widget(power_choice("off"))
+    wait("the power off asked for", function() return off end)
+    UIManager.suspend, Power.off = suspend, power_off
+    if top() ~= settings then fail("the settings are not back after the power menu") end
+    if app_closed then fail("the app closed by itself") end
 
     -- The settings say nothing of the progress any more: that is changed on the page.
     if settings.rows.progress then fail("the progress is still in the settings") end
@@ -1331,7 +1352,9 @@ local function script()
     f:close()
     say("PASS")
     -- The app ends where it says so, and the run would not end if it did not.
-    tap_widget(settings.rows.close_app)
+    tap_widget(settings.power)
+    UIManager:forceRePaint()
+    tap_widget(settings.power_dialog.buttontable:getButtonById("exit"))
 end
 
 function Driver:init()
