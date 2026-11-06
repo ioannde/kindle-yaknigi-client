@@ -361,9 +361,14 @@ local function test_reading_screen()
     tap_at(W - 40, math.floor(H * 0.3))
     wait("a page turn on the right", function() return doc:getCurrentPage() == page + 1 end)
     if top().name ~= "ReaderUI" then fail("a page turn opened " .. tostring(top().name)) end
-    tap_at(40, H - 40) -- bottom left, KOReader's settings band: turns back
+    tap_at(40, math.floor(H * 0.92)) -- bottom left, KOReader's settings band: turns back
     wait("a page back from the bottom band", function() return doc:getCurrentPage() == page end)
     if top().name ~= "ReaderUI" then fail("bottom band opened " .. tostring(top().name)) end
+    -- The progress stands at both sides of the last line, and a tap on it does not turn the page.
+    tap_at(40, H - 20)
+    UIManager:forceRePaint()
+    if doc:getCurrentPage() ~= page then fail("a tap on the progress turned the page") end
+    if top().name ~= "ReaderUI" then fail("a tap on the progress opened " .. tostring(top().name)) end
 
     -- The top of the screen brings up the panels, whichever column.
     for _, x in ipairs { 40, math.floor(W / 2), W - 40 } do
