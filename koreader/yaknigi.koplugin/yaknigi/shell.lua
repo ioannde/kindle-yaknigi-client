@@ -69,6 +69,8 @@ function Shell:install()
     dogear.dogear_max_size = math.ceil(Screen:getWidth() * 0.05)
     dogear:setupDogear(math.min(dogear.dogear_max_size, Kit.px(Prefs.PAGE_TOP_MARGIN)))
     ui.view:registerViewModule("yaknigi_clock", Clock:new{})
+    -- KOReader's note that the page numbers are being worked out says nothing to a reader.
+    ui.view.flipping.getRollingRenderingStateIconWidget = function() return nil end
     ui.view.footer:onUpdateFooter(true)
     self:startClock()
 end
