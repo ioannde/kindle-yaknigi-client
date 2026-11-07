@@ -2062,6 +2062,8 @@ local function test_updates(plugin)
     os.execute("rm -rf '" .. update_dir .. "'")
 
     -- The terms, in the settings.
+    wait("the settings on top", function() return top() == settings end)
+    UIManager:forceRePaint()
     tap_widget(settings.rows.terms)
     local terms = top()
     if terms.name ~= "YaknigiTerms" then fail("the terms do not open from the settings") end
