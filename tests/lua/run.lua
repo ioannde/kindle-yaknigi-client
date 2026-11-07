@@ -542,7 +542,25 @@ eq(rest.authors, "А, Б", "authors as text")
 eq(rest.mandatory, "в библиотеке", "in the library")
 eq(rest.card.book.cover.large, "l", "the cover")
 eq(Catalogue.rest_book({ uuid = "b2", source_type = "serial", title = "С", episodes_count = 2 }).kind, "serial", "a serial in a list")
-eq(Catalogue.part({ resource_type = "audiobook", resource = { uuid = "a" } }), nil, "an audiobook in a series")
+eq(Catalogue.part({ resource_type = "audiobook", position = 1, resource = { uuid = "a" } }, { [1] = true }), nil, "the audio of a book in a series")
+eq(Catalogue.part({ resource_type = "audiobook", position = 2, resource = { uuid = "a" } }, { [1] = true }).mandatory, "только аудио", "a part with only audio")
+eq(Catalogue.rest_book({ uuid = "b3", can_be_read = false }).unavailable ~= nil, true, "a book that cannot be read")
+local closed = Catalogue.from_page("series", { parts = {
+    { resource_type = "book", position = 1, resource = { uuid = "b4", title = "Т", can_be_read = false } },
+    { resource_type = "audiobook", position = 1, resource = { uuid = "a4", title = "А" } },
+    { resource_type = "audiobook", position = 2, resource = { uuid = "a5", title = "Б" } },
+} })
+eq(#closed, 2, "the audio of a closed book is still its audio")
+eq(closed[1].mandatory, "недоступна", "a book that cannot be read says so")
+eq(closed[2].unavailable ~= nil, true, "and audio alone is not opened")
+local shelves = Catalogue.from_page("bookshelves", { bookshelves = {
+    { uuid = "s1", title = "Полка", books_count = 21, creator = { name = "Кто" }, cover = { small = "c" } },
+    { title = "без uuid" },
+} })
+eq(#shelves, 1, "a shelf without an id is left out")
+eq(shelves[1].kind, "bookshelf", "a shelf leads to a list")
+eq(shelves[1].kind_text, "21 книга", "how long it is")
+eq(shelves[1].authors, "Кто", "whose it is")
 eq(Catalogue.part({ resource_type = "book", position_label = "2", resource = { uuid = "b" } }).kind_text, "Книга 2", "a part")
 local listed = Catalogue.episode({ uuid = "e1", title = "Э", parent_uuid = "x1", position = 4, in_library = true })
 eq(listed.kind, "episode", "an episode")

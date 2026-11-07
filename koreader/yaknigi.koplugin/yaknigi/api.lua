@@ -265,15 +265,20 @@ function Api:series_has_books(uuid)
     return false
 end
 
---- A page of a list: kind is "series", "author" or "serial", and the cursor the page's number
--- as text. Returns { books, parts, episodes or series as Yandex gives them, cursor = the next
--- page, empty after the last }.
+--- A page of a list: kind is "series", "author", "serial", "bookshelf" or "bookshelves" (which
+-- has no uuid), and the cursor the page's number as text. Returns { books, parts, episodes,
+-- bookshelves or series as Yandex gives them, cursor = the next page, empty after the last }.
 function Api:collection(kind, uuid, cursor)
     local number = tonumber(cursor) or 1
     local paging = "page=" .. number .. "&per_page=" .. LIST_PAGE
-    local id = encode(uuid)
+    local id = encode(uuid or "")
     local url, field
-    if kind == "series" then
+    if kind == "bookshelves" then
+        -- As in the app: one's own shelves, then those one follows.
+        url, field = "/profile/bookshelves/following?" .. paging, "bookshelves"
+    elseif kind == "bookshelf" then
+        url, field = "/bookshelves/" .. id .. "/books?" .. paging, "books"
+    elseif kind == "series" then
         url, field = "/series/" .. id .. "/parts?" .. paging, "parts"
     elseif kind == "author" then
         url, field = "/authors/" .. id .. "/books?role=author&" .. paging, "books"
@@ -284,6 +289,17 @@ function Api:collection(kind, uuid, cursor)
     if not data then return nil, failure, detail end
     local got = type(data[field]) == "table" and drop_nulls(data[field]) or {}
     local answer = { [field] = got, cursor = #got >= LIST_PAGE and tostring(number + 1) or "" }
+    if kind == "bookshelves" and number == 1 then
+        local own, why, more = self:get_json(API_BASE .. "/profile/bookshelves?page=1&per_page=" .. LIST_PAGE)
+        if not own then return nil, why, more end
+        local shelves = type(own.bookshelves) == "table" and drop_nulls(own.bookshelves) or {}
+        local seen = {}
+        for _, shelf in ipairs(shelves) do seen[shelf.uuid] = true end
+        for _, shelf in ipairs(got) do
+            if not seen[shelf.uuid] then shelves[#shelves + 1] = shelf end
+        end
+        answer.bookshelves = shelves
+    end
     -- An author's series stand before the books. Having none is not a reason to show nothing.
     if kind == "author" and number == 1 then
         local series = self:get_json(API_BASE .. "/authors/" .. id .. "/series?role=author")

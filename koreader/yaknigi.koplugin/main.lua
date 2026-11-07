@@ -483,6 +483,7 @@ function Yaknigi:showLibrary(quiet)
         on_refresh = function() self:refreshLibrary(true) end,
         on_settings = function() self:showSettings() end,
         on_book_menu = function(item) self:showBookMenu(item) end,
+        on_bookshelves = function() self:openList("bookshelves", nil, "Полки") end,
         on_add = function(item) self:addFound(item) end,
         on_save = function(item) self:saveFound(item) end,
         book_status = function(item)
@@ -817,7 +818,8 @@ end
 --- A tap on what is in a list. A serial shows its episodes, except where it stands for what is
 -- being read: there it goes on with the episode.
 function Yaknigi:openItem(item, from_dock)
-    if item.kind == "author" or item.kind == "series" then
+    if item.unavailable then return message(item.unavailable, 3) end
+    if item.kind == "author" or item.kind == "series" or item.kind == "bookshelf" then
         return self:openList(item.kind, item.uuid, item.title)
     end
     if item.kind == "serial" then

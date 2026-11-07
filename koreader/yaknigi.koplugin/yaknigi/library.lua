@@ -61,6 +61,7 @@ local Library = InputContainer:extend{
     on_feed = nil, -- function(state): asks for the next of the feed
     load_feed = nil, -- function(): the feed as it was saved, for showing at once
     on_covers = nil, -- function(cards): gets the covers that are missing
+    on_bookshelves = nil, -- function(): Yandex's shelves, on a screen of their own
     on_book_menu = nil, -- function(item): what can be done with a book
     on_add = nil, -- function(item): puts a book found into the library
     on_save = nil, -- function(item): saves a book on the device
@@ -169,9 +170,11 @@ function Library:rowButton(item, height)
     local status = self.book_status and self.book_status(item)
     local name, file, action
     local function menu() self.on_book_menu(item) end
-    if item.adding or status == "saving" then
+    if item.unavailable then
+        file, action = "lock", function() self:onMenuSelect(item) end
+    elseif item.adding or status == "saving" then
         file, action = "wait", function() end
-    elseif item.kind == "author" or item.kind == "series"
+    elseif item.kind == "author" or item.kind == "series" or item.kind == "bookshelf"
         or (item.kind == "serial" and item.found and (item.in_library or self:inLibrary(item))) then
         name, action = "chevron.right", function() self:onMenuSelect(item) end
     elseif not item.found then
@@ -365,6 +368,14 @@ end
 local HERE = debug.getinfo(1, "S").source:match("^@(.*)/[^/]*$") or "."
 local SHELF_ICONS = { all = "book.opened", finished = "check", device = HERE .. "/icons/cloud.down.svg" }
 
+--- The shelves of Yandex's, made there by the reader or followed: a list like any other.
+function Library:bookshelvesRow(width)
+    local row = heading_row("Полки", nil, width, Kit.px(SHELF_ROW_H),
+        function() self.on_bookshelves() end, 18, HERE .. "/icons/shelves.svg")
+    self.shelf_rows.bookshelves = row
+    return row
+end
+
 function Library:shelfRow(id, width)
     local row = heading_row(Shelves.name(id), #Shelves.list(self.item_table, id), width, Kit.px(SHELF_ROW_H),
         function() self:openShelf(id) end, 18, SHELF_ICONS[id])
@@ -380,7 +391,7 @@ function Library:homeBody(width, area)
     table.remove(reading, 1) -- that one is in the dock
     local want = Shelves.list(self.item_table, "want")
     local heading_h, label_h = Kit.px(STRIP_HEADING_H), Kit.px(STRIP_LABEL_H)
-    local free = area - 3 * Kit.px(SHELF_ROW_H) - Kit.px(8)
+    local free = area - 4 * Kit.px(SHELF_ROW_H) - Kit.px(8)
     local show_reading, show_want = #reading > 0, #want > 0
     local cover_h = 0
     while show_reading or show_want do
@@ -396,6 +407,7 @@ function Library:homeBody(width, area)
     for _, id in ipairs { "all", "finished", "device" } do
         body[#body + 1] = self:shelfRow(id, width)
     end
+    body[#body + 1] = self:bookshelvesRow(width)
     return body
 end
 
@@ -540,7 +552,9 @@ function Library:catalogueBody(width, area, state)
             body[1] = CenterContainer:new{ dimen = box, self.retry_button }
         else
             local text = "Ничего не нашлось"
-            if state.kind then
+            if state.kind == "bookshelves" then
+                text = state.finished and "Полок пока нет" or "Загружаю…"
+            elseif state.kind then
                 text = state.finished and "Здесь нет книг, которые можно читать" or "Загружаю…"
             elseif not state.query then text = "Введите название или автора"
             elseif not state.finished then text = #books == 0 and "Ищу…" or "Загружаю…" end

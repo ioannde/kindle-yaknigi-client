@@ -18,7 +18,8 @@ function Catalogue.new(query)
     return { query = query, items = {}, seen = {}, cursor = "", finished = query == nil }
 end
 
---- The list of a series, an author or a serial: kind is "series", "author" or "serial".
+--- The list of a series, an author, a serial, a shelf or of the shelves: kind is "series", "author",
+-- "serial", "bookshelf" or "bookshelves".
 function Catalogue.collection(kind, uuid, title)
     return { kind = kind, uuid = uuid, title = title, items = {}, seen = {}, cursor = "", finished = false }
 end
@@ -160,6 +161,16 @@ local function rest_authors(book)
     return type(book.authors) == "string" and book.authors or names_of(book.authors)
 end
 
+--- What stands in a list but cannot be read: it is seen, with a word why, and goes no further.
+local function make_unavailable(item, why, word)
+    item.unavailable = why
+    item.mandatory = word or "недоступна"
+    return item
+end
+
+local UNAVAILABLE = "Эта книга сейчас недоступна."
+local AUDIO_ONLY = "Эта книга есть только в аудио: здесь её не прочитать."
+
 --- A book as a list gives it.
 function Catalogue.rest_book(book)
     if type(book) ~= "table" or type(book.uuid) ~= "string" then return nil end
@@ -169,10 +180,11 @@ function Catalogue.rest_book(book)
             serial_text(book.episodes_count))
         item.annotation = type(book.annotation) == "string" and book.annotation or nil
         item.card.book.authors_objects = book.authors_objects
+        if book.can_be_read == false then make_unavailable(item, UNAVAILABLE) end
         return item
     end
     local in_library = book.in_library == true
-    return {
+    local item = {
         found = true,
         text = title,
         title = title,
@@ -188,16 +200,36 @@ function Catalogue.rest_book(book)
             series_list = book.series_list,
         } },
     }
+    if book.can_be_read == false then make_unavailable(item, UNAVAILABLE) end
+    return item
 end
 
---- A part of a series. Audiobooks and comics are parts too, and cannot be read here.
-function Catalogue.part(part)
-    if type(part) ~= "table" or part.resource_type ~= "book" then return nil end
+--- A part of a series. A book's audio version is a part with the same number and says nothing
+-- new, so it is left out: read_at holds the numbers that have something to read. A number with
+-- only something else shows the reader what is missing from the series.
+function Catalogue.part(part, read_at)
+    if type(part) ~= "table" then return nil end
+    local is_book = part.resource_type == "book"
+    if not is_book and read_at and read_at[part.position] then return nil end
     local item = Catalogue.rest_book(part.resource)
     if not item then return nil end
+    if not is_book then
+        if part.resource_type == "audiobook" then make_unavailable(item, AUDIO_ONLY, "только аудио")
+        else make_unavailable(item, UNAVAILABLE) end
+    end
     local label = part.position_label or part.position
     if label and not item.kind then item.kind_text = "Книга " .. tostring(label) end
     return item
+end
+
+--- A shelf of Yandex's: its own screen of books.
+function Catalogue.bookshelf(shelf)
+    if type(shelf) ~= "table" or type(shelf.uuid) ~= "string" then return nil end
+    local count = tonumber(shelf.books_count)
+    local creator = type(shelf.creator) == "table" and shelf.creator.name
+    return list_item("bookshelf", shelf.uuid, type(shelf.title) == "string" and shelf.title or "?",
+        type(creator) == "string" and creator or nil, rest_cover(shelf),
+        count and Catalogue.count(count, "книга", "книги", "книг") or nil)
 end
 
 --- An episode of a serial: read as a book, but added together with the whole serial.
@@ -233,7 +265,14 @@ function Catalogue.from_page(kind, page)
         if Catalogue.has_books(series) then put(Catalogue.rest_series(series)) end
     end
     for _, book in ipairs(page.books or {}) do put(Catalogue.rest_book(book)) end
-    for _, part in ipairs(page.parts or {}) do put(Catalogue.part(part)) end
+    local read_at = {}
+    for _, part in ipairs(page.parts or {}) do
+        if type(part) == "table" and part.resource_type == "book" and part.position then
+            read_at[part.position] = true
+        end
+    end
+    for _, part in ipairs(page.parts or {}) do put(Catalogue.part(part, read_at)) end
+    for _, shelf in ipairs(page.bookshelves or {}) do put(Catalogue.bookshelf(shelf)) end
     for _, episode in ipairs(page.episodes or {}) do put(Catalogue.episode(episode)) end
     return items
 end

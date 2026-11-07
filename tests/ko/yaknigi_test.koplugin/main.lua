@@ -1004,9 +1004,23 @@ local function test_lists()
     shot("71-author")
     tap_widget(menu.row_buttons[of_kind(menu, "series")])
     finished(menu, "Подборка")
-    if #menu.rows ~= 2 or menu.rows[2].kind_text ~= "Книга 3" then fail("the series: audiobooks stay out, the numbers stay") end
+    titles = {}
+    for _, row in ipairs(menu.rows) do titles[#titles + 1] = row.title end
+    if table.concat(titles, "|") ~= "Найденная книга 20|Послушать|Найденная книга 21|Найденная книга 23" then
+        fail("the series: a book's audio stays out, what cannot be read is there: " .. table.concat(titles, "|"))
+    end
+    if menu.rows[3].kind_text ~= "Книга 3" or menu.rows[3].unavailable then fail("a book of the series") end
+    if menu.rows[2].mandatory ~= "только аудио" or menu.rows[2].kind_text ~= "Книга 2" then fail("the part with only audio") end
+    if menu.rows[4].mandatory ~= "недоступна" then fail("the book that cannot be read") end
     UIManager:forceRePaint()
     shot("72-series")
+    local closed_view = menu.view
+    tap_widget(menu.row_buttons[menu.rows[4]])
+    wait("the word that it is closed", function() return top() ~= menu end)
+    UIManager:forceRePaint()
+    shot("72-series-closed")
+    wait("the word to go", function() return top() == menu end)
+    if menu.view ~= closed_view then fail("an unavailable book opened something") end
     menu:goBack()
     finished(menu, "Автор подборки")
 
@@ -1099,6 +1113,30 @@ local function test_lists()
     wait("the serial to go", function() return #menu.item_table == cards_before end)
     local removed = table.concat(mock_get("/test/removed").removed, ",")
     if not removed:find("c-serial-2,c-ep2-1,c-ep2-2", 1, true) then fail("what Yandex was told to remove: " .. removed) end
+
+    -- The shelves of Yandex's: one's own and those followed, each once.
+    menu:goHome()
+    wait("the home screen", function() return menu.shelf_rows.bookshelves end)
+    UIManager:forceRePaint()
+    shot("76-home-shelves")
+    tap_widget(menu.shelf_rows.bookshelves)
+    finished(menu, "Полки")
+    titles = {}
+    for _, shelf in ipairs(menu.rows) do titles[#titles + 1] = shelf.title end
+    if table.concat(titles, "|") ~= "Моя полка|Чужая полка" then fail("the shelves: " .. table.concat(titles, "|")) end
+    if menu.rows[2].kind_text ~= "21 книга" then fail("the shelf's line: " .. tostring(menu.rows[2].kind_text)) end
+    UIManager:forceRePaint()
+    shot("77-shelves")
+    tap_widget(menu.row_buttons[menu.rows[1]])
+    finished(menu, "Моя полка")
+    if #menu.rows ~= 2 then fail("the books of the shelf") end
+    UIManager:forceRePaint()
+    shot("78-shelf")
+    menu:goBack()
+    finished(menu, "Полки")
+    menu:goBack()
+    if menu.view ~= "home" then fail("the way back from the shelves: " .. menu.view) end
+
     tap_widget(menu.tab_cells.settings)
     wait("the settings after the lists", is_named("YaknigiSettings"))
     UIManager:forceRePaint()

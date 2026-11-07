@@ -311,6 +311,11 @@ class Handler(BaseHTTPRequestHandler):
             book["series_list"] = [{"position": 1, "position_label": "1", "uuid": "series-1", "title": "Подборка"}]
         return book
 
+    def shelf(self, uuid, title, count):
+        return {"uuid": uuid, "title": title, "books_count": count, "editable": uuid == "shelf-1",
+                "creator": {"name": "Читатель"},
+                "cover": {"small": self.cover(150), "large": self.cover(150)}}
+
     def rest_series(self, uuid):
         title, kinds, parts = {"series-1": ("Подборка", ["books"], 2),
                                "series-audio": ("Только послушать", ["audio"], 4)}[uuid]
@@ -676,11 +681,23 @@ class Handler(BaseHTTPRequestHandler):
                                   "updates": self.server.card_updates})
         elif re.fullmatch(r".*/series/[^/]+", url.path):
             self.reply_json(200, {"series": self.rest_series(url.path.split("/")[-1])})
+        elif url.path.endswith("/profile/bookshelves"):
+            self.reply_json(200, {"bookshelves": [self.shelf("shelf-1", "Моя полка", 2)]})
+        elif url.path.endswith("/profile/bookshelves/following"):
+            shelves = [self.shelf("shelf-1", "Моя полка", 2), self.shelf("shelf-2", "Чужая полка", 21)]
+            self.reply_json(200, {"bookshelves": shelves if query.get("page") == ["1"] else []})
+        elif url.path.endswith("/bookshelves/shelf-1/books"):
+            books = [self.rest_book(20), self.rest_book(22)]
+            self.reply_json(200, {"books": books if query.get("page") == ["1"] else []})
         elif url.path.endswith("/series/series-1/parts"):
             first = query.get("page") == ["1"]
-            parts = [{"position": 1, "position_label": "1", "resource_type": "book", "resource": self.rest_book(20)},
+            closed = self.rest_book(23)
+            closed["can_be_read"] = False
+            parts = [{"position": 1, "position_label": "1", "resource_type": "audiobook", "resource": {"uuid": "audio0", "title": "Первая вслух"}},
+                     {"position": 1, "position_label": "1", "resource_type": "book", "resource": self.rest_book(20)},
                      {"position": 2, "position_label": "2", "resource_type": "audiobook", "resource": {"uuid": "audio1", "title": "Послушать"}},
-                     {"position": 3, "position_label": "3", "resource_type": "book", "resource": self.rest_book(21)}]
+                     {"position": 3, "position_label": "3", "resource_type": "book", "resource": self.rest_book(21)},
+                     {"position": 4, "position_label": "4", "resource_type": "book", "resource": closed}]
             self.reply_json(200, {"parts": parts if first else []})
         elif url.path.endswith("/authors/author-1/books"):
             if query.get("role") != ["author"]:
