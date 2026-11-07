@@ -354,6 +354,112 @@ local function test_position_upload()
     say("position upload works")
 end
 
+--- The row of the settings, on the page that shows it.
+local function settings_row(settings, key)
+    settings.page = 1
+    settings:changed()
+    for _ = 1, settings.pages do
+        UIManager:forceRePaint()
+        local row = settings.rows[key]
+        if row and row.painted then return row end
+        settings:turn(1)
+    end
+    fail("no row " .. key .. " in the settings")
+end
+
+--- Alignment, hyphenation and the tap zones, in a book that is open.
+local function test_reading_settings()
+    local W, H = Screen:getWidth(), Screen:getHeight()
+    local Settings = require("yaknigi/settings")
+    local DocSettings = require("docsettings")
+    local doc = reader().document
+    local function open_settings()
+        UIManager:show(Settings:new{ ui = reader(), all_rows = true })
+        UIManager:forceRePaint()
+        return top()
+    end
+    local settings = open_settings()
+    if settings.name ~= "YaknigiSettings" then fail("no settings over the book") end
+
+    local tweak = reader().styletweak
+    local css_before = tweak.css_text or ""
+    tap_widget(settings_row(settings, "text_align"))
+    if #settings.options ~= 3 then fail("the alignments: " .. #settings.options) end
+    shot("15a-settings-align")
+    tap_widget(settings.options[3])
+    if not (tweak.css_text or ""):find("text-align: left", 1, true) then fail("the book is not aligned left") end
+    if not G_reader_settings:readSetting("style_tweaks").text_align_most_left then fail("left not saved") end
+    tap_widget(settings.back)
+    shot("15b-aligned-left")
+    settings = open_settings()
+    tap_widget(settings_row(settings, "text_align"))
+    tap_widget(settings.options[2])
+    if not (tweak.css_text or ""):find("text-align: justify", 1, true) then fail("the book is not justified") end
+    if (tweak.css_text or ""):find("text-align: left", 1, true) then fail("left is still there") end
+    tap_widget(settings_row(settings, "text_align"))
+    tap_widget(settings.options[1])
+    if (tweak.css_text or "") ~= css_before then fail("as in the book is not what it was") end
+
+    -- A book's own settings do not stand against the ones for all books.
+    tap_widget(settings_row(settings, "hyphenation"))
+    if reader().typography.hyphenation ~= false then fail("hyphenation is still on") end
+    if G_reader_settings:readSetting("hyphenation") ~= false then fail("hyphenation not saved") end
+    reader():saveSettings()
+    local own = DocSettings:open(doc.file)
+    own:saveSetting("hyphenation", true)
+    own:saveSetting("style_tweaks", { text_align_all_left = true })
+    own:flush()
+    reader().yaknigi:applyTextDefaults(doc.file)
+    own = DocSettings:open(doc.file)
+    if own:readSetting("hyphenation") ~= false then fail("the next opening would have hyphenation") end
+    if own:readSetting("style_tweaks") then fail("the next opening would have the book's own alignment") end
+    tap_widget(settings_row(settings, "hyphenation"))
+    if reader().typography.hyphenation ~= true then fail("hyphenation did not come back") end
+
+    -- Pages turned from top and bottom.
+    tap_widget(settings_row(settings, "tap_mode"))
+    shot("15c-settings-tap-zones")
+    tap_widget(settings.options[2])
+    if G_reader_settings:readSetting("page_turns_tap_zones") ~= "top_bottom" then fail("top and bottom not saved") end
+    tap_widget(settings.back)
+    local page = doc:getCurrentPage()
+    local function turns(x, y, to, what)
+        tap_at(math.floor(x), math.floor(y))
+        wait(what, function() return doc:getCurrentPage() == to end)
+        if top().name ~= "ReaderUI" then fail(what .. " opened " .. tostring(top().name)) end
+    end
+    turns(W / 2, H * 0.7, page + 1, "the middle of the bottom half turning on")
+    turns(W / 2, H * 0.3, page, "the middle of the top half turning back")
+    turns(W * 0.3, H * 0.7, page + 1, "what was the rest of the back zone turning on")
+    turns(40, H * 0.3, page, "the left of the top half turning back")
+    turns(W - 40, H * 0.7, page + 1, "the right of the bottom half turning on")
+    turns(W - 40, H * 0.3, page, "the right of the top half turning back")
+    tap_at(math.floor(W / 2), math.floor(H * 0.1))
+    wait("the panels from the top", is_named("YaknigiChrome"))
+    UIManager:close(top())
+    UIManager:forceRePaint()
+
+    settings = open_settings()
+    tap_widget(settings_row(settings, "tap_mode"))
+    tap_widget(settings.options[1])
+    if G_reader_settings:readSetting("page_turns_tap_zones") ~= "default" then fail("left and right not saved") end
+    if G_reader_settings:readSetting("page_turns_tap_zone_forward_size_ratio") then fail("a ratio was left behind") end
+
+    -- KOReader's own settings now live here, and only here.
+    tap_widget(settings_row(settings, "koreader"))
+    wait("KOReader's menu", function() return reader().menu.menu_container end)
+    UIManager:forceRePaint()
+    reader().menu:onCloseReaderMenu()
+    wait("the book again", is_named("ReaderUI"))
+    UIManager:forceRePaint()
+    turns(W - 40, H * 0.3, page + 1, "the right turning on again")
+    turns(40, H * 0.3, page, "the left turning back again")
+    tap_at(math.floor(W / 2), math.floor(H / 2))
+    wait("the panels from the middle", is_named("YaknigiChrome"))
+    UIManager:close(top())
+    UIManager:forceRePaint()
+end
+
 local function test_reading_screen()
     local W, H = Screen:getWidth(), Screen:getHeight()
     local doc = reader().document
@@ -372,6 +478,8 @@ local function test_reading_screen()
     UIManager:forceRePaint()
     if doc:getCurrentPage() ~= page then fail("a tap on the progress turned the page") end
     if top().name ~= "ReaderUI" then fail("a tap on the progress opened " .. tostring(top().name)) end
+    test_reading_settings()
+    if doc:getCurrentPage() ~= page then fail("the reading settings left another page") end
 
     -- The top of the screen brings up the panels, whichever column.
     for _, x in ipairs { 40, math.floor(W / 2), W - 40 } do
@@ -820,7 +928,7 @@ local function test_reading_screen()
     tap_widget(settings.options[3])
     if UIManager:getRefreshRate() ~= 6 then fail("refresh rate back: " .. tostring(UIManager:getRefreshRate())) end
 
-    tap_widget(settings.rows.sleep_time)
+    tap_widget(settings_row(settings, "sleep_time"))
     tap_widget(settings.options[4])
     if reader().autosuspend and reader().autosuspend.auto_suspend_timeout_seconds ~= 30 * 60 then
         fail("sleep time did not reach the plugin")
@@ -1040,6 +1148,7 @@ local function test_lists()
     wait("the word that it is closed", function() return top() ~= menu end)
     UIManager:forceRePaint()
     shot("72-series-closed")
+    if top().name == "YaknigiNoAccess" then tap_widget(top().close_button) end
     wait("the word to go", function() return top() == menu end)
     if menu.view ~= closed_view then fail("an unavailable book opened something") end
     menu:goBack()
@@ -1958,6 +2067,102 @@ local function test_books_and_memory(settings)
     end
 end
 
+--- A book marked as read and unmarked; what Yandex refuses is said, not assumed.
+local function test_finished(plugin)
+    local json = require("rapidjson")
+    local Session = require("yaknigi/session")
+    local root = require("datastorage"):getDataDir() .. "/yaknigi"
+    local dir = root .. "/books/book0"
+    local function cached()
+        local f = io.open(root .. "/library.json", "rb")
+        local cards = json.decode(f:read("*a"))
+        f:close()
+        for _, card in ipairs(cards) do
+            if card.uuid == "card0" then return card end
+        end
+        fail("no card0 in the library's list")
+    end
+    local function menu()
+        local card = cached()
+        plugin:showBookMenu({ title = card.book.title, authors = "", card = card })
+        wait("the book's menu", is_named("YaknigiBookMenu"))
+        UIManager:forceRePaint()
+        return top()
+    end
+    local function write_waiting(position)
+        local f = io.open(dir .. "/to_send", "wb")
+        f:write(json.encode(position))
+        f:close()
+    end
+
+    if cached().state ~= "reading" then fail("card0 to begin with: " .. tostring(cached().state)) end
+    local progress = cached().progress
+    write_waiting({ state = "reading", card = "card0", timespent = 1000 })
+    local sheet = menu()
+    shot("70-book-menu-finished")
+    tap_widget(sheet.rows.finished)
+    wait("the book marked", function() return cached().state == "finished" end)
+    if mock_get("/test/marks").card0 ~= "finished" then fail("Yandex was not told of the mark") end
+    if tonumber(cached().progress) ~= tonumber(progress) then fail("the mark changed what was read") end
+    if select(2, Session.read_card(dir)) ~= "finished" then fail("the book's own note of the state") end
+    local f = io.open(dir .. "/to_send", "rb")
+    local waiting = json.decode(f:read("*a"))
+    f:close()
+    if waiting.state ~= nil then fail("a position waiting would undo the mark") end
+    if waiting.timespent ~= 1000 then fail("the position waiting lost its time") end
+    os.remove(dir .. "/to_send")
+
+    -- Yandex answers yes and does nothing.
+    mock_get("/test/ignore_state?on=1")
+    sheet = menu()
+    shot("71-book-menu-unmark")
+    tap_widget(sheet.rows.finished)
+    wait("the refusal of the mark", function() return (top().text or ""):find("не приняли", 1, true) end)
+    shot("72-mark-not-taken")
+    UIManager:close(top())
+    if cached().state ~= "finished" then fail("a mark not taken changed the library") end
+    mock_get("/test/ignore_state?on=0")
+
+    sheet = menu()
+    tap_widget(sheet.rows.finished)
+    wait("the mark off", function() return cached().state == "reading" end)
+    if mock_get("/test/marks").card0 ~= "reading" then fail("Yandex was not told the mark is off") end
+    UIManager:forceRePaint()
+end
+
+--- What is said of a book Yandex will not open, by what the subscription says.
+local function test_no_access(plugin)
+    local Catalogue = require("yaknigi/catalogue")
+    local function denied()
+        plugin:takeFound({ found = true, title = "Книга вне подписки",
+            card = { book = { uuid = "found-denied", title = "Книга вне подписки" } } })
+    end
+    local function screen_says(verdict, name)
+        wait("the refusal: " .. verdict, is_named("YaknigiNoAccess"))
+        if top().verdict ~= verdict then fail("the refusal says " .. tostring(top().verdict) .. ", not " .. verdict) end
+        shot(name)
+        tap_widget(top().close_button)
+        wait("the refusal closed", function() return top().name ~= "YaknigiNoAccess" end)
+    end
+    mock_get("/test/access?mode=none")
+    denied()
+    screen_says("none", "73-no-subscription")
+    mock_get("/test/access?mode=active")
+    denied()
+    screen_says("active", "74-not-in-subscription")
+    mock_get("/test/access?mode=fail")
+    denied()
+    screen_says("unknown", "75-subscription-unknown")
+    mock_get("/test/access?mode=active")
+    -- What the list already says cannot be read goes the same way; audio has its own words.
+    plugin:openItem({ title = "Книга вне подписки", unavailable = Catalogue.UNAVAILABLE })
+    screen_says("active", "76-unavailable-in-list")
+    plugin:openItem({ title = "Аудио", unavailable = "Эта книга есть только в аудио: здесь её не прочитать." })
+    wait("the word about audio", function() return (top().text or ""):find("аудио", 1, true) end)
+    UIManager:close(top())
+    UIManager:forceRePaint()
+end
+
 --- Ending as it does in the real thing short of the restart, which would end the test run.
 local function test_updates(plugin)
     local http = require("socket.http")
@@ -2469,9 +2674,10 @@ local function script()
     wait("the card of a book out of reach", is_named("YaknigiBookCard"))
     local denied_card = top()
     tap_widget(denied_card.read_button)
-    wait("the refusal", function() return (top().text or ""):find("недоступна", 1, true) end)
+    wait("the refusal", is_named("YaknigiNoAccess"))
+    if top().verdict ~= "active" then fail("the refusal with a subscription: " .. tostring(top().verdict)) end
     shot("24-catalogue-denied")
-    UIManager:close(top())
+    tap_widget(top().close_button)
     if added() ~= 1 then fail("a book out of reach was added") end
     UIManager:close(denied_card)
 
@@ -2663,6 +2869,8 @@ local function script()
     test_books_and_memory(settings)
     test_lists()
     test_notes()
+    test_finished(plugin)
+    test_no_access(plugin)
     test_updates(plugin)
     settings = top()
     local f = io.open(OUT .. "/PASS", "w")

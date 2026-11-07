@@ -9,6 +9,8 @@ local Catalogue = require("yaknigi/catalogue")
 local Prefs = require("yaknigi/prefs")
 local NoteSync = require("yaknigi/notesync")
 local Updater = require("yaknigi/updater")
+local Access = require("yaknigi/access")
+local TextStyle = require("yaknigi/textstyle")
 
 local failed, passed = 0, 0
 local function eq(got, want, name)
@@ -969,6 +971,50 @@ do
     eq(select(2, Updater.get(fake, "https://github.com/bad")), "network", "a server error")
     local down = { request = function() return nil, "timeout" end }
     eq(select(2, Updater.get(down, "https://github.com/a")), "network", "no network")
+end
+
+-- what the subscriptions say
+do
+    local now = 1800000000
+    local function levels(...)
+        local dates = {}
+        for i, pair in ipairs { ... } do dates[i] = { level = pair[1], expires_at = pair[2] } end
+        return { expiration_dates = dates }
+    end
+    eq(Access.verdict(nil, now), "unknown", "no answer")
+    eq(Access.verdict({}, now), "unknown", "an answer of another shape")
+    eq(Access.verdict(levels(), now), "none", "no subscriptions")
+    eq(Access.verdict(levels({ "bookmate", now + 60 }), now), "active", "running")
+    eq(Access.verdict(levels({ "plus", now - 60 }), now), "none", "ended")
+    eq(Access.verdict(levels({ "plus", (now + 60) * 1000 }), now), "active", "running, in milliseconds")
+    eq(Access.verdict(levels({ "plus", (now - 60) * 1000 }), now), "none", "ended, in milliseconds")
+    eq(Access.verdict(levels({ "basic_music", now + 60 }), now), "none", "music gives no books")
+    eq(Access.verdict(levels({ "something_new", now + 60 }), now), "unknown", "a level not known")
+    eq(Access.verdict(levels({ "something_new", now - 60 }), now), "none", "a level not known has ended")
+    eq(Access.verdict(levels({ "something_new", now + 60 }, { "simple_bookmate", now + 60 }), now), "active",
+        "a level for books settles it")
+    eq(Access.verdict(levels({ "plus" }), now), "unknown", "no date")
+    eq(Access.verdict({ expiration_dates = {}, active_recurrents = { {} } }, now), "unknown", "something recurs")
+end
+
+-- alignment
+do
+    local base = { footnote = true, text_align_all_left = true, text_align_most_left = true }
+    local left = TextStyle.with_align(base, "left")
+    eq(left.text_align_most_left, true, "left is set")
+    eq(left.text_align_all_left, nil, "another left goes")
+    eq(left.footnote, true, "other tweaks stay")
+    eq(base.text_align_all_left, true, "what was given is not changed")
+    local justify = TextStyle.with_align(left, "justify")
+    eq(justify.text_align_most_justify, true, "justify is set")
+    eq(justify.text_align_most_left, nil, "left goes")
+    eq(next(TextStyle.with_align({ text_align_all_justify = true }, "book")), nil, "as in the book sets nothing")
+    eq(next(TextStyle.with_align(nil, "book")), nil, "no tweaks yet")
+    local clean, changed = TextStyle.without_align({ text_align_all_left = false, footnote = true })
+    eq(changed, true, "a book's own alignment is noticed")
+    eq(clean.text_align_all_left, nil, "and taken out, even when switched off")
+    eq(clean.footnote, true, "the rest stays")
+    eq(select(2, TextStyle.without_align({ footnote = true })), false, "nothing to take out")
 end
 
 print(("%d passed, %d failed"):format(passed, failed))

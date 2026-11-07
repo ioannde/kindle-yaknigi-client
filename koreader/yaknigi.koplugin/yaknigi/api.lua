@@ -46,7 +46,7 @@ function Api:get(url)
     local status, body = self.http:request("GET", url, self:headers())
     if not status then return nil, "network", body end
     if status == 401 then return nil, "auth" end
-    if status == 403 then return nil, "denied" end
+    if status == 402 or status == 403 then return nil, "denied" end
     if status == 404 then return nil, "not_found" end
     if status ~= 200 then return nil, "http", tostring(status) end
     return body
@@ -76,7 +76,7 @@ local function status_error(status, detail)
     if not status then return nil, "network", detail end
     -- A token that is no good gets 401. 403 is about this one thing, and no reason to sign out.
     if status == 401 then return nil, "auth" end
-    if status == 403 then return nil, "denied" end
+    if status == 402 or status == 403 then return nil, "denied" end
     if status == 404 then return nil, "not_found" end
     return nil, "http", tostring(status)
 end
@@ -89,6 +89,16 @@ local SEARCH = "query Search($query: SearchParamsInput!) { search(query: $query)
 local SHOWCASE = "query Showcase($showcaseParamsInput: ShowcaseParamsInput!, $showcaseItemsCursor: String!, $sectionItemsCursor: String = \"\" ) { showcase(params: $showcaseParamsInput) { __typename ...fragmentShowcase ...childrenFragmentShowcase ...parentsFragmentShowcase items(cursor: $showcaseItemsCursor) { page { __typename ...featuredSectionFragment ...notificationFragment ...shelvesSectionFragment ...simpleSectionFragment ...statisticsSectionFragment ...topSectionFragment ...seriesSectionFragment ...ratingSectionFragment } cursor } } }  fragment fragmentShowcase on Showcase { name uuid availableFilters }  fragment childrenFragmentShowcase on Showcase { children { __typename ...fragmentShowcase } }  fragment parentsFragmentShowcase on Showcase { parents { __typename ...fragmentShowcase } }  fragment ageRestrictionFragment on Availability { ageRestriction { name value } }  fragment coverFragment on Cover { url ratio backgroundColorHex }  fragment personFragment on Person { avatar { __typename ...coverFragment } name uuid worksCount roles }  fragment bookFragment on Book { annotation name cover { __typename ...coverFragment } uuid initUuid authors { __typename ...personFragment } editorAnnotation }  fragment audioBookFragment on AudioBook { availability { __typename ...ageRestrictionFragment } book { __typename ...bookFragment } }  fragment comicBookFragment on ComicBook { availability { __typename ...ageRestrictionFragment } book { __typename ...bookFragment } }  fragment textBookFragment on TextBook { availability { __typename ...ageRestrictionFragment } book { __typename ...bookFragment } }  fragment textSerialFragment on TextSerial { availability { __typename ...ageRestrictionFragment } book { __typename ...bookFragment } }  fragment notificationFragment on Notification { consumer notificationPayloadId payload templateId feedbackToken }  fragment featuredSectionFragment on FeaturedSection { items(cursor: $sectionItemsCursor) { cursor page { __typename ...audioBookFragment ...comicBookFragment ...textBookFragment ...textSerialFragment ...notificationFragment } } name uuid }  fragment userFragment on User { avatar { __typename ...coverFragment } name uuid followersCount login }  fragment bookshelfFragment on Bookshelf { cover { __typename ...coverFragment } name uuid user { __typename ...userFragment } posts { total } followersCount description }  fragment shelvesSectionFragment on ShelvesSection { items(cursor: $sectionItemsCursor) { cursor page { __typename ...bookshelfFragment } } name uuid }  fragment seriesFragment on Series { authors { __typename ...personFragment } cover { __typename ...coverFragment } name uuid items { followersCount total } }  fragment simpleSectionFragment on SimpleSection { availableFilters items(cursor: $sectionItemsCursor) { cursor page { __typename ...audioBookFragment ...comicBookFragment ...textBookFragment ...textSerialFragment ...seriesFragment } } name uuid }  fragment statisticsSectionFragment on StatisticsSection { daysReadingInMonth updatedAt name uuid }  fragment topSectionFragment on TopSection { items(cursor: $sectionItemsCursor) { cursor page { __typename ...audioBookFragment ...comicBookFragment ...textBookFragment ...textSerialFragment } } name uuid }  fragment seriesSectionFragment on SeriesSection { items(cursor: $sectionItemsCursor) { cursor page { __typename ...seriesFragment } } name uuid }  fragment ratingSectionFragment on RatingSection { items(cursor: $sectionItemsCursor) { cursor page { __typename ...audioBookFragment ...comicBookFragment ...textBookFragment ...textSerialFragment } } name uuid }"
 
 local ROOT_SHOWCASES = "query RootShowcases($rootShowcaseParamsInput: RootShowcaseParamsInput!) { rootShowcases(params: $rootShowcaseParamsInput) { children { __typename ...fragmentShowcase ...childrenFragmentShowcase ...parentsFragmentShowcase } notification { __typename ...notificationFragment } } }  fragment fragmentShowcase on Showcase { name uuid availableFilters }  fragment childrenFragmentShowcase on Showcase { children { __typename ...fragmentShowcase } }  fragment parentsFragmentShowcase on Showcase { parents { __typename ...fragmentShowcase } }  fragment notificationFragment on Notification { consumer notificationPayloadId payload templateId feedbackToken }"
+
+--- Sends fields of a library card, each "name=already encoded value".
+function Api:put_card(card, fields)
+    local encoded = {}
+    for i, field in ipairs(fields) do
+        encoded[i] = field:gsub("%[", "%%5B"):gsub("%]", "%%5D")
+    end
+    return self.http:request("PUT", API_BASE .. "/profile/library_cards/" .. encode(card),
+        self:headers("application/x-www-form-urlencoded"), table.concat(encoded, "&"))
+end
 
 --- Tells Yandex where the book is being read. Takes two requests, as in the phone app:
 -- ProgressUpdated moves the position that other devices see; the library card holds the
@@ -130,23 +140,15 @@ function Api:send_position(p)
         form[#form + 1] = "lc[is_in_child_library]=false"
         form[#form + 1] = "lc[current_episode_uuid]=" .. encode(where.book)
     end
-    local function put(card, fields)
-        local encoded = {}
-        for i, field in ipairs(fields) do
-            encoded[i] = field:gsub("%[", "%%5B"):gsub("%]", "%%5D")
-        end
-        return self.http:request("PUT", API_BASE .. "/profile/library_cards/" .. encode(card),
-            self:headers("application/x-www-form-urlencoded"), table.concat(encoded, "&"))
-    end
-    status, body = put(p.card, form)
+    status, body = self:put_card(p.card, form)
     if status ~= 200 then return status_error(status, body) end
     -- The episode's own card, for its progress on the phone. The position has gone already.
     if p.wire and where.card then
-        put(where.card, { "lc[progress]=" .. where.progress, "lc[cfi]=" .. encode(where.range) })
+        self:put_card(where.card, { "lc[progress]=" .. where.progress, "lc[cfi]=" .. encode(where.range) })
     end
     -- What was set aside before a serial was one book: it has its card and the episode's.
     if p.serial_card then
-        status, body = put(p.serial_card, {
+        status, body = self:put_card(p.serial_card, {
             "lc[state]=reading",
             "lc[progress]=" .. p.progress,
             "lc[public]=true",
@@ -165,6 +167,28 @@ function Api:card(uuid)
     if not data then return nil, kind, detail end
     if type(data.library_card) ~= "table" then return nil, "http", "no card" end
     return drop_nulls(data.library_card)
+end
+
+--- Marks a book as read or not. Yandex may answer yes and leave the card as it was, so the
+-- card is read back: returns it as it now is, or nil and "not_taken". The position stays.
+function Api:set_card_state(uuid, state, progress)
+    local status, body = self:put_card(uuid, {
+        "lc[state]=" .. encode(state),
+        "lc[progress]=" .. math.floor(tonumber(progress) or 0),
+    })
+    if status ~= 200 then return status_error(status, body) end
+    local card, kind, detail = self:card(uuid)
+    if not card then return nil, kind, detail end
+    if card.state ~= state then return nil, "not_taken", tostring(card.state) end
+    return card
+end
+
+--- The account's subscriptions, with the date each ends.
+function Api:access_levels()
+    local data, kind, detail = self:get_json(API_BASE .. "/profile/access_levels")
+    if not data then return nil, kind, detail end
+    if type(data.access_levels) ~= "table" then return nil, "http", "no levels" end
+    return drop_nulls(data.access_levels)
 end
 
 --- Returns every library card, fetching all pages.
@@ -263,7 +287,6 @@ function Api:add_book(book_uuid)
         self:headers("application/x-www-form-urlencoded"),
         "book_uuid=" .. encode(book_uuid) .. "&lc%5Bstate%5D=pending&lc%5Bprogress%5D=0"
             .. "&lc%5Bpublic%5D=true&lc%5Bis_in_child_library%5D=false")
-    if status == 403 then return nil, "denied" end
     if status ~= 200 and status ~= 201 then return status_error(status, body) end
     local ok, data = pcall(json.decode, body)
     local card = ok and type(data) == "table" and data.library_card

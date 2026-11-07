@@ -234,7 +234,6 @@ function Chrome:showMore()
                     UIManager:quit()
                 end })
             end),
-            item("Настройки KOReader", function() ui.menu:onShowMenu() end),
         },
     }
     UIManager:show(dialog)

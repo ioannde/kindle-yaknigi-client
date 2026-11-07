@@ -11,6 +11,7 @@ local Screen = Device.screen
 
 local Kit = require("yaknigi/kit")
 local Prefs = require("yaknigi/prefs")
+local TextStyle = require("yaknigi/textstyle")
 
 local Shell = {}
 Shell.__index = Shell
@@ -311,14 +312,22 @@ function Shell:registerZone()
             ges = "tap",
             screen_zone = CENTER_ZONE,
             overrides = { "tap_forward", "tap_backward" },
-            handler = function() self:showChrome(); return true end,
+            handler = function()
+                -- With pages turned from top and bottom, the middle turns them too.
+                if TextStyle.tap_mode() == "top_bottom" then return nil end
+                self:showChrome()
+                return true
+            end,
         },
         {
             id = "yaknigi_back_rest",
             ges = "tap",
             screen_zone = BACK_REST_ZONE,
             overrides = { "tap_forward" },
-            handler = function() return ui.rolling:onGotoViewRel(-1) end,
+            handler = function()
+                if TextStyle.tap_mode() == "top_bottom" then return nil end
+                return ui.rolling:onGotoViewRel(-1)
+            end,
         },
     })
     -- Links and highlights still come first.

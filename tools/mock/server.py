@@ -289,6 +289,7 @@ class Handler(BaseHTTPRequestHandler):
         if update:
             card["progress"] = update["progress"]
             card["state"] = update["state"] or card["state"]
+        card["state"] = self.server.states.get(card["uuid"], card["state"])
         if i == 3:
             card["book"].update(self.serial_book("serial-1"))
             self.serial_place(card, "ep1-2")
@@ -696,6 +697,12 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(401, b"")
             return
         card = match.group(1)
+        if "lc[cfi]" not in form:
+            # A mark of read or not. A server may answer yes and do nothing.
+            if not self.server.ignore_state:
+                self.server.states[card] = form["lc[state]"][0]
+            self.reply_json(200, {"library_card": {"uuid": card}})
+            return
         # As on the real server, the position in this request changes nothing.
         self.server.card_updates[card] = {
             "progress": int(form["lc[progress]"][0]),
@@ -782,6 +789,26 @@ class Handler(BaseHTTPRequestHandler):
             self.notes_page("quotes", int(query["changes_count"][0]))
         elif url.path.endswith("/bookmarks/incremental_sync"):
             self.notes_page("bookmarks", int(query["changes_count"][0]))
+        elif url.path == "/test/ignore_state":
+            self.server.ignore_state = query["on"][0] == "1"
+            self.reply(200, b"")
+        elif url.path == "/test/access":
+            self.server.access = query["mode"][0]
+            self.reply(200, b"")
+        elif url.path == "/test/marks":
+            self.reply_json(200, self.server.states)
+        elif url.path.endswith("/profile/access_levels"):
+            if self.headers.get("Auth-Token") != "mock-token":
+                self.reply(401, b"")
+            elif self.server.access == "fail":
+                self.reply(500, b"")
+            else:
+                when = int(time.time()) + (86400 if self.server.access == "active" else -86400)
+                self.reply_json(200, {"access_levels": {
+                    "expiration_dates": [{"level": "bookmate", "expires_at": when},
+                                         {"level": "basic_music", "expires_at": int(time.time()) + 86400}],
+                    "active_recurrents": [], "labels": [], "trial_availability": [],
+                }})
         elif url.path == "/test/notes":
             self.reply_json(200, {"notes": [n for n in self.server.notes.values() if n["state"] == "exists"],
                                   "made": self.server.notes_made, "writes": self.server.notes_writes})
@@ -1019,6 +1046,9 @@ if __name__ == "__main__":
     server.challenge = None
     server.positions = {}
     server.card_updates = {}
+    server.states = {}
+    server.ignore_state = False
+    server.access = "active"
     server.fail_writes = 0
     server.notes = {}
     server.notes_changes = 0

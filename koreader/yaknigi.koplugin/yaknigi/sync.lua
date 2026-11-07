@@ -36,17 +36,31 @@ function Sync.waiting(dir)
     return read_waiting(dir)
 end
 
---- Sets a position aside. Reading time adds up while nothing gets through.
-function Sync.queue(dir, position, seconds)
-    local earlier = read_waiting(dir)
-    local spent = math.max(1, math.min(MAX_SECONDS_PER_UPDATE, seconds))
-    position.timespent = (earlier and earlier.timespent or 0) + spent * 1000
+local function write_waiting(dir, position)
     local tmp = dir .. "/to_send.tmp"
     local f = io.open(tmp, "wb")
     if not f then return end
     f:write(json.encode(position))
     f:close()
     os.rename(tmp, dir .. "/to_send")
+end
+
+--- Sets a position aside. Reading time adds up while nothing gets through.
+function Sync.queue(dir, position, seconds)
+    local earlier = read_waiting(dir)
+    local spent = math.max(1, math.min(MAX_SECONDS_PER_UPDATE, seconds))
+    position.timespent = (earlier and earlier.timespent or 0) + spent * 1000
+    write_waiting(dir, position)
+end
+
+--- A position still waiting says "reading". It was set aside before the book was marked
+-- or unmarked, and is not to undo that when it gets through.
+function Sync.forget_state(dir)
+    local position = read_waiting(dir)
+    if position and position.state ~= nil then
+        position.state = nil
+        write_waiting(dir, position)
+    end
 end
 
 --- Sends what is waiting for a book. Returns the position sent, or nil and why not.

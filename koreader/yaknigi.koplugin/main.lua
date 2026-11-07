@@ -21,6 +21,7 @@ local ffiutil = require("ffi/util")
 local logger = require("logger")
 local json = require("rapidjson")
 
+local Access = require("yaknigi/access")
 local Api = require("yaknigi/api")
 local Background = require("yaknigi/background")
 local BookCard = require("yaknigi/bookcard")
@@ -31,6 +32,7 @@ local Crypt = require("yaknigi/crypt")
 local Feed = require("yaknigi/feed")
 local Library = require("yaknigi/library")
 local Login = require("yaknigi/login")
+local NoAccess = require("yaknigi/noaccess")
 local NoteSync = require("yaknigi/notesync")
 local NotesLocal = require("yaknigi/notes_local")
 local Prefs = require("yaknigi/prefs")
@@ -45,6 +47,7 @@ local Store = require("yaknigi/store")
 local Sync = require("yaknigi/sync")
 local AppState = require("yaknigi/appstate")
 local Terms = require("yaknigi/terms")
+local TextStyle = require("yaknigi/textstyle")
 local Updater = require("yaknigi/updater")
 
 local ROOT = DataStorage:getDataDir() .. "/yaknigi"
@@ -943,6 +946,7 @@ end
 
 --- A tap on what is in a list.
 function Yaknigi:openItem(item)
+    if item.unavailable == Catalogue.UNAVAILABLE then return self:showNoAccess(item.title) end
     if item.unavailable then return message(item.unavailable, 3) end
     if item.kind == "author" or item.kind == "series" or item.kind == "bookshelf" or item.kind == "found_shelves" then
         return self:openList(item.kind, item.uuid, item.list_title or item.title)
@@ -1040,7 +1044,7 @@ function Yaknigi:pollTake(item, screen, wait, pid)
             save_token(nil)
             self:showLibrary()
         elseif kind == "denied" then
-            message("Эта книга недоступна по вашей подписке.", 3)
+            self:showNoAccess(item.title)
         elseif kind == "network" then
             message(error_text(kind), 3)
         else
@@ -1131,7 +1135,7 @@ function Yaknigi:pollAdd(item, path, pid, after)
             save_token(nil)
             self:showLibrary()
         elseif kind == "denied" then
-            message("Эта книга недоступна по вашей подписке.", 3)
+            self:showNoAccess(item.title)
         elseif kind == "network" then
             message(error_text(kind), 3)
         else
@@ -1360,6 +1364,16 @@ function Yaknigi:showBookMenu(item)
             action = function() self:openList(link.kind, link.uuid, link.title) end,
         }
     end
+    -- How a serial's mark goes with those of its episodes is not known, so it has none.
+    if not serial and card.uuid then
+        local finished = card.state == "finished"
+        entries[#entries + 1] = {
+            key = "finished",
+            text = finished and "Снять отметку «Прочитано»" or "Отметить прочитанной",
+            icon = "check",
+            action = function() self:setFinished(card, not finished) end,
+        }
+    end
     -- Only a book's way of standing on a shelf is known so far, not a serial's.
     if not serial then
         entries[#entries + 1] = { key = "add_shelf", text = "Добавить на полку", icon = "shelves",
@@ -1428,6 +1442,9 @@ end
 local function shelf_error(kind)
     if kind == "network" then return "Нет связи с Яндекс Книгами." end
     if kind == "denied" then return "Яндекс Книги не разрешили это сделать." end
+    if kind == "not_taken" then
+        return "Яндекс Книги не приняли отметку. Попробуйте поставить её в приложении на телефоне."
+    end
     return "Не получилось. Попробуйте ещё раз."
 end
 
@@ -1456,6 +1473,47 @@ function Yaknigi:shelfWork(text, work, done)
                 done(result.value)
             end
         end)
+    end)
+end
+
+--- Marks a book as read or takes the mark off. What was read of it stays as it is.
+function Yaknigi:setFinished(card, on)
+    local progress = tonumber(card.progress) or 0
+    local wanted = on and "finished" or (progress > 0 and "reading" or "pending")
+    self:shelfWork(on and "Отмечаю…" or "Снимаю отметку…", function(api)
+        return api:set_card_state(card.uuid, wanted, progress)
+    end, function(fresh)
+        local cards = read_json(LIBRARY_CACHE) or {}
+        for _, mine in ipairs(cards) do
+            if mine.uuid == card.uuid then
+                mine.state, mine.progress, mine.finished_at = fresh.state, fresh.progress, fresh.finished_at
+            end
+        end
+        write_json(LIBRARY_CACHE, cards)
+        local dir = BOOKS .. "/" .. card.book.uuid
+        Session.note_state(dir, card.uuid, fresh.state)
+        Sync.forget_state(dir)
+        self:showCards(cards)
+        toast(quoted(card.book.title) .. (on and " прочитана" or ": отметка снята"))
+    end)
+end
+
+--- Says why a book does not open, after asking Yandex about the subscription.
+function Yaknigi:showNoAccess(title)
+    local busy = InfoMessage:new{ text = "Проверяю подписку…" }
+    UIManager:show(busy)
+    UIManager:forceRePaint()
+    local token = saved_token()
+    local online = NetworkMgr:isConnected()
+    in_background(function()
+        if not token or not online then return "unknown" end
+        local api = Api.new(token)
+        local levels = api:access_levels()
+        api:close()
+        return Access.verdict(levels, os.time())
+    end, function(verdict)
+        UIManager:close(busy)
+        UIManager:show(NoAccess:new{ verdict = verdict or "unknown", book_title = title })
     end)
 end
 
@@ -1733,6 +1791,7 @@ function Yaknigi:pollSerial(job)
             self:showLibrary()
         else
             logger.warn("yaknigi: serial not put together:", kind)
+            if kind == "denied" then return self:showNoAccess(job.card.book and job.card.book.title) end
             message(error_text(kind), 3)
         end
     end)
@@ -1755,7 +1814,11 @@ function Yaknigi:loadAndOpen(card, store)
             self:showLibrary()
         else
             logger.warn("yaknigi: open failed:", kind, xpointer)
-            message(error_text(kind), 3)
+            if kind == "denied" then
+                self:showNoAccess(card.book and card.book.title)
+            else
+                message(error_text(kind), 3)
+            end
         end
         return
     end
@@ -1798,6 +1861,10 @@ function Yaknigi:applyTextDefaults(path)
         local value = G_reader_settings:readSetting("copt_" .. name)
         if value ~= nil then doc_settings:saveSetting("copt_" .. name, value) end
     end
+    local hyphenation = G_reader_settings:readSetting("hyphenation")
+    if hyphenation ~= nil then doc_settings:saveSetting("hyphenation", hyphenation) end
+    local tweaks, had_align = TextStyle.without_align(doc_settings:readSetting("style_tweaks"))
+    if had_align then doc_settings:saveSetting("style_tweaks", next(tweaks) and tweaks or nil) end
     doc_settings:flush()
 end
 

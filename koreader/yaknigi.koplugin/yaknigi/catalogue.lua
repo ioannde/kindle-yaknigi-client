@@ -206,6 +206,7 @@ local function make_unavailable(item, why, word)
 end
 
 local UNAVAILABLE = "Эта книга сейчас недоступна."
+Catalogue.UNAVAILABLE = UNAVAILABLE
 local AUDIO_ONLY = "Эта книга есть только в аудио: здесь её не прочитать."
 
 --- A book as a list gives it.

@@ -222,6 +222,11 @@ function Session.opening_here(store, card, moved)
     end
 end
 
+--- The card's state has changed. A book never opened here has nothing to change.
+function Session.note_state(dir, uuid, state)
+    if read_file(dir .. "/card") then write_card(dir, { uuid = uuid, state = state }) end
+end
+
 --- Returns the card's uuid and state, as last seen when opening the book.
 function Session.read_card(dir)
     local uuid, state = (read_file(dir .. "/card") or ""):match("^(%S+) (%S+)$")
