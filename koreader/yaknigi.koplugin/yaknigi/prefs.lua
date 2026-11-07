@@ -22,10 +22,11 @@ local function percent(share)
     return math.floor(share * 100 + 0.5)
 end
 
---- info: { ratio=, page=, pages=, chapter_left=, chapter_pages= }. While the book is a
+--- info: { ratio=, page=, pages=, chapter_left= }. While the book is a
 -- skeleton there are no pages to speak of, only the ratio; that shows as a percentage.
 -- long: for the panel, where the bare number would say nothing.
---- What to show of the progress. A second value goes to the other side of the screen.
+--- What to show of the progress. A second value goes to the other side of the screen: the
+-- share of the book read since its start, whatever the first one counts down to.
 function Prefs.progress_text(format, info, long)
     if info.page and info.pages then
         if format == "page_of" then
@@ -34,10 +35,10 @@ function Prefs.progress_text(format, info, long)
             return long and ("Страница %d"):format(info.page) or tostring(info.page)
         elseif format == "book" then
             local left = info.pages - info.page
-            return ("До конца книги: %d стр."):format(left), ("%d%%"):format(percent(left / math.max(1, info.pages)))
+            return ("До конца книги: %d стр."):format(left), ("%d%%"):format(percent(info.ratio))
         elseif format == "chapter" and info.chapter_left then
             return ("До конца главы: %d стр."):format(info.chapter_left),
-                ("%d%%"):format(percent(info.chapter_left / math.max(1, info.chapter_pages)))
+                ("%d%%"):format(percent(info.ratio))
         end
     end
     return ("%d%%%s"):format(percent(info.ratio), long and " книги" or "")

@@ -89,7 +89,7 @@ eq(pics[2], "c.jpg", "svg image")
 eq(pics[3], "d.gif", "image href")
 
 -- what the page says about progress
-local at = { ratio = 0.7, page = 723, pages = 1023, chapter_left = 9, chapter_pages = 12 }
+local at = { ratio = 0.7, page = 723, pages = 1023, chapter_left = 9 }
 eq(Prefs.progress_text("percent", at), "70%", "percent")
 eq(Prefs.progress_text("percent", at, true), "70% книги", "percent, long")
 eq(Prefs.progress_text("page", at), "723", "page")
@@ -98,10 +98,10 @@ eq(Prefs.progress_text("page_of", at), "723 из 1023", "page of pages")
 do
     local left, right = Prefs.progress_text("chapter", at)
     eq(left, "До конца главы: 9 стр.", "chapter")
-    eq(right, "75%", "chapter's share, to the other side")
+    eq(right, "70%", "the book's share read, to the other side, even for a chapter")
     left, right = Prefs.progress_text("book", at)
     eq(left, "До конца книги: 300 стр.", "book")
-    eq(right, "29%", "book's share, to the other side")
+    eq(right, "70%", "the book's share read, to the other side")
     eq(select(2, Prefs.progress_text("percent", at)), nil, "percent has one part")
 end
 for _, format in ipairs(Prefs.PROGRESS) do

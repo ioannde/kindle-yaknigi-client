@@ -357,9 +357,7 @@ function Shell:progressText(long)
         info.page, info.pages = doc:getCurrentPage(), doc:getPageCount()
         if format == "chapter" then
             -- It has nothing to say after the last heading or before the first.
-            local left = toc:getChapterPagesLeft(info.page) or (info.pages - info.page)
-            local done = toc:getChapterPagesDone(info.page) or (info.page - 1)
-            info.chapter_left, info.chapter_pages = left, left + done + 1
+            info.chapter_left = toc:getChapterPagesLeft(info.page) or (info.pages - info.page)
         end
     end
     return Prefs.progress_text(format, info, long)
