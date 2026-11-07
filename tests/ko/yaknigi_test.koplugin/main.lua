@@ -1351,6 +1351,11 @@ local function test_lists()
     end)
 
     -- A list that is closed is no reason to sign out.
+    local function saved_token()
+        local LuaSettings = require("luasettings")
+        local DataStorage = require("datastorage")
+        return LuaSettings:open(DataStorage:getSettingsDir() .. "/yaknigi.lua"):readSetting("token")
+    end
     local token_before = saved_token()
     local closed = Catalogue.collection("bookshelf", "closed", "Закрытая полка")
     menu:openCollection(closed)
