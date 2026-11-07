@@ -1980,7 +1980,6 @@ local function test_updates(plugin)
     end)
     UIManager:forceRePaint()
     for _ = 2, settings.pages or 1 do
-        if settings.rows.terms then break end
         tap_widget(settings.pager_next)
         UIManager:forceRePaint()
     end
