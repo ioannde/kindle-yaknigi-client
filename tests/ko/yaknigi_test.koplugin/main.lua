@@ -1219,7 +1219,18 @@ local function test_notes()
     local across = add("quote", Cfi.make_range(spine, "/2/4/2/4/1:5", "/2/4/2/10/1:20"),
         doc:getTextFromXPointers(across_first, across_last))
     mock_get("/test/note_edit?hidden=1&uuid=" .. across.uuid)
+    -- From a first letter in its own element, as the phone's was: non-breaking spaces at Yandex
+    -- are plain ones, so the words there are not the same bytes as those in the book.
+    local capital_first = Cfi.to_point(html, number, "/2/4/2/14/2/1:0")
+    local capital_last = Cfi.to_point(html, number, "/2/4/2/16/1:20")
+    local capital_words = doc:getTextFromXPointers(capital_first, capital_last)
+    if not capital_words:find("^Глава %d+, абзац 7%.\194\160") then
+        fail("crengine's words from a first letter: " .. #capital_words .. " bytes")
+    end
+    local capital = add("quote", Cfi.make_range(spine, "/2/4/2/14/2/1:0", "/2/4/2/16/1:20"),
+        (capital_words:gsub("\194\160", " ")))
     compare()
+    if not by_uuid(capital.uuid) then fail("the highlight from a first letter did not come") end
     local got = by_uuid(phone_quote.uuid)
     if not got then fail("the phone's highlight did not come") end
     if got.note ~= "С телефона" or got.text ~= phone_words or not got.drawer then fail("what came of a highlight") end
@@ -1286,6 +1297,7 @@ local function test_notes()
     mock_get("/test/note_remove?uuid=" .. phone_quote.uuid)
     mock_get("/test/note_remove?uuid=" .. phone_mark.uuid)
     mock_get("/test/note_remove?uuid=" .. across.uuid)
+    mock_get("/test/note_remove?uuid=" .. capital.uuid)
     compare()
     if by_uuid(phone_quote.uuid) or by_uuid(phone_mark.uuid) then fail("what the phone deleted stays") end
 

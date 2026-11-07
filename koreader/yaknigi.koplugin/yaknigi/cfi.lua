@@ -340,4 +340,9 @@ function Cfi.locate(html, xp)
     end
 end
 
+--- The text with its non-breaking and other wide spaces made plain, as Yandex keeps them.
+function Cfi.plain_spaces(text)
+    return ((text or ""):gsub("\194\160", " "):gsub("\226\128[\128-\138\175]", " "))
+end
+
 return Cfi

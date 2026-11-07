@@ -344,6 +344,9 @@ do
     local function run(api, notes, known) return NoteSync.run(api, "b", notes, known) end
     local function calls(api) return table.concat(api.calls, "; ") end
 
+    eq(Cfi.plain_spaces("а\194\160б\226\128\137в\226\128\175г д"), "а б в г д", "wide spaces made plain")
+    eq(Cfi.plain_spaces(nil), "", "no text, no spaces")
+
     -- privacy: the one who changed it is right, and nothing else is touched
     do
         local function hidden_quote(key, uuid, hidden)

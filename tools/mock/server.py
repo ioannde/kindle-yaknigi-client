@@ -113,6 +113,10 @@ def big_chapter(path):
         if i % 3 == 2:
             return (f"<p>{start} {PARAGRAPH} <em>курсив {i} {PARAGRAPH}</em> <b>жирный {i} {PARAGRAPH}</b>"
                     f" хвост {i} {PARAGRAPH} &amp; {PARAGRAPH}</p>\n<!-- a > b --><br/>")
+        # A first letter in an element of its own and a non-breaking space soon after it.
+        if i == 6:
+            return (f'<p><span class="first">{start[0]}</span>{start[1:]}&#160;{PARAGRAPH}\n'
+                    f"  {PARAGRAPH * 3}</p>\n")
         # A space first in a paragraph, and in the middle a run of them: both are in real books.
         return f"<p>{' ' if i == 3 else ''}{start} {PARAGRAPH}\n  {PARAGRAPH * 3}</p>\n"
     paragraphs = "".join(paragraph(i) for i in range(30))

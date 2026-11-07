@@ -34,10 +34,13 @@ end
 
 NotesLocal.letters = letters
 
--- The same words may differ in spaces and soft hyphens between a phone and crengine.
+-- The same words may differ in spaces and soft hyphens between a phone and crengine: a book's
+-- non-breaking spaces reach Yandex as plain ones, and Lua's %s knows neither of them.
 local function comparable(text)
-    return letters((text or ""):gsub("\194\173", ""):gsub("%s+", ""), COMPARED_LETTERS)
+    return letters(Cfi.plain_spaces(text):gsub("\194\173", ""):gsub("%s+", ""), COMPARED_LETTERS)
 end
+
+NotesLocal.comparable = comparable
 
 function NotesLocal.known(ui)
     return ui.doc_settings:readSetting(SETTING) or {}
@@ -99,9 +102,9 @@ function NotesLocal.collect(ctx, known)
         if not (base and base.pos == key) then
             note.cfi = range_of(ctx, item)
             if item.drawer then
-                note.content = item.text or ""
+                note.content = Cfi.plain_spaces(item.text)
             elseif not item.yaknigi then
-                note.content = page_words(doc, item.page)
+                note.content = Cfi.plain_spaces(page_words(doc, item.page))
             end
         end
         notes[#notes + 1] = note
@@ -135,7 +138,7 @@ local function make_item(ctx, note)
     if not last then return not_placed("its end is not in the chapter") end
     if not doc:isXPointerInDocument(last) then return not_placed("crengine has no " .. last) end
     if comparable(doc:getTextFromXPointers(first, last)) ~= comparable(note.content) then
-        logger.warn("yaknigi: a note's place holds other words:", note.uuid)
+        logger.warn("yaknigi: a note's place holds other words:", note.uuid, first, last)
         return nil
     end
     local highlight = ctx.ui.view.highlight
