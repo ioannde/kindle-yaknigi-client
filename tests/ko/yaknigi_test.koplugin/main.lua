@@ -2194,19 +2194,23 @@ local function test_finished(plugin)
         if name:sub(1, 1) ~= "." and not picture then picture = root .. "/covers/" .. name end
     end
     local read = { title = "Книга", cover = picture, card = { state = "finished" } }
-    local px = Screen:scaleBySize(1)
     local tags = require("ui/widget/horizontalgroup"):new{ align = "top" }
     for _, side in ipairs { 40, 56, 73, 100, 126 } do
-        local box = Library.cover_box(read, side * px, side * px * 3 / 2)
+        local w = Screen:scaleBySize(side)
+        local box = Library.cover_box(read, w, math.floor(w * 3 / 2))
         if box.name ~= "YaknigiReadTag" then fail("no mark on a cover of " .. side) end
         tags[#tags + 1] = box
-        tags[#tags + 1] = require("ui/widget/horizontalspan"):new{ width = 10 * px }
+        tags[#tags + 1] = require("ui/widget/horizontalspan"):new{ width = Screen:scaleBySize(10) }
     end
-    if Library.cover_box({ title = "Книга", cover = picture, card = { state = "reading" } }, 100 * px, 150 * px).name == "YaknigiReadTag" then
+    if Library.cover_box({ title = "Книга", cover = picture, card = { state = "reading" } }, Screen:scaleBySize(100), Screen:scaleBySize(150)).name == "YaknigiReadTag" then
         fail("a mark on a book not read")
     end
     local tag_sheet = require("ui/widget/container/framecontainer"):new{
-        background = require("ffi/blitbuffer").COLOR_WHITE, bordersize = 0, padding = 10 * px, tags,
+        background = require("ffi/blitbuffer").COLOR_WHITE, bordersize = 0, padding = Screen:scaleBySize(10),
+        margin = 0, require("ui/widget/container/centercontainer"):new{
+            dimen = require("ui/geometry"):new{ w = Screen:getWidth() - 2 * Screen:scaleBySize(10), h = Screen:getHeight() - 2 * Screen:scaleBySize(10) },
+            tags,
+        },
     }
     UIManager:show(tag_sheet)
     UIManager:forceRePaint()
