@@ -1098,12 +1098,40 @@ local function test_notes()
         end
     end
 
-    settled()
     local number = fragment()
     local path = store.paths[number]
     wait("the chapter", function() return store:has(path) and not plugin:stubs()[number] end, 60)
     local spine = store:spine_index_of_fragment(number)
     local html = store:read(path)
+    local function place(a, b, paragraph)
+        local head = "/2/4/2/" .. (paragraph or 2) .. "/1:"
+        local first = Cfi.to_point(html, number, head .. a)
+        local last = Cfi.to_point(html, number, head .. b)
+        return first, last, doc:getTextFromXPointers(first, last), Cfi.make_range(spine, head .. a, head .. b)
+    end
+
+    -- A highlight made while the rest of the book is coming lives through the swap to the whole
+    -- book, which closes this reader, and reaches Yandex once.
+    do
+        local a, b, text, early_cfi = place(200, 230)
+        local early = { page = a, pos0 = a, pos1 = b, text = text, drawer = "lighten", color = "gray" }
+        modified(early, { nb_highlights_added = 1, index_modified = ui.annotation:addItem(early) })
+        local before = ui
+        ui = wait("the swap to the whole book", function()
+            local now = reader()
+            return now and now ~= before and now.document and now.yaknigi.shell and top().name == "ReaderUI" and now
+        end, 60)
+        plugin, doc, store = ui.yaknigi, ui.document, ui.yaknigi.store
+        local there = wait("the early highlight at Yandex", function() return server().notes[1] end, 20)
+        if there.cfi ~= early_cfi then fail("the early highlight's place: " .. there.cfi) end
+        local item = wait("the early highlight to be linked", function() return by_uuid(there.uuid) end, 20)
+        if #here() ~= 1 or #server().notes ~= 1 then fail("the swap doubled or lost a highlight") end
+        settled()
+        ui.bookmark:removeItem(item)
+        wait("the early highlight to go", function() return not server().notes[1] end, 20)
+        settled()
+    end
+    settled()
     -- A place in the chapter, as a phone would give it, is the same words in crengine.
     local function matches(inner)
         local first = Cfi.to_point(html, number, inner)
@@ -1122,13 +1150,6 @@ local function test_notes()
     local _, tail = Cfi.to_point(html, number, "/2/4/2/6/5:3")
     local before_entity = select(2, tail:sub(1, tail:find("&amp;", 1, true) - 1):gsub("[^\128-\191]", ""))
     matches("/2/4/2/6/5:" .. before_entity + 3)
-
-    local function place(a, b, paragraph)
-        local head = "/2/4/2/" .. (paragraph or 2) .. "/1:"
-        local first = Cfi.to_point(html, number, head .. a)
-        local last = Cfi.to_point(html, number, head .. b)
-        return first, last, doc:getTextFromXPointers(first, last), Cfi.make_range(spine, head .. a, head .. b)
-    end
 
     -- A highlight made here reaches Yandex, with a place the phone can read.
     local first, last, words, cfi = place(10, 40)
