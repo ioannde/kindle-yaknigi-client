@@ -994,7 +994,7 @@ local function test_lists()
     menu:search("подборка")
     wait("what was found", function() return menu.catalogue.finished and #menu.rows > 0 end)
     local titles = {}
-    for _, row in ipairs(menu.rows) do titles[#titles + 1] = row.title end
+    for _, item in ipairs(menu.catalogue.items) do titles[#titles + 1] = item.title end
     if table.concat(titles, "|") ~= "Автор подборки|Подборка|Новый сериал|Полка незнакомца|Полка 2|Полка 3|Все полки|Найденная книга 20" then
         fail("what was found: " .. table.concat(titles, "|"))
     end
@@ -1060,6 +1060,10 @@ local function test_lists()
     if menu.view ~= "catalogue" or menu.query ~= "подборка" then fail("the way back to the results: " .. menu.view) end
 
     -- The rest of the shelves are a list of their own, and a shelf found can be followed.
+    tap_widget(menu.next_button)
+    wait("the second page of results", function() return menu.page == 2 and #menu.rows > 0 end)
+    UIManager:forceRePaint()
+    shot("70a-search-shelves")
     tap_widget(menu.row_buttons[of_kind(menu, "found_shelves")])
     finished(menu, "Полки: «подборка»")
     if #menu.rows ~= 4 then fail("the shelves found: " .. #menu.rows) end
@@ -1091,6 +1095,9 @@ local function test_lists()
     finished(menu, "Полки: «подборка»")
     menu:goBack()
     if menu.view ~= "catalogue" or menu.query ~= "подборка" then fail("back from the shelves found: " .. menu.view) end
+    if menu.page ~= 2 then fail("the results lost their page: " .. menu.page) end
+    tap_widget(menu.prev_button)
+    wait("the first page of results", function() return menu.page == 1 and #menu.rows > 0 end)
 
     -- A serial is added with its episodes, the serial first.
     local serial = of_kind(menu, "serial")
