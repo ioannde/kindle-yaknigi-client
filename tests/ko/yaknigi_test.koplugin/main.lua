@@ -367,43 +367,57 @@ local function settings_row(settings, key)
     fail("no row " .. key .. " in the settings")
 end
 
---- Alignment, hyphenation and the tap zones, in a book that is open.
+--- Alignment, hyphenation and the tap zones, on the second page of the panel in the book.
 local function test_reading_settings()
     local W, H = Screen:getWidth(), Screen:getHeight()
     local Settings = require("yaknigi/settings")
     local DocSettings = require("docsettings")
     local doc = reader().document
-    local function open_settings()
-        UIManager:show(Settings:new{ ui = reader(), all_rows = true })
+
+    -- They are of the book, and the settings of the app no longer have them.
+    local app = Settings:new{ ui = reader(), all_rows = true }
+    for _, entry in ipairs(app:entries()) do
+        for _, key in ipairs { "text_align", "hyphenation", "tap_mode", "koreader" } do
+            if entry.key == key then fail("the settings of the app still have " .. key) end
+        end
+    end
+    app:onCloseWidget()
+
+    local function open_more()
+        tap_at(math.floor(W / 2), math.floor(H * 0.1))
+        wait("the panels", is_named("YaknigiChrome"))
+        tap_widget(top().text_button)
+        wait("the text panel", is_named("YaknigiTextPanel"))
         UIManager:forceRePaint()
+        tap_widget(top().advanced)
+        UIManager:forceRePaint()
+        if not top().align_cells then fail("no second page in the panel") end
         return top()
     end
-    local settings = open_settings()
-    if settings.name ~= "YaknigiSettings" then fail("no settings over the book") end
+    local panel = open_more()
+    shot("15a-panel-more")
 
     local tweak = reader().styletweak
     local css_before = tweak.css_text or ""
-    tap_widget(settings_row(settings, "text_align"))
-    if #settings.options ~= 3 then fail("the alignments: " .. #settings.options) end
-    shot("15a-settings-align")
-    tap_widget(settings.options[3])
+    if #panel.align_cells ~= 3 then fail("the alignments: " .. #panel.align_cells) end
+    tap_widget(panel.align_cells[3])
     if not (tweak.css_text or ""):find("text-align: left", 1, true) then fail("the book is not aligned left") end
     if not G_reader_settings:readSetting("style_tweaks").text_align_most_left then fail("left not saved") end
-    tap_widget(settings.back)
+    UIManager:forceRePaint()
     shot("15b-aligned-left")
-    settings = open_settings()
-    tap_widget(settings_row(settings, "text_align"))
-    tap_widget(settings.options[2])
+    tap_widget(panel.align_cells[2])
     if not (tweak.css_text or ""):find("text-align: justify", 1, true) then fail("the book is not justified") end
     if (tweak.css_text or ""):find("text-align: left", 1, true) then fail("left is still there") end
-    tap_widget(settings_row(settings, "text_align"))
-    tap_widget(settings.options[1])
+    UIManager:forceRePaint()
+    tap_widget(panel.align_cells[1])
     if (tweak.css_text or "") ~= css_before then fail("as in the book is not what it was") end
+    UIManager:forceRePaint()
 
     -- A book's own settings do not stand against the ones for all books.
-    tap_widget(settings_row(settings, "hyphenation"))
+    tap_widget(panel.hyphenation_cells[2])
     if reader().typography.hyphenation ~= false then fail("hyphenation is still on") end
     if G_reader_settings:readSetting("hyphenation") ~= false then fail("hyphenation not saved") end
+    UIManager:forceRePaint()
     reader():saveSettings()
     local own = DocSettings:open(doc.file)
     own:saveSetting("hyphenation", true)
@@ -413,15 +427,25 @@ local function test_reading_settings()
     own = DocSettings:open(doc.file)
     if own:readSetting("hyphenation") ~= false then fail("the next opening would have hyphenation") end
     if own:readSetting("style_tweaks") then fail("the next opening would have the book's own alignment") end
-    tap_widget(settings_row(settings, "hyphenation"))
+    tap_widget(panel.hyphenation_cells[1])
     if reader().typography.hyphenation ~= true then fail("hyphenation did not come back") end
+    UIManager:forceRePaint()
+
+    -- Back to the first page, and on again.
+    tap_widget(panel.back_button)
+    UIManager:forceRePaint()
+    if not panel.advanced or panel.page then fail("back did not go to the first page") end
+    tap_widget(panel.advanced)
+    UIManager:forceRePaint()
 
     -- Pages turned from top and bottom.
-    tap_widget(settings_row(settings, "tap_mode"))
-    shot("15c-settings-tap-zones")
-    tap_widget(settings.options[2])
+    tap_widget(panel.tap_cells[2])
     if G_reader_settings:readSetting("page_turns_tap_zones") ~= "top_bottom" then fail("top and bottom not saved") end
-    tap_widget(settings.back)
+    UIManager:forceRePaint()
+    shot("15c-panel-tap-zones")
+    panel:close()
+    wait("the book", is_named("ReaderUI"))
+    UIManager:forceRePaint()
     local page = doc:getCurrentPage()
     local function turns(x, y, to, what)
         tap_at(math.floor(x), math.floor(y))
@@ -439,14 +463,14 @@ local function test_reading_settings()
     UIManager:close(top())
     UIManager:forceRePaint()
 
-    settings = open_settings()
-    tap_widget(settings_row(settings, "tap_mode"))
-    tap_widget(settings.options[1])
+    panel = open_more()
+    tap_widget(panel.tap_cells[1])
     if G_reader_settings:readSetting("page_turns_tap_zones") ~= "default" then fail("left and right not saved") end
     if G_reader_settings:readSetting("page_turns_tap_zone_forward_size_ratio") then fail("a ratio was left behind") end
 
     -- KOReader's own settings now live here, and only here.
-    tap_widget(settings_row(settings, "koreader"))
+    UIManager:forceRePaint()
+    tap_widget(panel.menu_button)
     wait("KOReader's menu", function() return reader().menu.menu_container end)
     UIManager:forceRePaint()
     reader().menu:onCloseReaderMenu()

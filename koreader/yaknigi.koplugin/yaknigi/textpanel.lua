@@ -1,5 +1,6 @@
 -- The "Aa" panel, laid out as the phone's: light and warmth, font and size, line spacing and
--- margins. The page stays visible above it, so that each change can be seen at once.
+-- margins, and a second page for how the text is set and how pages are turned. The page of
+-- the book stays visible above it, so that each change can be seen at once.
 local Blitbuffer = require("ffi/blitbuffer")
 local CenterContainer = require("ui/widget/container/centercontainer")
 local Device = require("device")
@@ -19,6 +20,7 @@ local cre = require("document/credocument"):engineInit()
 local Screen = Device.screen
 
 local Kit = require("yaknigi/kit")
+local TextStyle = require("yaknigi/textstyle")
 
 
 local TextPanel = InputContainer:extend{
@@ -167,13 +169,114 @@ local function size_mark(plus)
     end }
 end
 
+--- A choice between words, the chosen one in a frame; returns the cells and the row of them.
+local function segments(labels, selected, width, on_select)
+    local cell = math.floor(width / #labels)
+    local height = Kit.px(46)
+    local cells, row = {}, HorizontalGroup:new{ align = "center" }
+    for i, label in ipairs(labels) do
+        local on = i == selected
+        local content = Kit.text(label, 15, { bold = on, color = mark_color(on), max_width = cell - Kit.px(12) })
+        if on then
+            content = FrameContainer:new{
+                bordersize = Kit.px(1) + 1, padding = 0, margin = 0, radius = Kit.px(10),
+                color = Blitbuffer.COLOR_BLACK,
+                CenterContainer:new{ dimen = Geom:new{ w = cell - Kit.px(6), h = height - Kit.px(6) }, content },
+            }
+        end
+        cells[i] = Kit.button(content, cell, height, function() on_select(i) end)
+        row[i] = cells[i]
+    end
+    return cells, row
+end
+
+--- The labels of a list of TextStyle's choices, and which of them is the current one.
+local function choices(items, key)
+    local labels, selected = {}, 1
+    for i, item in ipairs(items) do
+        labels[i] = item.label
+        if item.key == key then selected = i end
+    end
+    return labels, selected
+end
+
+--- The second page: how the text is set, how pages are turned, and KOReader's own settings.
+function TextPanel:buildMore(rows, inner)
+    local ui = self.ui
+    local label_w = math.floor(inner * 0.27)
+    local function setting(title, row)
+        rows[#rows + 1] = HorizontalGroup:new{ align = "center", Kit.fixed(Kit.text(title, 16), label_w), row }
+    end
+    local labels, selected = choices(TextStyle.ALIGN, TextStyle.align())
+    local cells, row = segments(labels, selected, inner - label_w, function(i)
+        TextStyle.set_align(ui, TextStyle.ALIGN[i].key)
+        self:rebuild()
+    end)
+    self.align_cells = cells
+    setting("Выравнивание", row)
+    rows[#rows + 1] = Kit.gap(Kit.px(8))
+
+    local on = TextStyle.hyphenation()
+    cells, row = segments({ "Включены", "Выключены" }, on and 1 or 2, inner - label_w, function(i)
+        TextStyle.set_hyphenation(ui, i == 1)
+        self:rebuild()
+    end)
+    self.hyphenation_cells = cells
+    setting("Переносы", row)
+    rows[#rows + 1] = Kit.gap(Kit.px(8))
+
+    labels, selected = choices(TextStyle.TAP_MODES, TextStyle.tap_mode())
+    cells, row = segments(labels, selected, inner - label_w, function(i)
+        TextStyle.set_tap_mode(ui, TextStyle.TAP_MODES[i].key)
+        self:rebuild(true)
+    end)
+    self.tap_cells = cells
+    setting("Листание", row)
+    if TextStyle.tap_mode() == "top_bottom" then
+        rows[#rows + 1] = Kit.gap(Kit.px(4))
+        rows[#rows + 1] = Kit.text("Панели открываются нажатием в верхней части экрана", 13,
+            { color = Blitbuffer.COLOR_DARK_GRAY, max_width = inner })
+    end
+    rows[#rows + 1] = Kit.gap(Kit.px(12))
+
+    local third = math.floor(inner / 3)
+    self.back_button = Kit.button(Kit.text("НАЗАД", 14), third, Kit.px(44), function()
+        self.page = nil
+        self:rebuild(true)
+    end)
+    self.config_button = Kit.button(Kit.text("ПАНЕЛЬ KOREADER", 14, { max_width = third }), third, Kit.px(44), function()
+        self:close()
+        UIManager:nextTick(function() ui.config:onShowConfigMenu() end)
+    end)
+    self.menu_button = Kit.button(Kit.text("МЕНЮ KOREADER", 14, { max_width = third }), third, Kit.px(44), function()
+        self:close()
+        UIManager:nextTick(function() ui.menu:onShowMenu() end)
+    end)
+    rows[#rows + 1] = HorizontalGroup:new{ align = "center", self.back_button, self.config_button, self.menu_button }
+end
+
 function TextPanel:build()
     local W, H = Screen:getWidth(), Screen:getHeight()
     local pad = Kit.px(16)
     local inner = W - 2 * pad
+    local rows = VerticalGroup:new{ align = "center" }
+    if self.page == "more" then
+        self:buildMore(rows, inner)
+    else
+        self:buildMain(rows, inner)
+    end
+    local body = Kit.Sheet:new{ width = W, edge = "bottom",
+        Kit.panel(W, rows, pad, true),
+    }
+    local h = body:getSize().h
+    self.area = Geom:new{ x = 0, y = H - h, w = W, h = h }
+    self[1] = body
+    self.dimen = self.area:copy()
+end
+
+function TextPanel:buildMain(rows, inner)
     local ui = self.ui
     local config = ui.document.configurable
-    local rows = VerticalGroup:new{ align = "center" }
 
     local powerd = Device:hasFrontlight() and Device:getPowerDevice()
     if powerd then
@@ -267,22 +370,15 @@ function TextPanel:build()
     }
     rows[#rows + 1] = Kit.gap(Kit.px(12))
     self.advanced = Kit.button(Kit.text("ДОПОЛНИТЕЛЬНЫЕ НАСТРОЙКИ", 14), inner, Kit.px(44), function()
-        self:close()
-        UIManager:nextTick(function() ui.config:onShowConfigMenu() end)
+        self.page = "more"
+        self:rebuild(true)
     end)
     rows[#rows + 1] = self.advanced
-
-    local body = Kit.Sheet:new{ width = W, edge = "bottom",
-        Kit.panel(W, rows, pad, true),
-    }
-    local h = body:getSize().h
-    self.area = Geom:new{ x = 0, y = H - h, w = W, h = h }
-    self[1] = body
-    self.dimen = self.area:copy()
 end
 
 --- A swipe across the name of the font goes on to the next one, as on the phone.
 function TextPanel:onSwipeFont(_, ges)
+    if self.page == "more" then return end
     local on_name = ges.pos:intersectWith(self.font_prev.dimen) or ges.pos:intersectWith(self.font_next.dimen)
     if not on_name then return end
     if ges.direction == "west" then self:stepFont(1)
@@ -297,7 +393,12 @@ end
 
 function TextPanel:rebuild(whole_screen)
     self:build()
-    UIManager:setDirty(whole_screen and "all" or self, "ui", self.area)
+    -- The panel may have grown or shrunk, so what it covered has to be drawn too.
+    if whole_screen then
+        UIManager:setDirty("all", "ui")
+    else
+        UIManager:setDirty(self, "ui", self.area)
+    end
 end
 
 function TextPanel:onShow()

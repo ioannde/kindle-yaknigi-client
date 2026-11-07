@@ -31,7 +31,6 @@ local Status = require("yaknigi/status")
 local Storage = require("yaknigi/storage")
 local Tabs = require("yaknigi/tabs")
 local Terms = require("yaknigi/terms")
-local TextStyle = require("yaknigi/textstyle")
 
 local ROW_H, HEADING_H, BAR_H, PAGER_H = 60, 46, 56, 56
 
@@ -98,29 +97,6 @@ function Settings:entries()
     choice("refresh", "Обновление экрана", rate_labels, index_of(rates, Prefs.refresh_rate()) or 3, function(i)
         Prefs.set_refresh_rate(rates[i])
     end, "Как часто экран полностью перерисовывается со вспышкой. Реже — меньше мигает, но заметнее следы прошлых страниц.")
-    local function keys_and_labels(items)
-        local keys, labels = {}, {}
-        for i, item in ipairs(items) do keys[i], labels[i] = item.key, item.label end
-        return keys, labels
-    end
-    local aligns, align_labels = keys_and_labels(TextStyle.ALIGN)
-    choice("text_align", "Выравнивание текста", align_labels, index_of(aligns, TextStyle.align()) or 1, function(i)
-        TextStyle.set_align(self.ui, aligns[i])
-    end, "«Как в книге» оставляет то, что задал издатель. Смена выравнивания заново раскладывает открытую книгу, в большой это занимает время.")
-    switch("hyphenation", "Переносы слов", TextStyle.hyphenation(), function(on)
-        TextStyle.set_hyphenation(self.ui, on)
-    end)
-    local taps, tap_labels = keys_and_labels(TextStyle.TAP_MODES)
-    choice("tap_mode", "Зоны листания", tap_labels, index_of(taps, TextStyle.tap_mode()) or 1, function(i)
-        TextStyle.set_tap_mode(self.ui, taps[i])
-    end, "Слева и справа: панели открываются по нажатию в середине. Сверху и снизу: нижняя половина листает вперёд, верхняя назад, а панели открываются по нажатию в верхней части экрана.")
-    if self.ui and self.ui.document and self.ui.menu then
-        list[#list + 1] = { key = "koreader", title = "Настройки KOReader", leads_on = true, action = function()
-            local ui = self.ui
-            self:close()
-            UIManager:nextTick(function() ui.menu:onShowMenu() end)
-        end }
-    end
 
     heading("Сон")
     local sleep_note = "Обложка — книги, открытой последней. Лица русской литературы — случайный портрет. "
