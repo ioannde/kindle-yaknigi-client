@@ -2,7 +2,7 @@ name: Kindle build
 
 on:
   push:
-    branches: [claude/kindle-client-mvp]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
