@@ -1061,6 +1061,10 @@ local function test_notes()
         wait("the book", function() return reader() and reader().document and top().name == "ReaderUI" end, 60)
         wait("the plugin to know the book", function() return reader().yaknigi.store and reader().yaknigi.shell end)
     end
+    -- The made-up notes of the tests before went to the server when their list was looked at.
+    for _, note in ipairs(mock_get("/test/notes").notes) do
+        mock_get("/test/note_remove?uuid=" .. note.uuid)
+    end
     open_it()
     local ui = reader()
     local plugin, doc, store = ui.yaknigi, ui.document, ui.yaknigi.store
