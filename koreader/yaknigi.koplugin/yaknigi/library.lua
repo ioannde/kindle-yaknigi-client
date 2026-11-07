@@ -475,19 +475,11 @@ function Library:searchBar(width)
     local row = HorizontalGroup:new{ align = "center", self.search_bar }
     self.clear_button = nil
     if self.query then
-        -- Its middle is where the middle of an icon at the right of a header is.
-        local cross = Kit.text("×", 30)
-        local size = cross:getSize()
-        self.clear_button = Kit.Tappable:new{
-            callback = function() self:search("") end,
-            Kit.Placed:new{
-                width = clear_w,
-                height = height,
-                dx = clear_w - math.floor(Kit.icon_ink_width("menu") / 2) - math.floor(size.w / 2) - Kit.px(1),
-                dy = math.floor((height - size.h) / 2) - Kit.px(1),
-                cross,
-            },
-        }
+        self.clear_button = Kit.icon_button("close", height, function() self:search("") end, {
+            width = clear_w,
+            edge = "right",
+            icon_size = Kit.px(ROW_ICON),
+        })
         row[2] = self.clear_button
     end
     return CenterContainer:new{ dimen = Geom:new{ w = width, h = Kit.px(SEARCH_H) }, row }

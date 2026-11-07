@@ -227,9 +227,10 @@ function Catalogue.bookshelf(shelf)
     if type(shelf) ~= "table" or type(shelf.uuid) ~= "string" then return nil end
     local count = tonumber(shelf.books_count)
     local creator = type(shelf.creator) == "table" and shelf.creator.name
+    local whose = (shelf.own or shelf.editable == true) and "Моя полка" or "Подписка"
     return list_item("bookshelf", shelf.uuid, type(shelf.title) == "string" and shelf.title or "?",
         type(creator) == "string" and creator or nil, rest_cover(shelf),
-        count and Catalogue.count(count, "книга", "книги", "книг") or nil)
+        count and (whose .. " · " .. Catalogue.count(count, "книга", "книги", "книг")) or whose)
 end
 
 function Catalogue.rest_series(series)

@@ -305,7 +305,10 @@ function Api:collection(kind, uuid, cursor)
         if not own then return nil, why, more end
         local shelves = type(own.bookshelves) == "table" and drop_nulls(own.bookshelves) or {}
         local seen = {}
-        for _, shelf in ipairs(shelves) do seen[shelf.uuid] = true end
+        for _, shelf in ipairs(shelves) do
+            seen[shelf.uuid] = true
+            shelf.own = true
+        end
         for _, shelf in ipairs(got) do
             if not seen[shelf.uuid] then shelves[#shelves + 1] = shelf end
         end

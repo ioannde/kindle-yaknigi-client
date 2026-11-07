@@ -559,7 +559,7 @@ local shelves = Catalogue.from_page("bookshelves", { bookshelves = {
 } })
 eq(#shelves, 1, "a shelf without an id is left out")
 eq(shelves[1].kind, "bookshelf", "a shelf leads to a list")
-eq(shelves[1].kind_text, "21 книга", "how long it is")
+eq(shelves[1].kind_text, "Подписка · 21 книга", "whose it is and how long")
 eq(shelves[1].authors, "Кто", "whose it is")
 eq(Catalogue.part({ resource_type = "book", position_label = "2", resource = { uuid = "b" } }).kind_text, "Книга 2", "a part")
 local of_author = Catalogue.from_page("author", {

@@ -1202,7 +1202,8 @@ local function test_lists()
     titles = {}
     for _, shelf in ipairs(menu.rows) do titles[#titles + 1] = shelf.title end
     if table.concat(titles, "|") ~= "Моя полка|Чужая полка" then fail("the shelves: " .. table.concat(titles, "|")) end
-    if menu.rows[2].kind_text ~= "21 книга" then fail("the shelf's line: " .. tostring(menu.rows[2].kind_text)) end
+    if menu.rows[1].kind_text ~= "Моя полка · 2 книги" then fail("one's own shelf: " .. tostring(menu.rows[1].kind_text)) end
+    if menu.rows[2].kind_text ~= "Подписка · 21 книга" then fail("a followed shelf: " .. tostring(menu.rows[2].kind_text)) end
     UIManager:forceRePaint()
     shot("77-shelves")
     tap_widget(menu.row_buttons[menu.rows[1]])

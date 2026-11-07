@@ -87,14 +87,16 @@ function Chrome:build()
     local tail = left and ("ещё " .. left .. " стр.") or ""
     local tail_widget = Kit.text(tail, 15, { color = Blitbuffer.COLOR_DARK_GRAY })
     local icon_side = Kit.px(28)
-    local chapter_width = inner - icon_side - tail_widget:getSize().w - Kit.px(12)
+    -- The drawing of the chevron ends at the margin, not the empty room around it.
+    local chevron_w = icon_side - Kit.icon_right_room("chevron.right", icon_side)
+    local chapter_width = inner - chevron_w - tail_widget:getSize().w - Kit.px(12)
     self.chapter_row = Kit.Tappable:new{
         callback = function() self:after(function() ui.toc:onShowToc() end) end,
         HorizontalGroup:new{ align = "center",
             Kit.fixed(Kit.text(chapter ~= "" and chapter or "Без названия", 17, { max_width = chapter_width }), chapter_width),
             HorizontalSpan:new{ width = Kit.px(12) },
             tail_widget,
-            Kit.icon("chevron.right", icon_side),
+            Kit.Placed:new{ width = chevron_w, height = icon_side, dx = 0, dy = 0, Kit.icon("chevron.right", icon_side) },
         },
     }
     local ratio = self.shell:progress()

@@ -284,11 +284,12 @@ function Kit.value_and_chevron(value)
     return group, Kit.icon_right_room("chevron.right", icon)
 end
 
---- ‹ page / pages ›. on_turn gets -1 or 1. Returns the row and both arrows.
+--- < page / pages >. on_turn gets -1 or 1. Returns the row and both arrows.
 function Kit.pager(page, pages, width, height, on_turn)
     local third = math.floor(width / 3)
-    local prev = Kit.button(Kit.text("‹", 34), third, height, function() on_turn(-1) end)
-    local next_ = Kit.button(Kit.text("›", 34), third, height, function() on_turn(1) end)
+    local icon = Kit.px(36)
+    local prev = Kit.button(Kit.icon("chevron.left", icon), third, height, function() on_turn(-1) end)
+    local next_ = Kit.button(Kit.icon("chevron.right", icon), third, height, function() on_turn(1) end)
     local row = HorizontalGroup:new{ align = "center",
         prev,
         CenterContainer:new{

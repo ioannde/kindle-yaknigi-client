@@ -76,7 +76,7 @@ function Notes:row(item, width, height)
         local private = NotesLocal.is_private(item)
         lock = Kit.icon_button(private and "lock" or "lock.open", side, function() self:togglePrivate(item) end)
     end
-    local remove = Kit.icon_button("close", side, function() self:askRemove(item) end)
+    local remove = Kit.icon_button("close", side, function() self:askRemove(item) end, { edge = "right" })
     return HorizontalGroup:new{ align = "center", tap, HorizontalSpan:new{ width = Kit.px(8) },
         lock or HorizontalSpan:new{ width = side }, remove },
         tap, remove, lock
