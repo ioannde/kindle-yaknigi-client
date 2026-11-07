@@ -3,19 +3,17 @@
 local ButtonDialog = require("ui/widget/buttondialog")
 local Device = require("device")
 local Event = require("ui/event")
-local IconWidget = require("ui/widget/iconwidget")
 local UIManager = require("ui/uimanager")
 
 local Kit = require("yaknigi/kit")
 
 local Power = {}
 
-local HERE = debug.getinfo(1, "S").source:match("^@(.*)/[^/]*$") or "."
 
 --- The button for a corner of the header: the drawing stands as far from the edge as the text.
 function Power.button(height, callback)
     local icon = Kit.px(30)
-    return Kit.button(IconWidget:new{ file = HERE .. "/icons/power.svg", width = icon, height = icon },
+    return Kit.button(Kit.icon("power", icon),
         icon + 2 * Kit.px(16), height, callback)
 end
 

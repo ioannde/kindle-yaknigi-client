@@ -1183,12 +1183,12 @@ function Yaknigi:showBookMenu(item)
         end,
     } }
     if saving[uuid] then
-        entries[#entries + 1] = { key = "saving", text = "Сохраняю…", file = "wait", disabled = true }
+        entries[#entries + 1] = { key = "saving", text = "Сохраняю…", icon = "wait", disabled = true }
     elseif is_whole(card) then
-        entries[#entries + 1] = { key = "remove_device", text = "Удалить с устройства", file = "cloud.off",
+        entries[#entries + 1] = { key = "remove_device", text = "Удалить с устройства", icon = "cloud.off",
             action = function() self:removeFromDevice(card) end }
     else
-        entries[#entries + 1] = { key = "save", text = "Сохранить на устройство", file = "cloud.down",
+        entries[#entries + 1] = { key = "save", text = "Сохранить на устройство", icon = "cloud.down",
             action = function() self:saveBook(card) end }
     end
     for _, link in ipairs(Catalogue.links(card.book)) do
@@ -1201,7 +1201,7 @@ function Yaknigi:showBookMenu(item)
         }
     end
     if card.uuid then
-        entries[#entries + 1] = { key = "remove_library", text = "Удалить из библиотеки", file = "trash",
+        entries[#entries + 1] = { key = "remove_library", text = "Удалить из библиотеки", icon = "trash",
             action = function()
                 UIManager:show(ConfirmBox:new{
                     text = serial

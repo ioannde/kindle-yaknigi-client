@@ -9,7 +9,6 @@ local Geom = require("ui/geometry")
 local GestureRange = require("ui/gesturerange")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local HorizontalSpan = require("ui/widget/horizontalspan")
-local IconWidget = require("ui/widget/iconwidget")
 local InputContainer = require("ui/widget/container/inputcontainer")
 local LeftContainer = require("ui/widget/container/leftcontainer")
 local OverlapGroup = require("ui/widget/overlapgroup")
@@ -25,7 +24,6 @@ local Settings = require("yaknigi/settings")
 local Status = require("yaknigi/status")
 local TextPanel = require("yaknigi/textpanel")
 
-local HERE = debug.getinfo(1, "S").source:match("^@(.*)/[^/]*$") or "."
 
 local Chrome = InputContainer:extend{
     name = "YaknigiChrome",
@@ -63,7 +61,7 @@ function Chrome:build()
         names[2] = Kit.text(props.authors:gsub("\n", ", "), 15, { color = Blitbuffer.COLOR_DARK_GRAY, max_width = title_width })
     end
     self.back = Kit.icon_button("chevron.left", side, function() self:goBack() end, { edge = "left", width = icon_w })
-    self.more = Kit.icon_button("appbar.menu", side, function() self:showMore() end, { edge = "right", width = icon_w })
+    self.more = Kit.icon_button("menu", side, function() self:showMore() end, { edge = "right", width = icon_w })
     self.top_panel = Kit.Sheet:new{ width = W, edge = "top",
         VerticalGroup:new{ align = "left",
             Status:new{ width = W },
@@ -96,7 +94,7 @@ function Chrome:build()
             Kit.fixed(Kit.text(chapter ~= "" and chapter or "Без названия", 17, { max_width = chapter_width }), chapter_width),
             HorizontalSpan:new{ width = Kit.px(12) },
             tail_widget,
-            IconWidget:new{ icon = "chevron.right", width = icon_side, height = icon_side },
+            Kit.icon("chevron.right", icon_side),
         },
     }
     local ratio = self.shell:progress()
@@ -108,13 +106,13 @@ function Chrome:build()
     }
     local cell = math.floor(inner / 4)
     local icon = Kit.px(36)
-    self.toc_button = Kit.action(IconWidget:new{ file = HERE .. "/icons/panel.toc.svg", width = icon, height = icon }, "Оглавление", cell,
+    self.toc_button = Kit.action(Kit.icon("panel.toc", icon), "Оглавление", cell,
         function() self:after(function() ui.toc:onShowToc() end) end)
-    self.notes_button = Kit.action(IconWidget:new{ file = HERE .. "/icons/panel.notes.svg", width = icon, height = icon }, "Заметки", cell,
+    self.notes_button = Kit.action(Kit.icon("panel.notes", icon), "Заметки", cell,
         function() self:after(function() UIManager:show(Notes:new{ ui = ui, shell = self.shell }) end) end)
-    self.search_button = Kit.action(IconWidget:new{ file = HERE .. "/icons/tab.search.svg", width = icon, height = icon }, "Поиск", cell,
+    self.search_button = Kit.action(Kit.icon("tab.search", icon), "Поиск", cell,
         function() self:after(function() ui.search:onShowFulltextSearchInput() end) end)
-    self.text_button = Kit.action(IconWidget:new{ file = HERE .. "/icons/text.svg", width = icon, height = icon }, "Текст", cell,
+    self.text_button = Kit.action(Kit.icon("text", icon), "Текст", cell,
         function() self:after(function() UIManager:show(TextPanel:new{ ui = ui, shell = self.shell }) end) end)
 
     -- The same tap as on the page: a tap on the progress shows the next thing.

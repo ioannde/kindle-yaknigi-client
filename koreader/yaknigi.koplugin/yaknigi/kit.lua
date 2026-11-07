@@ -214,26 +214,31 @@ end
 
 Kit.Drawn = Drawn
 
--- How much empty room KOReader's icons have around what is drawn, as a share of the icon's
--- side. Centring the icon does not centre the drawing, and the two differ from icon to icon.
-local INK = {
-    ["chevron.left"] = { left = 21 / 76, right = 25 / 76, top = 11 / 76, bottom = 15 / 76 },
-    ["chevron.right"] = { left = 25 / 76, right = 21 / 76, top = 11 / 76, bottom = 15 / 76 },
-    ["appbar.menu"] = { left = 10 / 76, right = 7 / 76, top = 14 / 76, bottom = 15 / 76 },
-    ["appbar.search"] = { left = 13 / 76, right = 6 / 76, top = 7 / 76, bottom = 11 / 76 },
-}
-local NO_INK = { left = 0, right = 0, top = 0, bottom = 0 }
+-- Centring an icon does not centre the drawing: how much room each one leaves is measured
+-- from the drawings.
+local INK = require("yaknigi/iconink")
 local ICON = 36
+local ICONS = debug.getinfo(1, "S").source:match("^@(.*)/[^/]*$") .. "/icons/"
+
+--- An icon of the set, drawn in Figma and brought in by tools/icons/import_figma.py. KOReader's
+-- own are never used: they differ from these in weight and in how much of the side they fill.
+function Kit.icon(name, side, opts)
+    return IconWidget:new{
+        file = ICONS .. name .. ".svg",
+        width = side,
+        height = side,
+        dim = opts and opts.dim or nil,
+    }
+end
 
 --- Empty room at the right of an icon of the given side.
 function Kit.icon_right_room(name, side)
-    local ink = INK[name] or NO_INK
-    return math.floor(ink.right * side + 0.5)
+    return math.floor(INK[name].right * side + 0.5)
 end
 
 --- Width of what is actually drawn in an icon.
 function Kit.icon_ink_width(name)
-    local ink = INK[name] or NO_INK
+    local ink = INK[name]
     return math.floor(Kit.px(ICON) * (1 - ink.left - ink.right) + 0.5)
 end
 
@@ -243,7 +248,7 @@ function Kit.icon_button(name, side, callback, opts)
     opts = opts or {}
     local icon = opts.icon_size or Kit.px(ICON)
     local width = opts.width or side
-    local ink = INK[name] or NO_INK
+    local ink = INK[name]
     local left, right = math.floor(ink.left * icon + 0.5), math.floor(ink.right * icon + 0.5)
     local top, bottom = math.floor(ink.top * icon + 0.5), math.floor(ink.bottom * icon + 0.5)
     local dx
@@ -261,7 +266,7 @@ function Kit.icon_button(name, side, callback, opts)
             height = side,
             dx = dx,
             dy = math.floor((side - (icon - top - bottom)) / 2) - top,
-            IconWidget:new{ icon = not opts.file and name or nil, file = opts.file, width = icon, height = icon },
+            Kit.icon(name, icon),
         },
     }
 end
@@ -275,7 +280,7 @@ function Kit.value_and_chevron(value)
         group[1] = Kit.text(value, 16, { color = Blitbuffer.COLOR_DARK_GRAY })
         group[2] = HorizontalSpan:new{ width = Kit.px(6) }
     end
-    group[#group + 1] = IconWidget:new{ icon = "chevron.right", width = icon, height = icon }
+    group[#group + 1] = Kit.icon("chevron.right", icon)
     return group, Kit.icon_right_room("chevron.right", icon)
 end
 

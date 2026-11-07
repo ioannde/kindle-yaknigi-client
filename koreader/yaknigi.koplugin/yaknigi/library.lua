@@ -8,7 +8,6 @@ local Geom = require("ui/geometry")
 local GestureRange = require("ui/gesturerange")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local HorizontalSpan = require("ui/widget/horizontalspan")
-local IconWidget = require("ui/widget/iconwidget")
 local ImageWidget = require("ui/widget/imagewidget")
 local InputContainer = require("ui/widget/container/inputcontainer")
 local LeftContainer = require("ui/widget/container/leftcontainer")
@@ -40,7 +39,6 @@ local function retry_label(message, width)
     }
 end
 
-local HERE = debug.getinfo(1, "S").source:match("^@(.*)/[^/]*$") or "."
 local ROW_BUTTON_W, ROW_ICON = 64, 32
 
 local Library = InputContainer:extend{
@@ -168,28 +166,27 @@ Library.cover_box = cover_box
 function Library:rowButton(item, height)
     if not item.card then return nil end
     local status = self.book_status and self.book_status(item)
-    local name, file, action
+    local name, action
     local function menu() self.on_book_menu(item) end
     if item.unavailable then
-        file, action = "lock", function() self:onMenuSelect(item) end
+        name, action = "lock", function() self:onMenuSelect(item) end
     elseif item.adding or status == "saving" then
-        file, action = "wait", function() end
+        name, action = "wait", function() end
     elseif item.kind == "author" or item.kind == "series" or item.kind == "bookshelf" then
         name, action = "chevron.right", function() self:onMenuSelect(item) end
     elseif not item.found then
-        file, action = "dots", menu
+        name, action = "dots", menu
     elseif status == "whole" then
         name, action = "check", menu
     elseif self:inLibrary(item) or item.in_library then
-        file, action = "cloud.down", function() self.on_save(item) end
+        name, action = "cloud.down", function() self.on_save(item) end
     else
-        file, action = "plus", function() self.on_add(item) end
+        name, action = "plus", function() self.on_add(item) end
     end
     return Kit.icon_button(name, height, action, {
         width = Kit.px(ROW_BUTTON_W),
         edge = "right",
         icon_size = Kit.px(ROW_ICON),
-        file = file and (HERE .. "/icons/" .. file .. ".svg") or nil,
     })
 end
 
@@ -313,8 +310,7 @@ local function heading_row(name, count, width, height, callback, size, icon)
     local left = HorizontalGroup:new{ align = "center" }
     if icon then
         local side = Kit.px(26)
-        local file = icon:match("%.svg$") and icon or nil
-        left[1] = IconWidget:new{ icon = not file and icon or nil, file = file, width = side, height = side }
+        left[1] = Kit.icon(icon, side)
         left[2] = HorizontalSpan:new{ width = Kit.px(14) }
         title_w = title_w - side - Kit.px(14)
     end
@@ -364,13 +360,12 @@ function Library:strip(id, books, width, cover_h, with_progress)
     }
 end
 
-local HERE = debug.getinfo(1, "S").source:match("^@(.*)/[^/]*$") or "."
-local SHELF_ICONS = { all = "book.opened", finished = "check", device = HERE .. "/icons/cloud.down.svg" }
+local SHELF_ICONS = { all = "book", finished = "check", device = "cloud.down" }
 
 --- The shelves of Yandex's, made there by the reader or followed: a list like any other.
 function Library:bookshelvesRow(width)
     local row = heading_row("Полки", nil, width, Kit.px(SHELF_ROW_H),
-        function() self.on_bookshelves() end, 18, HERE .. "/icons/shelves.svg")
+        function() self.on_bookshelves() end, 18, "shelves")
     self.shelf_rows.bookshelves = row
     return row
 end
@@ -467,7 +462,7 @@ function Library:searchBar(width)
             dimen = Geom:new{ w = width - clear_w - 2 * Kit.px(1), h = height - 2 * Kit.px(1) },
             HorizontalGroup:new{ align = "center",
                 HorizontalSpan:new{ width = Kit.px(14) },
-                IconWidget:new{ icon = "appbar.search", width = icon, height = icon },
+                Kit.icon("tab.search", icon),
                 HorizontalSpan:new{ width = Kit.px(10) },
                 Kit.text(self.query or "Поиск", 17, {
                     color = not self.query and Blitbuffer.COLOR_DARK_GRAY or nil,
@@ -488,7 +483,7 @@ function Library:searchBar(width)
             Kit.Placed:new{
                 width = clear_w,
                 height = height,
-                dx = clear_w - math.floor(Kit.icon_ink_width("appbar.menu") / 2) - math.floor(size.w / 2) - Kit.px(1),
+                dx = clear_w - math.floor(Kit.icon_ink_width("menu") / 2) - math.floor(size.w / 2) - Kit.px(1),
                 dy = math.floor((height - size.h) / 2) - Kit.px(1),
                 cross,
             },
@@ -637,7 +632,7 @@ function Library:build()
             },
         }
         if (home or in_feed) and not self.on_sign_in then
-            self.refresh_button = Kit.icon_button("cre.render.reload", side, function() self:refresh() end,
+            self.refresh_button = Kit.icon_button("reload", side, function() self:refresh() end,
                 { edge = "right", margin = pad })
             header_row[2] = RightContainer:new{ dimen = box:copy(), self.refresh_button }
         end

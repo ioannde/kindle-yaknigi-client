@@ -10,7 +10,6 @@ local Geom = require("ui/geometry")
 local GestureRange = require("ui/gesturerange")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local HorizontalSpan = require("ui/widget/horizontalspan")
-local IconWidget = require("ui/widget/iconwidget")
 local InputContainer = require("ui/widget/container/inputcontainer")
 local LineWidget = require("ui/widget/linewidget")
 local OverlapGroup = require("ui/widget/overlapgroup")
@@ -21,7 +20,6 @@ local Screen = Device.screen
 
 local Kit = require("yaknigi/kit")
 
-local HERE = debug.getinfo(1, "S").source:match("^@(.*)/[^/]*$") or "."
 
 local TextPanel = InputContainer:extend{
     name = "YaknigiTextPanel",
@@ -87,7 +85,7 @@ end
 local function slider_row(slider, left, left_side, right, right_side, box)
     local function icon(name, side)
         return CenterContainer:new{ dimen = Geom:new{ w = box, h = slider:getSize().h },
-            IconWidget:new{ file = HERE .. "/icons/" .. name .. ".svg", width = side, height = side } }
+            Kit.icon(name, side) }
     end
     return HorizontalGroup:new{ align = "center", icon(left, left_side), slider, icon(right, right_side) }
 end

@@ -20,7 +20,6 @@ local Screen = Device.screen
 local Kit = require("yaknigi/kit")
 local NotesLocal = require("yaknigi/notes_local")
 
-local HERE = debug.getinfo(1, "S").source:match("^@(.*)/[^/]*$") or "."
 local NOTE_SHOWN_LETTERS = 300
 
 local Notes = InputContainer:extend{
@@ -75,9 +74,7 @@ function Notes:row(item, width, height)
     local lock
     if item.drawer then
         local private = NotesLocal.is_private(item)
-        lock = Kit.icon_button("lock", side, function() self:togglePrivate(item) end, {
-            file = HERE .. "/icons/" .. (private and "lock" or "lock.open") .. ".svg",
-        })
+        lock = Kit.icon_button(private and "lock" or "lock.open", side, function() self:togglePrivate(item) end)
     end
     local remove = Kit.icon_button("close", side, function() self:askRemove(item) end)
     return HorizontalGroup:new{ align = "center", tap, HorizontalSpan:new{ width = Kit.px(8) },

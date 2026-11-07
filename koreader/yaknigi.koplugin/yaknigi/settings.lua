@@ -12,7 +12,6 @@ local Geom = require("ui/geometry")
 local GestureRange = require("ui/gesturerange")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local HorizontalSpan = require("ui/widget/horizontalspan")
-local IconWidget = require("ui/widget/iconwidget")
 local InfoMessage = require("ui/widget/infomessage")
 local InputContainer = require("ui/widget/container/inputcontainer")
 local LeftContainer = require("ui/widget/container/leftcontainer")
@@ -218,7 +217,7 @@ function Settings:choiceRows(choice)
     for i, label in ipairs(choice.labels) do
         local mark
         if i == choice.selected then
-            mark = IconWidget:new{ icon = "check", width = Kit.px(28), height = Kit.px(28) }
+            mark = Kit.icon("check", Kit.px(28))
         end
         local widget = self:row(label, mark, nil, function()
             choice.pick(i)

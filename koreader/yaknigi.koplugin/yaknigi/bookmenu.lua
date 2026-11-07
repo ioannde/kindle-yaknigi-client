@@ -7,7 +7,6 @@ local Geom = require("ui/geometry")
 local GestureRange = require("ui/gesturerange")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local HorizontalSpan = require("ui/widget/horizontalspan")
-local IconWidget = require("ui/widget/iconwidget")
 local InputContainer = require("ui/widget/container/inputcontainer")
 local LeftContainer = require("ui/widget/container/leftcontainer")
 local OverlapGroup = require("ui/widget/overlapgroup")
@@ -17,7 +16,6 @@ local Screen = Device.screen
 
 local Kit = require("yaknigi/kit")
 
-local HERE = debug.getinfo(1, "S").source:match("^@(.*)/[^/]*$") or "."
 local ROW_H, ICON = 64, 32
 
 local BookMenu = InputContainer:extend{
@@ -61,12 +59,7 @@ function BookMenu:init()
         local content = LeftContainer:new{ dimen = box:copy(),
             HorizontalGroup:new{ align = "center",
                 HorizontalSpan:new{ width = pad },
-                IconWidget:new{
-                    icon = entry.icon,
-                    file = entry.file and (HERE .. "/icons/" .. entry.file .. ".svg") or nil,
-                    width = icon, height = icon,
-                    dim = entry.disabled or nil,
-                },
+                Kit.icon(entry.icon, icon, { dim = entry.disabled }),
                 HorizontalSpan:new{ width = Kit.px(16) },
                 Kit.text(entry.text, 18, { color = color, max_width = inner - icon - Kit.px(16) }),
             },

@@ -824,5 +824,55 @@ eq(notes_api:create_note("quote", "ser", { cfi = "/6/8!/4" }), nil, "not in what
 eq(notes_api:update_quote("q1", { cfi = "/6/12!/4" }), true, "an edit goes")
 eq(calls[2], "q1 /6/4!/4", "with the place in the episode")
 
+-- The icons: one set, by one rule, and nothing of KOReader's.
+do
+    local root = "koreader/yaknigi.koplugin/"
+    local function lines_of(command)
+        local out, pipe = {}, io.popen(command)
+        for line in pipe:lines() do out[#out + 1] = line end
+        pipe:close()
+        return out
+    end
+    local function read(path)
+        local f = assert(io.open(path, "rb"))
+        local text = f:read("*a")
+        f:close()
+        return text
+    end
+    local ink = require("yaknigi/iconink")
+    local have = {}
+    for _, path in ipairs(lines_of("ls " .. root .. "yaknigi/icons/*.svg")) do
+        local name = path:match("([^/]+)%.svg$")
+        have[name] = true
+        local svg = read(path)
+        eq(svg:find('viewBox="0 0 24 24"', 1, true) ~= nil, true, name .. " is on the 24 grid")
+        for width in svg:gmatch('stroke%-width="([^"]+)"') do
+            eq(width, "2.2", name .. " has the set's stroke")
+        end
+        for _, word in ipairs{ "clip-path", "mask", "filter", "<style", "transform" } do
+            eq(svg:find(word, 1, true), nil, name .. " has nothing nanosvg cannot draw: " .. word)
+        end
+        if not name:find("%.idle$") then
+            eq(ink[name] ~= nil, true, name .. " is measured")
+        end
+    end
+    for name in pairs(ink) do eq(have[name], true, name .. " measured and there") end
+    local sources = lines_of("ls " .. root .. "main.lua " .. root .. "yaknigi/*.lua")
+    local used = 0
+    for _, path in ipairs(sources) do
+        local source = read(path)
+        for _, pattern in ipairs{ 'Kit%.icon%("([^"]+)"', 'Kit%.icon_button%("([^"]+)"',
+                'Kit%.icon_right_room%("([^"]+)"', 'Kit%.icon_ink_width%("([^"]+)"', '[{,] *icon = "([^"]+)"' } do
+            for name in source:gmatch(pattern) do
+                used = used + 1
+                eq(have[name], true, path .. " uses the icon " .. name)
+            end
+        end
+        eq(source:find("IconWidget:new", 1, true) ~= nil and not path:find("kit%.lua$"), false,
+            path .. " makes icons through the kit")
+    end
+    eq(used > 20, true, "the icons in use were found")
+end
+
 print(("%d passed, %d failed"):format(passed, failed))
 os.exit(failed == 0 and 0 or 1)

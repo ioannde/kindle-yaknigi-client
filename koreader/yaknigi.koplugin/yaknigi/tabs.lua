@@ -3,14 +3,12 @@ local Blitbuffer = require("ffi/blitbuffer")
 local CenterContainer = require("ui/widget/container/centercontainer")
 local Geom = require("ui/geometry")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
-local IconWidget = require("ui/widget/iconwidget")
 local VerticalGroup = require("ui/widget/verticalgroup")
 
 local Kit = require("yaknigi/kit")
 
 local Tabs = {}
 
-local HERE = debug.getinfo(1, "S").source:match("^@(.*)/[^/]*$") or "."
 
 local ALL = {
     { id = "library", caption = "Библиотека", icon = "tab.library" },
@@ -32,12 +30,8 @@ function Tabs.bar(width, selected, on_select)
     for i, tab in ipairs(ALL) do
         local on = tab.id == selected
         local content = VerticalGroup:new{ align = "center",
-            IconWidget:new{
-                -- The .idle drawings are in the colour of the idle captions, COLOR_DARK_GRAY.
-                file = HERE .. "/icons/" .. tab.icon .. (on and "" or ".idle") .. ".svg",
-                width = side,
-                height = side,
-            },
+            -- The .idle drawings are in the colour of the idle captions, COLOR_DARK_GRAY.
+            Kit.icon(tab.icon .. (on and "" or ".idle"), side),
             Kit.gap(Kit.px(3)),
             Kit.text(tab.caption, 13, {
                 bold = on,

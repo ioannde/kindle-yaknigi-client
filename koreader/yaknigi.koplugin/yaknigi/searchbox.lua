@@ -7,7 +7,6 @@ local Geom = require("ui/geometry")
 local GestureRange = require("ui/gesturerange")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local HorizontalSpan = require("ui/widget/horizontalspan")
-local IconWidget = require("ui/widget/iconwidget")
 local InputContainer = require("ui/widget/container/inputcontainer")
 local InputText = require("ui/widget/inputtext")
 local LeftContainer = require("ui/widget/container/leftcontainer")
@@ -68,7 +67,7 @@ function SearchBox:init()
                 dimen = Geom:new{ w = box_w - 2 * border, h = self.height - 2 * border },
                 HorizontalGroup:new{ align = "center",
                     HorizontalSpan:new{ width = before_icon },
-                    IconWidget:new{ icon = "appbar.search", width = icon, height = icon },
+                    Kit.icon("tab.search", icon),
                     HorizontalSpan:new{ width = after_icon },
                     self.input,
                 },
