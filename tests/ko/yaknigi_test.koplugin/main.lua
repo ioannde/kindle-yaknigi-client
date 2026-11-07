@@ -1239,7 +1239,8 @@ local function test_notes()
 
     -- The lock in the list changes that highlight alone.
     UIManager:show(require("yaknigi/notes"):new{ ui = ui, shell = plugin.shell })
-    local list = wait("the list of notes", is_named("YaknigiNotes"))
+    wait("the list of notes", is_named("YaknigiNotes"))
+    local list = top()
     settled()
     UIManager:forceRePaint()
     shot("82-notes-privacy")
