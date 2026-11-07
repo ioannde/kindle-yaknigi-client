@@ -848,7 +848,7 @@ local function test_reading_screen()
     local Prefs = require("yaknigi/prefs")
     local lfs = require("libs/libkoreader-lfs")
     tap_widget(settings.rows.sleep_screen)
-    tap_widget(settings.options[2])
+    tap_widget(settings.options[3])
     local own_dir = Prefs.own_sleep_dir()
     if lfs.attributes(own_dir, "mode") ~= "directory" then fail("no folder for one's own picture") end
     if G_reader_settings:readSetting("screensaver_document_cover") ~= cover then
