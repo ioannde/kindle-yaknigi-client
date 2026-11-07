@@ -113,7 +113,8 @@ def big_chapter(path):
         if i % 3 == 2:
             return (f"<p>{start} {PARAGRAPH} <em>курсив {i} {PARAGRAPH}</em> <b>жирный {i} {PARAGRAPH}</b>"
                     f" хвост {i} {PARAGRAPH} &amp; {PARAGRAPH}</p>\n<!-- a > b --><br/>")
-        return f"<p>{start} {PARAGRAPH * 4}</p>\n"
+        # A space first in a paragraph, and in the middle a run of them: both are in real books.
+        return f"<p>{' ' if i == 3 else ''}{start} {PARAGRAPH}\n  {PARAGRAPH * 3}</p>\n"
     paragraphs = "".join(paragraph(i) for i in range(30))
     if number == 5:
         # A note on the page and a link to another chapter, as there are in real books.

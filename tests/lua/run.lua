@@ -267,6 +267,18 @@ eq(Cfi.locate("<html><head/><body><img/></body></html>", F .. "/img"), nil, "no 
 -- from a CFI to a place in the text
 local NOTE_HTML = '<html><head><title>t</title></head><body><p>раз</p>\n<div><p>два</p><p>три <em>жирно</em> хвост <b>x</b>\nконец</p></div></body></html>'
 local to_point = function(inner) return (Cfi.to_point(NOTE_HTML, 3, inner)) end
+do -- spaces: a phone counts them all, crengine keeps one of a run
+    local spaced = "<html><head></head><body><p>ab  \n cd &amp; эф</p></body></html>"
+    local at = function(n) return (Cfi.to_point(spaced, 1, "/2/4/2/1:" .. n)) end
+    eq(at(2), "/body/DocFragment[1]/body/p/text().2", "before a run of spaces")
+    eq(at(4), "/body/DocFragment[1]/body/p/text().3", "in a run of spaces")
+    eq(at(6), "/body/DocFragment[1]/body/p/text().3", "after a run of spaces")
+    eq(at(12), "/body/DocFragment[1]/body/p/text().9", "after an entity")
+    eq(Cfi.locate(spaced, at(2)), "/2/4/2/1:2", "back, before a run of spaces")
+    eq(Cfi.locate(spaced, at(6)), "/2/4/2/1:6", "back, after a run of spaces")
+    eq(Cfi.locate(spaced, at(12)), "/2/4/2/1:12", "back, after an entity")
+    eq(Cfi.locate(spaced, "/body/DocFragment[1]/body/p/text().99"), "/2/4/2/1:13", "past the end")
+end
 eq(to_point("/2/4/2/1:1"), "/body/DocFragment[3]/body/p[1]/text().1", "text in a first paragraph")
 eq(to_point("/2/4/4/4/1:2"), "/body/DocFragment[3]/body/div[1]/p[2]/text().2", "by number among its kind")
 eq(to_point("/2/4/4/4/3:1"), "/body/DocFragment[3]/body/div[1]/p[2]/text()[2].1", "text after an element")

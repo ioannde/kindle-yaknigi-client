@@ -98,6 +98,25 @@ function Cfi.to_xpointer(cfi, fragment, html)
     return base
 end
 
+-- A phone counts every letter of a piece of text. crengine keeps one space of any run of them; both
+-- read an entity as one letter. Goes on until stop(phone's count, crengine's count), and gives both.
+local function count_letters(text, stop)
+    local phone, kept, pos, after_space = 0, 0, 1, false
+    while pos <= #text and not stop(phone, kept) do
+        local c = text:byte(pos)
+        local space = c == 32 or c == 9 or c == 10 or c == 13
+        if c == 38 then
+            pos = (select(2, text:find("^&[#%w]+;", pos)) or pos) + 1
+        else
+            pos = pos + (c < 128 and 1 or c < 224 and 2 or c < 240 and 3 or 4)
+        end
+        phone = phone + 1
+        if not (space and after_space) then kept = kept + 1 end
+        after_space = space
+    end
+    return phone, kept
+end
+
 --- Which text under an element a CFI's odd step means: its number among the element's pieces of
 -- text as crengine has them, and the text. pos is where the element's contents start.
 local function text_run(html, pos, odd)
@@ -163,7 +182,8 @@ function Cfi.to_point(html, fragment, inner)
     if not start then return nil end
     local run, text = text_run(html, start, odd)
     if not run then return nil end
-    return base .. where .. "/text()" .. (run > 1 and "[" .. run .. "]" or "") .. "." .. offset, text
+    local _, kept = count_letters(text, function(phone) return phone >= offset end)
+    return base .. where .. "/text()" .. (run > 1 and "[" .. run .. "]" or "") .. "." .. kept, text
 end
 
 --- The two ends of a range such as /6/22!,/2/4/6/1:154,/2/4/6/1:157: the chapter's place in the
@@ -221,11 +241,6 @@ local function parse_xpointer(xp)
     return target, text_index, offset
 end
 
-local function text_length(text)
-    local plain = text:gsub("&[#%w]+;", "x")
-    return select(2, plain:gsub("[^\128-\191]", ""))
-end
-
 --- Where an xpointer is in a chapter, as the part of a CFI after the "!", such as
 -- /2/4/2/64/1:560. Yandex's positions always end in a text node, so a pointer at an
 -- element, such as a picture, gives the next text. Returns nil if there is no text at
@@ -258,7 +273,8 @@ function Cfi.locate(html, xp)
         if top.is_target and text_index then
             runs = runs + 1
             if runs == text_index and not blank then
-                return here(math.min(offset, text_length(text)))
+                local phone, kept = count_letters(text, function(_, kept) return kept > offset end)
+                return here(kept > offset and phone - 1 or phone)
             end
         end
         if not blank and deepest > fallback_depth then

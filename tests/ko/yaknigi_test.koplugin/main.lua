@@ -1116,7 +1116,7 @@ local function test_notes()
         end
     end
     for _, inner in ipairs({ "/2/4/2/2/1:10", "/2/4/2/6/1:5", "/2/4/2/6/2/1:5", "/2/4/2/6/4/1:7", "/2/4/2/6/5:3",
-                             "/2/4/2/4/1:200" }) do
+                             "/2/4/2/4/1:200", "/2/4/2/8/1:30", "/2/4/2/8/1:400" }) do
         matches(inner)
     end
     local _, tail = Cfi.to_point(html, number, "/2/4/2/6/5:3")
