@@ -1,9 +1,25 @@
-# kindle-yaknigi
+# Клиент для Яндекс Книг
 
-Автономный нативный клиент **Яндекс Книг** для Amazon Kindle (e-ink).
-Диапазон устройств: **Kindle Touch → Paperwhite 2022** (ведущее — PW5).
-Архитектура, решения и дорожная карта: [`PLAN.md`](PLAN.md),
-[`docs/STRUCTURE.md`](docs/STRUCTURE.md), [`docs/PHASE0.md`](docs/PHASE0.md).
+Неофициальный клиент **Яндекс Книг** для Amazon Kindle с джейлбрейком: плагин
+`koreader/yaknigi.koplugin` к KOReader со своим простым интерфейсом.
+
+## Установка
+
+Сборка `yaknigi-ko-kindlehf` из GitHub Actions подходит для прошивок с hard-float
+(`kindlehf`, 5.16.3 и новее). Её содержимое копируется в корень Kindle по USB.
+
+- **С KUAL:** запуск из меню KUAL, пункт «Клиент для Яндекс Книг».
+- **Без KUAL, с новыми джейлбрейками:** `documents/yaknigi.sh` виден среди книг
+  как «Клиент для Яндекс Книг» и запускается по нажатию.
+- **KPM:** сборка `yaknigi-ko-kpkg` содержит пакет `.kpkg` с той же программой.
+
+Настройки, вход и скачанные книги лежат в `extensions/yaknigi-ko/home` и при
+обновлении не трогаются.
+
+## Прежний клиент на C
+
+Всё, что ниже, описывает первую версию из `src/`: её заменил плагин. Архитектура:
+[`PLAN.md`](PLAN.md), [`docs/STRUCTURE.md`](docs/STRUCTURE.md).
 
 ## Статус реализации
 
@@ -26,8 +42,7 @@
 
 ¹ Базовый URL/пути REST подтверждены в Фазе 0 (`Auth-Token` + App-заголовки);
 override через `YB_API_BASE`.
-² Фаза 0 пройдена (🟢): протокол чтения снят с приложения
-([`docs/PHASE0-FINDINGS.md`](docs/PHASE0-FINDINGS.md)). `content.c`:
+² Фаза 0 пройдена (🟢): протокол чтения снят с приложения. `content.c`:
 `metadata/v4` → `metadata_secret` (ключ) → **AES-256-CBC** дешифровка `opf` →
 spine → `/documents/{doc}/content?path=…` (plain HTML) → общий `html→blocks`.
 Дешифровка проверена тест-вектором, парсинг главы — на реальном HTML Bookmate.
@@ -41,11 +56,6 @@ spine → `/documents/{doc}/content?path=…` (plain HTML) → общий `html�
 - **`yb-smoke [login|library|whoami|read UUID]`** — реальный сетевой путь:
   device-flow логин, вывод библиотеки, и `read <uuid>` — загрузка текста книги
   через протокол чтения Bookmate (метаданные → дешифровка → главы).
-- **`tools/download_epub.py`** — интерактивная Python-утилита: показывает твою
-  библиотеку списком, ты выбираешь номера (`1,3 5-7` / `all`), и она
-  пересобирает выбранные книги в стандартный **`.epub`** (метаданные →
-  AES-дешифровка манифеста → главы/картинки/css → упаковка). Только свои
-  легальные книги; нужен `YANDEX_TOKEN`.
 
 ## Сборка (хост)
 

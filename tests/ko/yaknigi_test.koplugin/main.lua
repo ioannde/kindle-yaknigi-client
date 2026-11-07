@@ -995,12 +995,14 @@ local function test_lists()
     wait("what was found", function() return menu.catalogue.finished and #menu.rows > 0 end)
     local titles = {}
     for _, row in ipairs(menu.rows) do titles[#titles + 1] = row.title end
-    if table.concat(titles, "|") ~= "Автор подборки|Подборка|Новый сериал|Найденная книга 20" then
+    if table.concat(titles, "|") ~= "Автор подборки|Подборка|Новый сериал|Полка незнакомца|Полка 2|Полка 3|Все полки|Найденная книга 20" then
         fail("what was found: " .. table.concat(titles, "|"))
     end
     if of_kind(menu, "author").kind_text ~= "Автор · 751 произведение" then fail("the author's line") end
     if of_kind(menu, "series").kind_text ~= "Серия · 2 книги" then fail("the series' line") end
     if of_kind(menu, "serial").kind_text ~= "Сериал · 2 эпизода" then fail("the serial's line") end
+    if of_kind(menu, "bookshelf").kind_text ~= "Полка · 2 книги" then fail("the shelf's line") end
+    if of_kind(menu, "bookshelf").authors ~= "Незнакомец" then fail("whose the shelf is") end
     wait("the pictures", function()
         for _, row in ipairs(menu.rows) do
             if not row.cover then return false end
@@ -1057,6 +1059,39 @@ local function test_lists()
     menu:goBack()
     if menu.view ~= "catalogue" or menu.query ~= "подборка" then fail("the way back to the results: " .. menu.view) end
 
+    -- The rest of the shelves are a list of their own, and a shelf found can be followed.
+    tap_widget(menu.row_buttons[of_kind(menu, "found_shelves")])
+    finished(menu, "Полки: «подборка»")
+    if #menu.rows ~= 4 then fail("the shelves found: " .. #menu.rows) end
+    UIManager:forceRePaint()
+    shot("70b-found-shelves")
+    tap_widget(menu.row_buttons[menu.rows[1]])
+    finished(menu, "Полка незнакомца")
+    local function found_shelf_following(value)
+        wait("the shelf found, its following " .. tostring(value), function()
+            return menu.collection.finished and menu.collection.shelf
+                and menu.collection.shelf.following == value and menu.shelf_button and top() == menu
+        end)
+    end
+    local function found_shelf_row(key)
+        return wait("the found shelf's sheet with " .. key, function()
+            return top().name == "YaknigiBookMenu" and top().rows[key]
+        end)
+    end
+    found_shelf_following(false)
+    tap_widget(menu.shelf_button)
+    tap_widget(found_shelf_row("follow"))
+    wait("the following of a shelf found", function() return mock_get("/test/shelves")["shelf-3"].following == true end)
+    found_shelf_following(true)
+    tap_widget(menu.shelf_button)
+    tap_widget(found_shelf_row("unfollow"))
+    wait("the unfollowing of a shelf found", function() return mock_get("/test/shelves")["shelf-3"].following == false end)
+    found_shelf_following(false)
+    menu:goBack()
+    finished(menu, "Полки: «подборка»")
+    menu:goBack()
+    if menu.view ~= "catalogue" or menu.query ~= "подборка" then fail("back from the shelves found: " .. menu.view) end
+
     -- A serial is added with its episodes, the serial first.
     local serial = of_kind(menu, "serial")
     tap_widget(menu.row_buttons[serial])
@@ -1107,6 +1142,22 @@ local function test_lists()
     end
     local sent = mock_get("/test/position?book=ep2-2")
     if not tostring(sent.start):find("^/6/4!") then fail("the place sent: " .. tostring(sent.start)) end
+    -- What is shown counts as the phone does: the episode. The slider goes over all of it.
+    do
+        local yaknigi, shell = reader().yaknigi, reader().yaknigi.shell
+        local part, spine = yaknigi:currentEpisode()
+        if not part or part.uuid ~= "ep2-2" or spine ~= 4 then fail("the episode being read") end
+        local from, to = yaknigi:episodePages(part)
+        local expected = (reader().document:getCurrentPage() - from) / (to - from)
+        if math.abs(shell:progress() - expected) > 0.001 then fail("the share of the episode: " .. shell:progress()) end
+        if shell:place() <= shell:progress() then fail("the slider's place in all of the serial") end
+        local format = G_reader_settings:readSetting("yaknigi_progress")
+        G_reader_settings:saveSetting("yaknigi_progress", "book")
+        local left, right = shell:progressText()
+        G_reader_settings:saveSetting("yaknigi_progress", format)
+        if not left:find("До конца эпизода", 1, true) then fail("the words for an episode: " .. left) end
+        if right ~= ("%d%%"):format(math.floor(expected * 100 + 0.5)) then fail("the percent of an episode: " .. right) end
+    end
 
     -- That same place coming back from Yandex is not news of reading elsewhere.
     os.remove(serial_dir .. "/checked")

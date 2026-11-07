@@ -589,6 +589,13 @@ end
 
 --- Asks for a page of what was searched for, or of a list. Runs in the forked process.
 local function ask_page(api, state, cursor)
+    if state.kind == "found_shelves" then
+        local answer, kind = api:search(state.uuid, cursor, Api.SHELVES)
+        if not answer then return nil, kind end
+        local items = {}
+        for _, found in ipairs(answer.page) do items[#items + 1] = Catalogue.item(found) end
+        return { items = items, cursor = answer.cursor or "" }
+    end
     if state.kind then
         local page, kind = api:collection(state.kind, state.uuid, cursor)
         if not page then return nil, kind end
@@ -601,6 +608,11 @@ local function ask_page(api, state, cursor)
         local item = Catalogue.item(found)
         -- Search does not say which series are of audiobooks only.
         if item and (item.kind ~= "series" or api:series_has_books(item.uuid)) then items[#items + 1] = item end
+    end
+    -- Books are what is looked for: without shelves, the search is still a search.
+    if (cursor or "") == "" then
+        local shelves = api:search(state.query, "", Api.SHELVES)
+        if shelves then Catalogue.with_shelves(items, shelves.page, state.query) end
     end
     return { items = items, cursor = answer.cursor or "" }
 end
@@ -794,8 +806,8 @@ end
 --- A tap on what is in a list.
 function Yaknigi:openItem(item)
     if item.unavailable then return message(item.unavailable, 3) end
-    if item.kind == "author" or item.kind == "series" or item.kind == "bookshelf" then
-        return self:openList(item.kind, item.uuid, item.title)
+    if item.kind == "author" or item.kind == "series" or item.kind == "bookshelf" or item.kind == "found_shelves" then
+        return self:openList(item.kind, item.uuid, item.list_title or item.title)
     end
     if item.found then self:openFound(item) else self:openCard(item.card) end
 end
@@ -1853,17 +1865,47 @@ function Yaknigi:positionOf(xp)
     return inner and Cfi.at(spine, inner)
 end
 
---- How far into its episode a place in a serial is, in percent.
-function Yaknigi:episodeProgress(start)
+--- The episode of a serial being read and where in the file's spine, nil out of a serial.
+function Yaknigi:currentEpisode()
+    local store = self.store
+    if not store or not store.manifest or not store.manifest.episodes then return nil end
+    local fragment = tonumber((self.ui.document:getXPointer() or ""):match("DocFragment%[(%d+)%]"))
+    local spine = fragment and store:spine_index_of_fragment(fragment)
+    if not spine then return nil end
+    return Serial.part_at(store.manifest, spine), spine
+end
+
+--- The pages an episode takes in the long book: its first, and the first past it. Asked at
+-- every turn of a page, and the answer holds until the pages are laid out anew.
+function Yaknigi:episodePages(part)
     local doc, store = self.ui.document, self.store
-    local part = Serial.to_episode(store.manifest, start)
+    local count = doc:getPageCount()
+    local known = self.episode_pages
+    if known and known.part == part and known.count == count then return known.from, known.to end
     local function page_of(spine)
         return doc:getPageFromXPointer(("/body/DocFragment[%d]"):format(store:fragment_of_spine_index(spine)))
     end
-    local from = page_of(part.first)
     local beyond = part.first + part.count
-    local to = store.book.fragments[beyond + 1] and page_of(beyond) or doc:getPageCount() + 1
-    local fraction = to > from and (doc:getCurrentPage() - from) / (to - from) or 0
+    local from = page_of(part.first)
+    local to = store.book.fragments[beyond + 1] and page_of(beyond) or count + 1
+    self.episode_pages = { part = part, count = count, from = from, to = to }
+    return from, to
+end
+
+--- How far into its episode the reader is, from 0 to 1. A stub takes one page whatever it
+-- holds, so while there are any, count chapters.
+function Yaknigi:episodeShare(part, spine)
+    if next(self:stubs()) then return (spine - part.first) / part.count end
+    local from, to = self:episodePages(part)
+    local share = to > from and (self.ui.document:getCurrentPage() - from) / (to - from) or 0
+    return math.max(0, math.min(1, share))
+end
+
+--- How far into its episode a place in a serial is, in percent.
+function Yaknigi:episodeProgress(start)
+    local part = Serial.to_episode(self.store.manifest, start)
+    local from, to = self:episodePages(part)
+    local fraction = to > from and (self.ui.document:getCurrentPage() - from) / (to - from) or 0
     return math.max(0, math.min(100, math.floor(fraction * 100 + 0.5)))
 end
 
@@ -2195,7 +2237,7 @@ end
 
 function Yaknigi:addToMainMenu(menu_items)
     menu_items.yaknigi = {
-        text = "Яндекс Книги",
+        text = "Клиент для Яндекс Книг",
         sorting_hint = "tools",
         sub_item_table = {
             {

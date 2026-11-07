@@ -97,6 +97,11 @@ eq(Prefs.progress_text("page", at), "723", "page")
 eq(Prefs.progress_text("page", at, true), "Страница 723", "page, long")
 eq(Prefs.progress_text("page_of", at), "723 из 1023", "page of pages")
 do
+    local episode = { ratio = 0.1, page = 3, pages = 30, whole = "эпизода" }
+    eq(Prefs.progress_text("book", episode), "До конца эпизода: 27 стр.", "to the end of an episode")
+    eq(Prefs.progress_text("percent", episode, true), "10% эпизода", "percent of an episode, long")
+end
+do
     local left, right = Prefs.progress_text("chapter", at)
     eq(left, "До конца главы: 9 стр.", "chapter")
     eq(right, "70%", "the book's share read, to the other side, even for a chapter")
@@ -545,6 +550,29 @@ local found_series = Catalogue.item({ __typename = "Series", uuid = "s1", name =
 eq(found_series.kind, "series", "a series")
 eq(found_series.kind_text, "Серия · 8 книг", "how long it is")
 eq(found_series.authors, "А", "its authors")
+local found_shelf = Catalogue.item({ __typename = "Bookshelf", uuid = "b1", name = "Полка", posts = { total = 28 },
+    user = { name = "Читатель" }, cover = { url = "https://h/b-large.jpeg" } })
+eq(found_shelf.kind, "bookshelf", "a shelf")
+eq(found_shelf.kind_text, "Полка · 28 книг", "how long the shelf is")
+eq(found_shelf.authors, "Читатель", "whose the shelf is")
+do
+    local function shelf(n) return { __typename = "Bookshelf", uuid = "b" .. n, name = "П" .. n, cover = { url = "https://h/b.jpeg" } } end
+    local function titles(items)
+        local out = {}
+        for _, item in ipairs(items) do out[#out + 1] = item.title end
+        return table.concat(out, "|")
+    end
+    local function books(n)
+        local out = {}
+        for i = 1, n do out[i] = { title = "К" .. i } end
+        return out
+    end
+    eq(titles(Catalogue.with_shelves(books(5), { shelf(1), shelf(2), shelf(3), shelf(4) }, "q")),
+        "К1|К2|К3|П1|П2|П3|Все полки|К4|К5", "shelves go after the first books, then the way to the rest")
+    eq(titles(Catalogue.with_shelves(books(5), { shelf(1), shelf(2) }, "q")), "К1|К2|К3|П1|П2|К4|К5", "no way to no more shelves")
+    eq(titles(Catalogue.with_shelves(books(1), {}, "q")), "К1", "no shelves")
+    eq(titles(Catalogue.with_shelves({}, { shelf(1) }, "q")), "П1", "nothing but a shelf")
+end
 local found_serial = Catalogue.item({ __typename = "TextSerial", episodes = { total = 9 },
     book = { uuid = "x1", name = "Сериал", authors = { { name = "Б", uuid = "b" } } } })
 eq(found_serial.kind, "serial", "a serial")

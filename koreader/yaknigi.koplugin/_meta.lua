@@ -1,5 +1,5 @@
 local _ = require("gettext")
 return {
-    fullname = _("Yandex Books"),
-    description = _("Read your Yandex Books library."),
+    fullname = _("Клиент для Яндекс Книг"),
+    description = _("Библиотека и чтение Яндекс Книг на Kindle."),
 }

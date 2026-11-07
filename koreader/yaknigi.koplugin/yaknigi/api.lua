@@ -180,9 +180,12 @@ function Api:library()
     return cards
 end
 
+--- For a search of the shelves alone: asked with the books, they push the books out of the page.
+Api.SHELVES = { "BOOKSHELF" }
+
 --- Looks through all of Yandex's books. Returns { page = found books, cursor = where the
 -- next page starts, or empty after the last one }.
-function Api:search(text, cursor)
+function Api:search(text, cursor, types)
     local status, body = self.http:request("POST", GRAPHQL_URL, self:headers("application/json"), json.encode({
         operationName = "Search",
         query = SEARCH,
@@ -190,7 +193,7 @@ function Api:search(text, cursor)
             cursor = cursor or "",
             noMisspell = false,
             query = text,
-            types = { "TEXTBOOK", "SERIAL", "SERIES", "AUTHOR" }, -- audiobooks and comics cannot be read here
+            types = types or { "TEXTBOOK", "SERIAL", "SERIES", "AUTHOR" }, -- audiobooks and comics cannot be read here
         } },
     }))
     if status ~= 200 then return status_error(status, body) end

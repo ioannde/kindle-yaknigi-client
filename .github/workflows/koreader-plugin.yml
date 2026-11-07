@@ -42,7 +42,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - name: Build the KUAL extension
+      - name: Build the package
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -54,8 +54,25 @@ jobs:
           cp -R koreader/yaknigi.koplugin "$ext/koreader/plugins/"
           cp LICENSE "$ext/"
           du -sh "$ext"
+          # Without KUAL, on the newer jailbreaks: a scriptlet is shown among the books.
+          mkdir -p package/documents
+          cp scriptlet/yaknigi.sh package/documents/
+      - name: Build the KPM package
+        run: |
+          kpm=kpm-package
+          mkdir -p "$kpm/scriptlets" kpkg
+          cp kpm/* "$kpm/"
+          cp scriptlet/yaknigi.sh "$kpm/scriptlets/"
+          cp -R package/extensions/yaknigi-ko "$kpm/yaknigi-ko"
+          (cd "$kpm" && tar -czf ../kpkg/yaknigi-ko_kindlehf.kpkg *)
+          tar -tzf kpkg/yaknigi-ko_kindlehf.kpkg | grep -v '^yaknigi-ko/'
       - uses: actions/upload-artifact@v4
         with:
           name: yaknigi-ko-kindlehf
           path: package
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: yaknigi-ko-kpkg
+          path: kpkg
           if-no-files-found: error

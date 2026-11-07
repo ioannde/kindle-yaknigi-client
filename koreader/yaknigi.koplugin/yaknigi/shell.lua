@@ -340,9 +340,16 @@ function Shell:hasStubs()
     return next(self.plugin:stubs()) ~= nil
 end
 
---- Share of the book read. A skeleton's pages say little about the book: stubs take one
--- page each, so while there are any, count chapters.
+--- Share read, as the phone shows it: of the book, and of a serial the episode being read.
 function Shell:progress()
+    local part, spine = self.plugin:currentEpisode()
+    if part then return self.plugin:episodeShare(part, spine) end
+    return self:place()
+end
+
+--- Where in the whole file the page is. A skeleton's pages say little about the book: stubs
+-- take one page each, so while there are any, count chapters.
+function Shell:place()
     local doc = self.ui.document
     if not self:hasStubs() then
         local page, pages = doc:getCurrentPage(), doc:getPageCount()
@@ -356,12 +363,19 @@ end
 function Shell:progressText(long)
     local format = Prefs.progress_format()
     local info = { ratio = self:progress() }
+    local part = self.plugin:currentEpisode()
+    if part then info.whole = "эпизода" end
     if not self:hasStubs() then
         local doc, toc = self.ui.document, self.ui.toc
-        info.page, info.pages = doc:getCurrentPage(), doc:getPageCount()
+        local page = doc:getCurrentPage()
+        info.page, info.pages = page, doc:getPageCount()
+        if part then
+            local from, to = self.plugin:episodePages(part)
+            info.page, info.pages = page - from + 1, to - from
+        end
         if format == "chapter" then
             -- It has nothing to say after the last heading or before the first.
-            info.chapter_left = toc:getChapterPagesLeft(info.page) or (info.pages - info.page)
+            info.chapter_left = toc:getChapterPagesLeft(page) or (info.pages - info.page)
         end
     end
     return Prefs.progress_text(format, info, long)

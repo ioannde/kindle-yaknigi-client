@@ -9,4 +9,6 @@ if ! cmp -s "$DIR/settings.reader.lua" "$KO_HOME/settings.seed"; then
     cp "$DIR/settings.reader.lua" "$KO_HOME/settings.reader.lua"
     cp "$DIR/settings.reader.lua" "$KO_HOME/settings.seed"
 fi
-exec "$DIR/koreader/koreader.sh" --kual
+# From KUAL there is nothing to say; a scriptlet says what suits it.
+[ $# -gt 0 ] || set -- --kual
+exec "$DIR/koreader/koreader.sh" "$@"

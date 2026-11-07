@@ -1,7 +1,7 @@
 {
   "items": [
     {
-      "name": "Яндекс Книги (новая версия)",
+      "name": "Клиент для Яндекс Книг",
       "priority": 0,
       "action": "/bin/sh",
       "params": "/mnt/us/extensions/yaknigi-ko/run.sh",

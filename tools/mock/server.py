@@ -435,6 +435,13 @@ class Handler(BaseHTTPRequestHandler):
         return {"uuid": uuid, "title": title, "kinds": kinds, "parts_count": parts, "authors": "Автор подборки",
                 "cover": {"small": self.cover(140), "large": self.cover(140)}}
 
+    def found_shelves(self):
+        def one(uuid, name):
+            return {"__typename": "Bookshelf", "uuid": uuid, "name": name, "cover": {"url": self.cover(150)},
+                    "user": {"name": "Незнакомец", "uuid": "user-9"}, "posts": {"total": 2}, "followersCount": 7}
+        return [one("shelf-3", "Полка незнакомца"), one("shelf-s2", "Полка 2"), one("shelf-s3", "Полка 3"),
+                one("shelf-s4", "Полка 4")]
+
     def mixed_results(self):
         """Everything search can give, with what must not get through."""
         person = {"__typename": "Person", "uuid": "author-1", "name": "Автор подборки", "worksCount": 751,
@@ -475,6 +482,11 @@ class Handler(BaseHTTPRequestHandler):
         if self.server.fail_search > 0:
             self.server.fail_search -= 1
             self.reply(500, b"")
+            return
+        if asked.get("types") == ["BOOKSHELF"] and asked.get("query"):
+            found = self.found_shelves() if "подборка" in asked["query"] else []
+            self.reply_json(200, {"data": {"search": {"page": found, "cursor": "",
+                "misspell": {"correctedText": "", "correctionType": "NOT_CORRECTED"}}}})
             return
         if asked.get("types") != SEARCH_TYPES or asked.get("noMisspell") is not False or not asked.get("query"):
             print("bad Search:", variables, flush=True)
@@ -987,6 +999,8 @@ if __name__ == "__main__":
                     "following": True, "count": None, "posts": [["post-a", "found20"], ["post-b", "found22"]]},
         "shelf-2": {"title": "Чужая полка", "annotation": "", "state": "published", "editable": False,
                     "following": True, "count": 21, "posts": [["post-c", "found21"]]},
+        "shelf-3": {"title": "Полка незнакомца", "annotation": "", "state": "published", "editable": False,
+                    "following": False, "count": None, "posts": [["post-d", "found23"]]},
     }
     server.fail_search = 0
     server.fail_showcase = 0

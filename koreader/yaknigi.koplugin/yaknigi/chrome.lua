@@ -99,7 +99,8 @@ function Chrome:build()
             Kit.Placed:new{ width = chevron_w, height = icon_side, dx = 0, dy = 0, Kit.icon("chevron.right", icon_side) },
         },
     }
-    local ratio = self.shell:progress()
+    -- The slider goes over all of the file, whatever the words beside it count.
+    local ratio = self.shell:place()
     self.slider = Kit.Slider:new{
         width = inner,
         ratio = ratio,

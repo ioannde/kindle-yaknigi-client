@@ -43,13 +43,13 @@ function Prefs.progress_text(format, info, long)
             return long and ("Страница %d"):format(info.page) or tostring(info.page)
         elseif format == "book" then
             local left = info.pages - info.page
-            return ("До конца книги: %d стр."):format(left), ("%d%%"):format(percent(info.ratio))
+            return ("До конца %s: %d стр."):format(info.whole or "книги", left), ("%d%%"):format(percent(info.ratio))
         elseif format == "chapter" and info.chapter_left then
             return ("До конца главы: %d стр."):format(info.chapter_left),
                 ("%d%%"):format(percent(info.ratio))
         end
     end
-    return ("%d%%%s"):format(percent(info.ratio), long and " книги" or "")
+    return ("%d%%%s"):format(percent(info.ratio), long and " " .. (info.whole or "книги") or "")
 end
 
 --- Wi-Fi up and connected, up with no connection, or off: on a Kindle, the airplane mode.

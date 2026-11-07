@@ -174,7 +174,8 @@ function Library:rowButton(item, height)
         name, action = "lock", function() self:onMenuSelect(item) end
     elseif item.adding or status == "saving" then
         name, action = "wait", function() end
-    elseif item.kind == "author" or item.kind == "series" or item.kind == "bookshelf" then
+    elseif item.kind == "author" or item.kind == "series" or item.kind == "bookshelf"
+        or item.kind == "found_shelves" then
         name, action = "chevron.right", function() self:onMenuSelect(item) end
     elseif not item.found then
         name, action = "dots", menu

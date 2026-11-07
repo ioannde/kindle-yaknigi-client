@@ -16,8 +16,12 @@ config
 __pycache__/
 *.pyc
 
-# Phase 0 capture output
-tools/phase0/out/
+# Protocol research and its tools stay on the machine they were made on
+tools/phase0/
+tools/download_epub.py
+docs/PHASE0.md
+docs/PHASE0-FINDINGS.md
+docs/RUNBOOK.md
 
 # OS / IDE
 .DS_Store

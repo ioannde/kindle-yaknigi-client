@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <extension>
   <information>
-    <name>Яндекс Книги (новая версия)</name>
+    <name>Клиент для Яндекс Книг</name>
     <id>yaknigi-ko</id>
   </information>
   <menus>

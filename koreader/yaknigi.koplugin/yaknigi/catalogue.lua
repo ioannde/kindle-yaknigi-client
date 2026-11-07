@@ -116,9 +116,19 @@ local function serial_text(total)
     return total and "Сериал · " .. Catalogue.count(total, "эпизод", "эпизода", "эпизодов") or "Сериал"
 end
 
+local function shelf_item(found)
+    if type(found.uuid) ~= "string" then return nil end
+    local total = tonumber(type(found.posts) == "table" and found.posts.total)
+    local owner = type(found.user) == "table" and type(found.user.name) == "string" and found.user.name or nil
+    local url = type(found.cover) == "table" and found.cover.url
+    return list_item("bookshelf", found.uuid, type(found.name) == "string" and found.name or "?", owner, picture(url),
+        total and "Полка · " .. Catalogue.count(total, "книга", "книги", "книг") or "Полка")
+end
+
 --- What the library needs of what was found. Nil for what cannot be opened here.
 function Catalogue.item(found)
     if type(found) == "table" and found.__typename == "Person" then return person_item(found) end
+    if type(found) == "table" and found.__typename == "Bookshelf" then return shelf_item(found) end
     if type(found) == "table" and found.__typename == "Series" then return series_item(found) end
     local book = type(found) == "table" and found.book
     if type(book) ~= "table" or type(book.uuid) ~= "string" then return nil end
@@ -152,6 +162,25 @@ function Catalogue.item(found)
             authors_objects = persons,
         } },
     }
+end
+
+local SHELVES_SHOWN, SHELVES_AFTER = 3, 3
+
+--- Puts the first shelves found among the first books found, and past them a way to the
+-- rest. In a search they would take the page: "русская классика" is 24 shelves in 25.
+function Catalogue.with_shelves(items, found, query)
+    local shelves = {}
+    for _, one in ipairs(found) do shelves[#shelves + 1] = Catalogue.item(one) end
+    local at = math.min(SHELVES_AFTER, #items)
+    for i = 1, math.min(SHELVES_SHOWN, #shelves) do table.insert(items, at + i, shelves[i]) end
+    if #shelves > SHELVES_SHOWN then
+        local all = list_item("found_shelves", query, "Все полки", nil, shelves[1].card.book.cover,
+            ("Полки по запросу «%s»"):format(query))
+        all.card.book.uuid = "found_shelves:" .. query
+        all.list_title = ("Полки: «%s»"):format(query)
+        table.insert(items, at + SHELVES_SHOWN + 1, all)
+    end
+    return items
 end
 
 -- REST ---------------------------------------------------------------------------

@@ -1,0 +1,10 @@
+{
+  "manifest_version": 2,
+  "id": "yaknigi-ko",
+  "name": "Клиент для Яндекс Книг",
+  "author": "ioannde",
+  "description": "Неофициальный клиент Яндекс Книг на движке KOReader.",
+  "version": [1, 0, 0],
+  "dependencies": [],
+  "supported_platforms": ["kindlehf"]
+}

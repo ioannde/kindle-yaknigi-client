@@ -162,6 +162,14 @@ function Serial.to_episode(manifest, cfi)
     return nil
 end
 
+--- The episode that a place in the long book's spine belongs to.
+function Serial.part_at(manifest, spine)
+    for _, part in ipairs(manifest.episodes or {}) do
+        if spine >= part.first and spine < part.first + part.count then return part end
+    end
+    return nil
+end
+
 --- Whether the card of a book is a serial's.
 function Serial.is_serial(card)
     return type(card) == "table" and type(card.book) == "table" and card.book.source_type == "serial"
