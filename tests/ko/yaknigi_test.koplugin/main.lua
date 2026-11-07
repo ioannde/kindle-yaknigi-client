@@ -906,25 +906,25 @@ local function test_reading_screen()
 
     -- The settings say nothing of the progress any more: that is changed on the page.
     if settings.rows.progress then fail("the progress is still in the settings") end
-    tap_widget(settings.rows.clock)
+    tap_widget(settings_row(settings, "clock"))
     if G_reader_settings:isTrue("yaknigi_reading_clock") then fail("the clock did not go off") end
-    tap_widget(settings.rows.clock)
+    tap_widget(settings_row(settings, "clock"))
     if not G_reader_settings:isTrue("yaknigi_reading_clock") then fail("the clock did not come back") end
     shot("20b-settings-switched")
 
     -- A row with choices opens them, a choice comes back to the list.
-    tap_widget(settings.rows.refresh)
+    tap_widget(settings_row(settings, "refresh"))
     if not settings.choice then fail("the choices of the refresh did not open") end
     UIManager:forceRePaint()
     shot("20c-settings-refresh")
     tap_widget(settings.back)
     if settings.choice then fail("back does not leave the choices") end
-    tap_widget(settings.rows.refresh)
+    tap_widget(settings_row(settings, "refresh"))
     tap_widget(settings.options[2])
     if settings.choice then fail("a choice did not come back to the list") end
     if UIManager:getRefreshRate() ~= 3 then fail("refresh rate: " .. tostring(UIManager:getRefreshRate())) end
     if G_reader_settings:readSetting("full_refresh_count") ~= 3 then fail("refresh rate not saved") end
-    tap_widget(settings.rows.refresh)
+    tap_widget(settings_row(settings, "refresh"))
     tap_widget(settings.options[3])
     if UIManager:getRefreshRate() ~= 6 then fail("refresh rate back: " .. tostring(UIManager:getRefreshRate())) end
 
@@ -936,12 +936,12 @@ local function test_reading_screen()
     if G_reader_settings:readSetting("auto_suspend_timeout_seconds") ~= 30 * 60 then fail("sleep time not saved") end
 
     -- The sleep screen: the cover of the open book, or the page as it is.
-    tap_widget(settings.rows.sleep_screen)
+    tap_widget(settings_row(settings, "sleep_screen"))
     -- The cover, the collection, one's own picture, the page.
     if #settings.options ~= 4 then fail("the sleep screens: " .. #settings.options) end
     tap_widget(settings.options[4])
     if G_reader_settings:readSetting("screensaver_type") ~= "disable" then fail("sleep screen stays on the cover") end
-    tap_widget(settings.rows.sleep_screen)
+    tap_widget(settings_row(settings, "sleep_screen"))
     tap_widget(settings.options[1])
     if G_reader_settings:readSetting("screensaver_type") ~= "document_cover" then fail("sleep screen: no cover") end
     -- The original of the cover comes after the book has opened.
@@ -956,7 +956,7 @@ local function test_reading_screen()
     -- One's own picture: until there is one, the cover; then the newest in its folder.
     local Prefs = require("yaknigi/prefs")
     local lfs = require("libs/libkoreader-lfs")
-    tap_widget(settings.rows.sleep_screen)
+    tap_widget(settings_row(settings, "sleep_screen"))
     tap_widget(settings.options[3])
     local own_dir = Prefs.own_sleep_dir()
     if lfs.attributes(own_dir, "mode") ~= "directory" then fail("no folder for one's own picture") end
@@ -985,7 +985,7 @@ local function test_reading_screen()
 
     -- The collection comes with the package, and each sleep picks from it at random.
     settings:changed()
-    tap_widget(settings.rows.sleep_screen)
+    tap_widget(settings_row(settings, "sleep_screen"))
     shot("20f-sleep-screens")
     tap_widget(settings.options[2])
     if G_reader_settings:readSetting("yaknigi_sleep_screen") ~= "faces" then fail("the collection not chosen") end
@@ -2268,7 +2268,7 @@ local function test_updates(plugin)
     -- The terms, in the settings.
     wait("the settings on top", function() return top() == settings end)
     UIManager:forceRePaint()
-    tap_widget(settings.rows.terms)
+    tap_widget(settings_row(settings, "terms"))
     local terms = top()
     if terms.name ~= "YaknigiTerms" then fail("the terms do not open from the settings") end
     if terms.accept_button then fail("the terms ask again") end
