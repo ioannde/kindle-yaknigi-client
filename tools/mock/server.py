@@ -276,6 +276,11 @@ class Handler(BaseHTTPRequestHandler):
                 "authors": [{"name": f"Автор {i}"}],
                 "cover": {"small": f"http://127.0.0.1:{self.server.server_address[1]}/cover/{i}.png"},
             },
+            # What a mark has to send back as it is. Not all cards are public.
+            "public": i != 0,
+            "is_in_child_library": False,
+            "fragment": f"d=doc{i}&i={i}:50.0",
+            "chapter_uuid": f"chapter{i}",
         }
         if self.server.big:
             card["accessed_at"] = 1793000000 - i * 86400 if i < 20 else None
@@ -290,6 +295,7 @@ class Handler(BaseHTTPRequestHandler):
             card["progress"] = update["progress"]
             card["state"] = update["state"] or card["state"]
         card["state"] = self.server.states.get(card["uuid"], card["state"])
+        card["progress"] = self.server.mark_progress.get(card["uuid"], card["progress"])
         if i == 3:
             card["book"].update(self.serial_book("serial-1"))
             self.serial_place(card, "ep1-2")
@@ -697,12 +703,31 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(401, b"")
             return
         card = match.group(1)
-        if "lc[cfi]" not in form:
-            # A mark of read or not. A server may answer yes and do nothing.
+        if "lc[fragment]" in form:
+            # A mark of read or not: the whole card, as the phone app sends it.
+            now = self.card(int(card.removeprefix("card")))
+            state = form["lc[state]"][0]
+            want = {
+                "lc[state]": [state],
+                "lc[progress]": ["99" if state == "finished" else str(now["progress"])],
+                "lc[public]": [str(now["public"]).lower()],
+                "lc[is_in_child_library]": [str(now["is_in_child_library"]).lower()],
+                "lc[fragment]": [now["fragment"]],
+                "lc[cfi]": [now.get("cfi") or ""],
+                "lc[chapter_uuid]": [now["chapter_uuid"]],
+                "lc[current_episode_uuid]": [now.get("current_episode_uuid") or ""],
+            }
+            if state not in ("finished", "pending") or form != want:
+                print(f"bad mark: {form}", flush=True)
+                self.reply(422, b"")
+                return
+            # A server may answer yes and do nothing.
             if not self.server.ignore_state:
-                self.server.states[card] = form["lc[state]"][0]
+                self.server.states[card] = state
+                self.server.mark_progress[card] = int(form["lc[progress]"][0])
             self.reply_json(200, {"library_card": {"uuid": card}})
             return
+        self.server.mark_progress.pop(card, None)
         # As on the real server, the position in this request changes nothing.
         self.server.card_updates[card] = {
             "progress": int(form["lc[progress]"][0]),
@@ -796,6 +821,9 @@ class Handler(BaseHTTPRequestHandler):
             self.server.access = query["mode"][0]
             self.reply(200, b"")
         elif url.path == "/test/marks":
+            if "clear" in query:
+                self.server.states.clear()
+                self.server.mark_progress.clear()
             self.reply_json(200, self.server.states)
         elif url.path.endswith("/profile/access_levels"):
             if self.headers.get("Auth-Token") != "mock-token":
@@ -1047,6 +1075,7 @@ if __name__ == "__main__":
     server.positions = {}
     server.card_updates = {}
     server.states = {}
+    server.mark_progress = {}
     server.ignore_state = False
     server.access = "active"
     server.fail_writes = 0

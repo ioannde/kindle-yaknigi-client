@@ -169,15 +169,26 @@ function Api:card(uuid)
     return drop_nulls(data.library_card)
 end
 
---- Marks a book as read or not. Yandex may answer yes and leave the card as it was, so the
--- card is read back: returns it as it now is, or nil and "not_taken". The position stays.
-function Api:set_card_state(uuid, state, progress)
+--- Marks a book as read ("finished") or takes the mark off ("pending"), in the form the phone
+-- app sends: the whole card as it is, so the position and what is private stay. Read books
+-- go to 99%, and taking the mark off leaves that. The card is read back, as a refusal may
+-- look like a yes: returns the card as it now is, or nil and "not_taken".
+function Api:set_card_state(uuid, state)
+    local now, kind, detail = self:card(uuid)
+    if not now then return nil, kind, detail end
     local status, body = self:put_card(uuid, {
         "lc[state]=" .. encode(state),
-        "lc[progress]=" .. math.floor(tonumber(progress) or 0),
+        "lc[progress]=" .. (state == "finished" and 99 or math.floor(tonumber(now.progress) or 0)),
+        "lc[public]=" .. tostring(now.public ~= false),
+        "lc[is_in_child_library]=" .. tostring(now.is_in_child_library == true),
+        "lc[fragment]=" .. encode(now.fragment or ""),
+        "lc[cfi]=" .. encode(now.cfi or ""),
+        "lc[chapter_uuid]=" .. encode(now.chapter_uuid or ""),
+        "lc[current_episode_uuid]=" .. encode(now.current_episode_uuid or ""),
     })
     if status ~= 200 then return status_error(status, body) end
-    local card, kind, detail = self:card(uuid)
+    local card
+    card, kind, detail = self:card(uuid)
     if not card then return nil, kind, detail end
     if card.state ~= state then return nil, "not_taken", tostring(card.state) end
     return card

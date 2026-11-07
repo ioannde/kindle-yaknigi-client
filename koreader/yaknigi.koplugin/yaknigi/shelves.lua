@@ -12,8 +12,8 @@ local NAMES = {
 
 function Shelves.name(id) return NAMES[id] end
 
---- Which shelf a book is on. Yandex ignores the state a device sends, so a book begun
--- here stays "pending" there, but the reader expects it among the books being read.
+--- Which shelf a book is on. A book begun here may stay "pending" at Yandex, and one with
+-- the read mark taken off is "pending" at 99%: the reader expects both among the books being read.
 function Shelves.of(state, progress, read_here)
     if state == "finished" then return "finished" end
     if state == "reading" or read_here or (tonumber(progress) or 0) > 0 then return "reading" end

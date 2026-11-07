@@ -1476,12 +1476,10 @@ function Yaknigi:shelfWork(text, work, done)
     end)
 end
 
---- Marks a book as read or takes the mark off. What was read of it stays as it is.
+--- Marks a book as read or takes the mark off. The place in the book stays as it is.
 function Yaknigi:setFinished(card, on)
-    local progress = tonumber(card.progress) or 0
-    local wanted = on and "finished" or (progress > 0 and "reading" or "pending")
     self:shelfWork(on and "Отмечаю…" or "Снимаю отметку…", function(api)
-        return api:set_card_state(card.uuid, wanted, progress)
+        return api:set_card_state(card.uuid, on and "finished" or "pending")
     end, function(fresh)
         local cards = read_json(LIBRARY_CACHE) or {}
         for _, mine in ipairs(cards) do
