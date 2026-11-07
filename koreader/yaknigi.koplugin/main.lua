@@ -190,6 +190,7 @@ end
 local function error_text(kind)
     if kind == "network" then return "Нет связи с Яндекс Книгами." end
     if kind == "not_found" then return "Эта книга не открывается." end
+    if kind == "denied" then return "Эта книга недоступна по вашей подписке." end
     if kind == "disk" then return "Не удалось записать на устройство." end
     return "Яндекс Книги вернули ошибку."
 end
@@ -580,6 +581,7 @@ end
 
 local function catalogue_error(kind, state)
     if kind == "network" then return "Нет связи с Яндекс Книгами." end
+    if kind == "denied" and state.kind then return "Этот список закрыт." end
     return state.kind and "Этот список сейчас не открывается." or "Поиск сейчас не работает."
 end
 

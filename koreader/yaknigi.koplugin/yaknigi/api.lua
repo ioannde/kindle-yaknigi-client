@@ -43,7 +43,8 @@ end
 function Api:get(url)
     local status, body = self.http:request("GET", url, self:headers())
     if not status then return nil, "network", body end
-    if status == 401 or status == 403 then return nil, "auth" end
+    if status == 401 then return nil, "auth" end
+    if status == 403 then return nil, "denied" end
     if status == 404 then return nil, "not_found" end
     if status ~= 200 then return nil, "http", tostring(status) end
     return body
@@ -71,7 +72,9 @@ end
 
 local function status_error(status, detail)
     if not status then return nil, "network", detail end
-    if status == 401 or status == 403 then return nil, "auth" end
+    -- A token that is no good gets 401. 403 is about this one thing, and no reason to sign out.
+    if status == 401 then return nil, "auth" end
+    if status == 403 then return nil, "denied" end
     if status == 404 then return nil, "not_found" end
     return nil, "http", tostring(status)
 end
