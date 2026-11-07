@@ -89,6 +89,8 @@ PROGRESS_UPDATED = ("mutation ProgressUpdated($textbookProgresses: [TextbookProg
 SEARCH = ("query Search($query: SearchParamsInput!) { search(query: $query) { page { __typename ...searchSnippetAudioBookFragment ...searchSnippetTextBookFragment ...searchSnippetComicBookFragment ...searchSnippetTextSerialFragment ...bookshelfFragment ...personFragment ...publisherFragment ...seriesFragment ...topicFragment ...userFragment } cursor rankedFilter { filterType } misspell { correctedText correctionType } } }  fragment coverFragment on Cover { url ratio backgroundColorHex }  fragment personFragment on Person { avatar { __typename ...coverFragment } name uuid worksCount roles }  fragment bookFragment on Book { annotation name cover { __typename ...coverFragment } uuid initUuid authors { __typename ...personFragment } editorAnnotation }  fragment publisherFragment on Publisher { avatar { __typename ...coverFragment } name uuid worksCount }  fragment publisherBookFragment on Book { publisher { __typename ...publisherFragment } }  fragment translatorsBookFragment on Book { translators { __typename ...personFragment } }  fragment topicsBookFragment on Book { topics { name totalBook uuid } }  fragment subscriptionLevelsFragment on Book { subscriptionLevels }  fragment snippetBookFragment on Book { __typename ...bookFragment ...publisherBookFragment ...translatorsBookFragment ...topicsBookFragment ...subscriptionLevelsFragment }  fragment narratorsAudioBookFragment on AudioBook { narrators { __typename ...personFragment } }  fragment progressFragment on Progress { finished inLibrary progress isPublic }  fragment progressAudioBookFragment on AudioBook { progress { __typename ...progressFragment } }  fragment listenersCountAudioBookFragment on AudioBook { listenersCount }  fragment subscriptionsFragment on Availability { subscriptions { types } }  fragment ageRestrictionFragment on Availability { ageRestriction { name value } }  fragment snippetAudioBookFragment on AudioBook { __typename book { __typename ...snippetBookFragment } ...narratorsAudioBookFragment ...progressAudioBookFragment ...listenersCountAudioBookFragment availability { __typename ...subscriptionsFragment ...ageRestrictionFragment } }  fragment bookTagsFragment on Book { tags { name value } }  fragment searchSnippetAudioBookFragment on AudioBook { __typename ...snippetAudioBookFragment book { __typename ...bookTagsFragment } }  fragment progressTextBookFragment on TextBook { progress { __typename ...progressFragment } }  fragment readersCountTextBookFragment on TextBook { readersCount }  fragment snippetTextBookFragment on TextBook { __typename book { __typename ...snippetBookFragment } availability { __typename ...subscriptionsFragment ...ageRestrictionFragment } ...progressTextBookFragment ...readersCountTextBookFragment }  fragment searchSnippetTextBookFragment on TextBook { __typename ...snippetTextBookFragment book { __typename ...bookTagsFragment } }  fragment progressComicBookFragment on ComicBook { progress { __typename ...progressFragment } }  fragment readersCountComicBookFragment on ComicBook { readersCount }  fragment snippetComicBookFragment on ComicBook { __typename book { __typename ...snippetBookFragment } ...progressComicBookFragment ...readersCountComicBookFragment availability { __typename ...subscriptionsFragment ...ageRestrictionFragment } }  fragment searchSnippetComicBookFragment on ComicBook { __typename ...snippetComicBookFragment book { __typename ...bookTagsFragment } }  fragment textSerialFragment on TextSerial { availability { __typename ...ageRestrictionFragment } book { __typename ...bookFragment } }  fragment episodesTextSerialFragment on TextSerial { episodes { total } }  fragment readersCountTextSerialFragment on TextSerial { readersCount }  fragment snippetTextSerialFragment on TextSerial { __typename book { __typename ...snippetBookFragment } availability { __typename ...subscriptionsFragment ...ageRestrictionFragment } ...textSerialFragment ...episodesTextSerialFragment ...readersCountTextSerialFragment }  fragment searchSnippetTextSerialFragment on TextSerial { __typename ...snippetTextSerialFragment book { __typename ...bookTagsFragment } }  fragment userFragment on User { avatar { __typename ...coverFragment } name uuid followersCount login }  fragment bookshelfFragment on Bookshelf { cover { __typename ...coverFragment } name uuid user { __typename ...userFragment } posts { total } followersCount description }  fragment seriesFragment on Series { authors { __typename ...personFragment } cover { __typename ...coverFragment } name uuid items { followersCount total } }  fragment topicFragment on Topic { name slug totalBook uuid parent { name slug totalBook uuid } }")
 FOUND = 60
 FOUND_PAGE = 25
+SEARCH_TYPES = ["TEXTBOOK", "SERIAL", "SERIES", "AUTHOR"]
+SERIALS = {"serial-1": ("Сериал", 3), "serial-2": ("Новый сериал", 2)}
 
 
 def cover_png(n):
@@ -256,9 +258,76 @@ class Handler(BaseHTTPRequestHandler):
             card["progress"] = update["progress"]
             card["state"] = update["state"] or card["state"]
         if i == 3:
-            card["book"]["uuid"] = "serial-1"
-            card["book"]["title"] = "Сериал"
+            card["book"].update(self.serial_book("serial-1"))
+            card["current_episode_position"] = 1
+            card["current_episode_uuid"] = "ep1-1"
         return card
+
+    def cover(self, n):
+        return f"http://127.0.0.1:{self.server.server_address[1]}/cover/{n}.png"
+
+    def serial_book(self, uuid):
+        title, episodes = SERIALS[uuid]
+        return {"uuid": uuid, "title": title, "source_type": "serial", "episodes_count": episodes,
+                "authors": "Автор сериала", "authors_objects": [{"name": "Автор сериала", "uuid": "author-1"}],
+                "can_be_read": True, "cover": {"small": self.cover(150), "large": self.cover(150)}}
+
+    def episode(self, uuid):
+        """The book of an episode, by its id: ep2-1 is the first of serial-2."""
+        serial, number = re.fullmatch(r"ep(\d)-(\d)", uuid).groups()
+        taken = uuid in self.server.taken
+        return {"uuid": uuid, "title": f"Эпизод {number}", "source_type": "serial_episode",
+                "parent_uuid": f"serial-{serial}", "position": int(number), "can_be_read": True,
+                "authors": "Автор сериала", "authors_objects": [{"name": "Автор сериала", "uuid": "author-1"}],
+                "cover": {"small": self.cover(150 + int(number)), "large": self.cover(150 + int(number))},
+                "in_library": taken, "library_card": {"uuid": f"c-{uuid}"} if taken else None}
+
+    def taken_card(self, uuid):
+        """The card of an episode, or of a serial that was added."""
+        book = self.serial_book(uuid) if uuid in SERIALS else self.episode(uuid)
+        book.pop("library_card", None)
+        card = {"uuid": f"c-{uuid}", "state": "pending", "progress": 0, "cfi": None, "public": True,
+                "document_uuid": "d1", "book": book}
+        position = self.server.positions.get(uuid)
+        if position:
+            spine, start = position["start"].split("!")
+            card["cfi"] = f'{spine}!,{start},{position["end"].split("!")[1]}'
+        return card
+
+    def rest_book(self, i):
+        """A book as the lists give it, written otherwise than in the results of a search."""
+        uuid = f"found{i}"
+        book = {"uuid": uuid, "title": f"Найденная книга {i}", "authors": f"Автор {i}",
+                "authors_objects": [{"name": "Автор подборки", "uuid": "author-1"}],
+                "annotation": f"Аннотация книги {i}.", "can_be_read": True, "source_type": "html",
+                "cover": {"small": self.cover(100 + i), "large": self.cover(100 + i)},
+                "in_library": uuid in self.server.added, "library_card": None}
+        if i == 20:
+            book["series_list"] = [{"position": 1, "position_label": "1", "uuid": "series-1", "title": "Подборка"}]
+        return book
+
+    def rest_series(self, uuid):
+        title, kinds, parts = {"series-1": ("Подборка", ["books"], 2),
+                               "series-audio": ("Только послушать", ["audio"], 4)}[uuid]
+        return {"uuid": uuid, "title": title, "kinds": kinds, "parts_count": parts, "authors": "Автор подборки",
+                "cover": {"small": self.cover(140), "large": self.cover(140)}}
+
+    def mixed_results(self):
+        """Everything search can give, with what must not get through."""
+        person = {"__typename": "Person", "uuid": "author-1", "name": "Автор подборки", "worksCount": 751,
+                  "roles": ["AUTHOR"], "avatar": {"url": self.cover(141)}}
+        series = {"__typename": "Series", "uuid": "series-1", "name": "Подборка", "items": {"total": 2, "followersCount": 3},
+                  "authors": [{"name": "Автор подборки", "uuid": "author-1"}], "cover": {"url": self.cover(140)}}
+        serial = {"__typename": "TextSerial", "readersCount": 5, "availability": {}, "episodes": {"total": 2},
+                  "book": {"uuid": "serial-2", "name": "Новый сериал", "annotation": "Об этом сериале.",
+                           "authors": [{"name": "Автор сериала", "uuid": "author-1"}], "cover": {"url": self.cover(150)}}}
+        return [person,
+                {**person, "uuid": "translator-1", "name": "Переводчик", "roles": ["TRANSLATOR"]},
+                {**person, "uuid": "author-0", "name": "Без книг", "worksCount": 0},
+                series,
+                {**series, "uuid": "series-audio", "name": "Только послушать"},
+                serial,
+                self.found(20)]
 
     def found(self, i):
         """A book in the search results; the first few are the odd cases."""
@@ -284,13 +353,16 @@ class Handler(BaseHTTPRequestHandler):
             self.server.fail_search -= 1
             self.reply(500, b"")
             return
-        if asked.get("types") != ["TEXTBOOK"] or asked.get("noMisspell") is not False or not asked.get("query"):
+        if asked.get("types") != SEARCH_TYPES or asked.get("noMisspell") is not False or not asked.get("query"):
             print("bad Search:", variables, flush=True)
             self.reply_json(200, {"errors": [{"message": "bad input"}], "data": None})
             return
         none = {"page": [], "cursor": "", "misspell": {"correctedText": "", "correctionType": "NOT_CORRECTED"}}
         if "нет такой" in asked["query"]:
             self.reply_json(200, {"data": {"search": none}})
+            return
+        if "подборка" in asked["query"]:
+            self.reply_json(200, {"data": {"search": {**none, "page": self.mixed_results()}}})
             return
         start = int(asked["cursor"].split(",")[1]) if asked["cursor"] else 0
         end = min(start + FOUND_PAGE, FOUND)
@@ -353,9 +425,18 @@ class Handler(BaseHTTPRequestHandler):
             return
         want = {"lc[state]": ["pending"], "lc[progress]": ["0"], "lc[public]": ["true"], "lc[is_in_child_library]": ["false"]}
         book = form.pop("book_uuid", [""])[0]
-        if form != want or not re.fullmatch(r"found\d+", book):
+        if form != want or not re.fullmatch(r"found\d+|serial-2|ep2-\d", book):
             print("bad add:", book, form, flush=True)
             self.reply(400, b"")
+            return
+        if not book.startswith("found"):
+            # A serial and its episodes: the order is the phone's, the serial first.
+            if book.startswith("ep") and "serial-2" not in self.server.taken:
+                print("an episode before its serial:", book, flush=True)
+                self.reply(400, b"")
+                return
+            self.server.taken.append(book)
+            self.reply_json(200, {"library_card": self.taken_card(book)})
             return
         self.server.added.append(book)
         self.reply_json(200, {"library_card": self.added_card(book)})
@@ -381,6 +462,7 @@ class Handler(BaseHTTPRequestHandler):
             "progress": int(form["lc[progress]"][0]),
             "state": form.get("lc[state]", [None])[0],
             "sent_cfi": form["lc[cfi]"][0],
+            "current_episode_uuid": form.get("lc[current_episode_uuid]", [None])[0],
         }
         self.reply_json(200, {"library_card": {"uuid": card, "cfi": form["lc[cfi]"][0]}})
 
@@ -406,7 +488,8 @@ class Handler(BaseHTTPRequestHandler):
         if body["query"] != PROGRESS_UPDATED:
             self.reply_json(200, {"errors": [{"message": "Whitelist: query not found"}]})
             return
-        for p in body["variables"]["textbookProgresses"]:
+        variables = body["variables"]
+        for p in (variables.get("textbookProgresses") or []) + (variables.get("textSerialProgresses") or []):
             good = (isinstance(p["timespent"], int) and p["timespent"] > 0
                     and p["consumptionType"] == "CONSUMPTION"
                     and re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}\+00:00", p["readAt"])
@@ -417,8 +500,11 @@ class Handler(BaseHTTPRequestHandler):
                 print("bad ProgressUpdated:", p, flush=True)
                 self.reply_json(200, {"errors": [{"message": "bad input"}], "data": None})
                 return
-            self.server.positions[p["uuid"]] = {"start": p["cfi"]["start"], "end": p["cfi"]["end"],
-                                                  "writes": self.server.positions.get(p["uuid"], {}).get("writes", 0) + 1}
+            if "textSerialProgresses" in variables:
+                self.server.serial_progress = {"uuid": p["uuid"], "episode": p["episodeUuid"]}
+            book = p.get("episodeUuid") or p["uuid"]
+            self.server.positions[book] = {"start": p["cfi"]["start"], "end": p["cfi"]["end"],
+                                           "writes": self.server.positions.get(book, {}).get("writes", 0) + 1}
         self.reply_json(200, {"data": {"progressUpdated": None}})
 
     def do_POST(self):
@@ -468,6 +554,39 @@ class Handler(BaseHTTPRequestHandler):
             self.reply_json(200, {"removed": self.server.removed})
         elif url.path == "/test/added":
             self.reply_json(200, {"added": self.server.added})
+        elif url.path == "/test/serial":
+            self.reply_json(200, {"taken": self.server.taken, "progress": self.server.serial_progress,
+                                  "updates": self.server.card_updates})
+        elif re.fullmatch(r".*/series/[^/]+", url.path):
+            self.reply_json(200, {"series": self.rest_series(url.path.split("/")[-1])})
+        elif url.path.endswith("/series/series-1/parts"):
+            first = query.get("page") == ["1"]
+            parts = [{"position": 1, "position_label": "1", "resource_type": "book", "resource": self.rest_book(20)},
+                     {"position": 2, "position_label": "2", "resource_type": "audiobook", "resource": {"uuid": "audio1", "title": "Послушать"}},
+                     {"position": 3, "position_label": "3", "resource_type": "book", "resource": self.rest_book(21)}]
+            self.reply_json(200, {"parts": parts if first else []})
+        elif url.path.endswith("/authors/author-1/books"):
+            if query.get("role") != ["author"]:
+                self.reply(404, b"")
+                return
+            self.reply_json(200, {"books": [self.rest_book(20), self.rest_book(22)] if query.get("page") == ["1"] else []})
+        elif url.path.endswith("/authors/author-1/series"):
+            if query.get("role") != ["author"]:
+                self.reply(404, b"")
+                return
+            self.reply_json(200, {"series": [self.rest_series("series-1"), self.rest_series("series-audio")]})
+        elif re.search(r"/books/serial-\d/episodes$", url.path):
+            serial = url.path.split("/")[-2]
+            number = serial.split("-")[1]
+            episodes = [self.episode(f"ep{number}-{n + 1}") for n in range(SERIALS[serial][1])]
+            self.reply_json(200, {"episodes": episodes if query.get("page") == ["1"] else []})
+        elif re.search(r"/books/ep\d-\d$", url.path):
+            self.reply(404, b"")  # as there: an episode has no page of a book
+        elif re.search(r"/books/serial-\d$", url.path):
+            uuid = url.path.split("/")[-1]
+            card = "card3" if uuid == "serial-1" else f"c-{uuid}" if uuid in self.server.taken else None
+            self.reply_json(200, {"book": {**self.serial_book(uuid), "in_library": card is not None,
+                                           "library_card_uuid": card}})
         elif url.path == "/challenge":
             # The simulator cannot scan a QR code, so the test script passes it here.
             self.server.challenge = query["c"][0]
@@ -486,6 +605,8 @@ class Handler(BaseHTTPRequestHandler):
                 card = "added" + uuid.replace("found", "")
             self.reply_json(200, {"book": {"uuid": uuid, "can_be_read": uuid != "found-denied",
                                            "in_library": card is not None, "library_card_uuid": card}})
+        elif re.search(r"/profile/library_cards/c-[^/]+$", url.path):
+            self.reply_json(200, {"library_card": self.taken_card(url.path.split("/c-")[-1])})
         elif re.search(r"/profile/library_cards/added\d+$", url.path):
             self.reply_json(200, {"library_card": self.added_card("found" + url.path.split("added")[-1])})
         elif re.search(r"/profile/library_cards/card\d+$", url.path):
@@ -503,7 +624,8 @@ class Handler(BaseHTTPRequestHandler):
                 return
             page = int(query.get("page", ["1"])[0])
             start = (page - 1) * 10
-            everything = [self.card(i) for i in range(BOOKS)] + [self.added_card(u) for u in self.server.added]
+            everything = ([self.card(i) for i in range(BOOKS)] + [self.added_card(u) for u in self.server.added]
+                          + [self.taken_card(u) for u in self.server.taken])
             everything = [c for c in everything if c["uuid"] not in self.server.removed]
             cards = everything[start:start + 10]
             self.reply_json(200, {"library_cards": cards})
@@ -553,6 +675,9 @@ if __name__ == "__main__":
     server.card_updates = {}
     server.fail_writes = 0
     server.added = []
+    # Of the serial that is in the library, two episodes of three came with it so far.
+    server.taken = ["ep1-1", "ep1-2"]
+    server.serial_progress = None
     server.removed = []
     server.fail_search = 0
     server.fail_showcase = 0

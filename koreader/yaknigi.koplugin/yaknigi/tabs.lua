@@ -13,10 +13,10 @@ local Tabs = {}
 local HERE = debug.getinfo(1, "S").source:match("^@(.*)/[^/]*$") or "."
 
 local ALL = {
-    { id = "library", caption = "Библиотека", icon = "book.opened" },
+    { id = "library", caption = "Библиотека", file = HERE .. "/icons/tab.library.svg" },
     { id = "feed", caption = "Яндекс Книги", file = HERE .. "/icons/yandex-books.svg" },
-    { id = "search", caption = "Поиск", icon = "appbar.search" },
-    { id = "settings", caption = "Настройки", icon = "appbar.settings" },
+    { id = "search", caption = "Поиск", file = HERE .. "/icons/tab.search.svg" },
+    { id = "settings", caption = "Настройки", file = HERE .. "/icons/tab.settings.svg" },
 }
 
 function Tabs.height()
@@ -37,7 +37,6 @@ function Tabs.bar(width, selected, on_select)
                 file = tab.file,
                 width = side,
                 height = side,
-                dim = not on,
             },
             Kit.gap(Kit.px(3)),
             Kit.text(tab.caption, 13, {

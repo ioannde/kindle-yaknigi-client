@@ -108,11 +108,11 @@ function Chrome:build()
     }
     local cell = math.floor(inner / 4)
     local icon = Kit.px(36)
-    self.toc_button = Kit.action(IconWidget:new{ icon = "appbar.navigation", width = icon, height = icon }, "Оглавление", cell,
+    self.toc_button = Kit.action(IconWidget:new{ file = HERE .. "/icons/panel.toc.svg", width = icon, height = icon }, "Оглавление", cell,
         function() self:after(function() ui.toc:onShowToc() end) end)
-    self.notes_button = Kit.action(IconWidget:new{ icon = "bookmark", width = icon, height = icon }, "Заметки", cell,
+    self.notes_button = Kit.action(IconWidget:new{ file = HERE .. "/icons/panel.notes.svg", width = icon, height = icon }, "Заметки", cell,
         function() self:after(function() UIManager:show(Notes:new{ ui = ui, shell = self.shell }) end) end)
-    self.search_button = Kit.action(IconWidget:new{ icon = "appbar.search", width = icon, height = icon }, "Поиск", cell,
+    self.search_button = Kit.action(IconWidget:new{ file = HERE .. "/icons/tab.search.svg", width = icon, height = icon }, "Поиск", cell,
         function() self:after(function() ui.search:onShowFulltextSearchInput() end) end)
     self.text_button = Kit.action(IconWidget:new{ file = HERE .. "/icons/text.svg", width = icon, height = icon }, "Текст", cell,
         function() self:after(function() UIManager:show(TextPanel:new{ ui = ui, shell = self.shell }) end) end)

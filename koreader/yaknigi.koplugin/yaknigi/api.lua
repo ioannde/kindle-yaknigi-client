@@ -89,19 +89,21 @@ local ROOT_SHOWCASES = "query RootShowcases($rootShowcaseParamsInput: RootShowca
 -- ProgressUpdated moves the position that other devices see; the library card holds the
 -- percentage and the time of reading, and ignores the position it is sent.
 function Api:send_position(p)
+    local progress = {
+        cfi = { start = p.start, ["end"] = p.finish },
+        consumptionType = "CONSUMPTION",
+        documentUuid = p.document,
+        uuid = p.serial or p.book,
+        episodeUuid = p.serial and p.book or nil,
+        readAt = p.read_at,
+        sessionId = p.session,
+        timespent = p.timespent,
+        timezoneId = "UTC",
+    }
     local status, body = self.http:request("POST", GRAPHQL_URL, self:headers("application/json"), json.encode({
         operationName = "ProgressUpdated",
         query = PROGRESS_UPDATED,
-        variables = { textbookProgresses = { {
-            cfi = { start = p.start, ["end"] = p.finish },
-            consumptionType = "CONSUMPTION",
-            documentUuid = p.document,
-            uuid = p.book,
-            readAt = p.read_at,
-            sessionId = p.session,
-            timespent = p.timespent,
-            timezoneId = "UTC",
-        } } },
+        variables = p.serial and { textSerialProgresses = { progress } } or { textbookProgresses = { progress } },
     }))
     if status ~= 200 then return status_error(status, body) end
     local answer = json.decode(body)
@@ -116,12 +118,28 @@ function Api:send_position(p)
         "lc[cfi]=" .. encode(p.range),
     }
     if p.state then form[#form + 1] = "lc[state]=" .. encode(p.state) end
-    for i, field in ipairs(form) do
-        form[i] = field:gsub("%[", "%%5B"):gsub("%]", "%%5D")
+    local function put(card, fields)
+        local encoded = {}
+        for i, field in ipairs(fields) do
+            encoded[i] = field:gsub("%[", "%%5B"):gsub("%]", "%%5D")
+        end
+        return self.http:request("PUT", API_BASE .. "/profile/library_cards/" .. encode(card),
+            self:headers("application/x-www-form-urlencoded"), table.concat(encoded, "&"))
     end
-    status, body = self.http:request("PUT", API_BASE .. "/profile/library_cards/" .. encode(p.card),
-        self:headers("application/x-www-form-urlencoded"), table.concat(form, "&"))
+    status, body = put(p.card, form)
     if status ~= 200 then return status_error(status, body) end
+    -- A serial has a card of its own, which says which episode is being read.
+    if p.serial_card then
+        status, body = put(p.serial_card, {
+            "lc[state]=reading",
+            "lc[progress]=" .. p.progress,
+            "lc[public]=true",
+            "lc[is_in_child_library]=false",
+            "lc[cfi]=" .. encode(p.range),
+            "lc[current_episode_uuid]=" .. encode(p.book),
+        })
+        if status ~= 200 then return status_error(status, body) end
+    end
     return true
 end
 
@@ -158,7 +176,7 @@ function Api:search(text, cursor)
             cursor = cursor or "",
             noMisspell = false,
             query = text,
-            types = { "TEXTBOOK" }, -- audiobooks and comics cannot be read here
+            types = { "TEXTBOOK", "SERIAL", "SERIES", "AUTHOR" }, -- audiobooks and comics cannot be read here
         } },
     }))
     if status ~= 200 then return status_error(status, body) end
@@ -232,6 +250,81 @@ function Api:add_book(book_uuid)
     local card = ok and type(data) == "table" and data.library_card
     if type(card) ~= "table" or type(card.book) ~= "table" then return nil, "http", "no card" end
     return drop_nulls(card)
+end
+
+local LIST_PAGE = 50
+
+--- Whether a series holds books to read. If Yandex does not say, it stays in the results:
+-- better an empty list than a series that cannot be found.
+function Api:series_has_books(uuid)
+    local data = self:get_json(API_BASE .. "/series/" .. encode(uuid))
+    if type(data) ~= "table" or type(data.series) ~= "table" or type(data.series.kinds) ~= "table" then return true end
+    for _, kind in ipairs(data.series.kinds) do
+        if kind == "books" then return true end
+    end
+    return false
+end
+
+--- A page of a list: kind is "series", "author" or "serial", and the cursor the page's number
+-- as text. Returns { books, parts, episodes or series as Yandex gives them, cursor = the next
+-- page, empty after the last }.
+function Api:collection(kind, uuid, cursor)
+    local number = tonumber(cursor) or 1
+    local paging = "page=" .. number .. "&per_page=" .. LIST_PAGE
+    local id = encode(uuid)
+    local url, field
+    if kind == "series" then
+        url, field = "/series/" .. id .. "/parts?" .. paging, "parts"
+    elseif kind == "author" then
+        url, field = "/authors/" .. id .. "/books?role=author&" .. paging, "books"
+    else
+        url, field = "/books/" .. id .. "/episodes?" .. paging, "episodes"
+    end
+    local data, failure, detail = self:get_json(API_BASE .. url)
+    if not data then return nil, failure, detail end
+    local got = type(data[field]) == "table" and drop_nulls(data[field]) or {}
+    local answer = { [field] = got, cursor = #got >= LIST_PAGE and tostring(number + 1) or "" }
+    -- An author's series stand before the books. Having none is not a reason to show nothing.
+    if kind == "author" and number == 1 then
+        local series = self:get_json(API_BASE .. "/authors/" .. id .. "/series?role=author")
+        if type(series) == "table" and type(series.series) == "table" then answer.series = drop_nulls(series.series) end
+    end
+    return answer
+end
+
+--- Puts a serial into the library with all its episodes, as the phone app does; a serial that is
+-- there gets the episodes it has not got. Returns all their cards, the serial's first.
+function Api:add_serial(serial_uuid)
+    local data, kind, detail = self:get_json(API_BASE .. "/books/" .. encode(serial_uuid))
+    if not data then return nil, kind, detail end
+    local book = type(data.book) == "table" and data.book or {}
+    if book.can_be_read == false then return nil, "denied" end
+    local card
+    if type(book.library_card_uuid) == "string" then
+        card, kind, detail = self:card(book.library_card_uuid)
+    else
+        card, kind, detail = self:add_book(serial_uuid)
+    end
+    if not card then return nil, kind, detail end
+    local cards = { card }
+    local cursor = ""
+    repeat
+        local page
+        page, kind, detail = self:collection("serial", serial_uuid, cursor)
+        if not page then return nil, kind, detail end
+        for _, episode in ipairs(page.episodes) do
+            local mine = type(episode.library_card) == "table" and episode.library_card.uuid
+            if mine then
+                card, kind, detail = self:card(mine)
+            else
+                card, kind, detail = self:add_book(episode.uuid)
+            end
+            if not card then return nil, kind, detail end
+            cards[#cards + 1] = card
+        end
+        cursor = page.cursor
+    until cursor == ""
+    return cards
 end
 
 --- Takes a book out of the library. A card already gone is as good as taken out.

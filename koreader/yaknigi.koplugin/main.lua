@@ -72,6 +72,10 @@ local save_requests = 0
 local storage_requests = 0
 -- The books being saved on the device, by book id.
 local saving = {}
+-- The cards of the episodes, by book id: the library shows only the serial they are of.
+local episode_cards = {}
+-- What to open as soon as the library is back: the next episode, after the last one is closed.
+local open_next = nil
 
 -- KOReader quits when its last screen closes, which its own Exit and any failure to open
 -- something would do. Only "Закрыть приложение" should end the app: go back to the library.
@@ -175,7 +179,7 @@ end
 
 local function error_text(kind)
     if kind == "network" then return "Нет связи с Яндекс Книгами." end
-    if kind == "not_found" then return "Сериалы здесь пока не открываются." end
+    if kind == "not_found" then return "Эта книга не открывается." end
     if kind == "disk" then return "Не удалось записать на устройство." end
     return "Яндекс Книги вернули ошибку."
 end
@@ -296,18 +300,42 @@ local function is_whole(card)
     return state == "whole"
 end
 
+--- What is shown on its own, leaving out the episodes: there can be hundreds.
+local function without_episodes(cards)
+    local shown = {}
+    for _, card in ipairs(cards) do
+        if not (card.book and card.book.parent_uuid) then shown[#shown + 1] = card end
+    end
+    return shown
+end
+
 function Yaknigi:libraryItems(cards)
     local items = {}
-    for _, card in ipairs(sorted_cards(cards)) do
+    local saved_episode = {}
+    episode_cards = {}
+    for _, card in ipairs(cards) do
+        local book = card.book
+        if book and book.parent_uuid then
+            episode_cards[book.uuid] = card
+            saved_episode[book.parent_uuid] = saved_episode[book.parent_uuid] or is_whole(card)
+        end
+    end
+    for _, card in ipairs(sorted_cards(without_episodes(cards))) do
         local here = reading_here(card)
         local progress = here or tonumber(card.progress)
         local title = card.book and card.book.title or "?"
-        local whole = is_whole(card)
+        local serial = card.book and card.book.source_type == "serial"
+        local whole = is_whole(card) or (serial and saved_episode[card.book.uuid]) or false
+        local mandatory = progress and (here or progress > 0) and (math.floor(progress) .. "%") or nil
+        local episode, episodes = tonumber(card.current_episode_position), serial and tonumber(card.book.episodes_count)
+        if serial and episode and episodes then mandatory = "эп. " .. episode .. " из " .. episodes end
         items[#items + 1] = {
+            kind = serial and "serial" or nil,
+            percent = serial and progress or nil,
             text = (whole and "✓ " or "") .. title,
             title = title,
             authors = card_authors(card),
-            mandatory = progress and (here or progress > 0) and (math.floor(progress) .. "%") or nil,
+            mandatory = mandatory,
             shelf = Shelves.of(card.state, card.progress, here),
             whole = whole,
             cover = Covers.find(COVERS, card),
@@ -352,7 +380,7 @@ function Yaknigi:scheduleCoverPoll(pids)
         local library = self.library
         local done = Covers.done(pids)
         local view = library.view
-        local apart = view == "catalogue" or view == "feed" or view == "feed_section"
+        local apart = view == "catalogue" or view == "collection" or view == "feed" or view == "feed_section"
         -- Only what is on the screen is worth redrawing it.
         local shown = {}
         for _, item in ipairs(library.rows or {}) do shown[item] = true end
@@ -370,6 +398,9 @@ function Yaknigi:scheduleCoverPoll(pids)
         end
         if library.catalogue then
             for _, item in ipairs(library.catalogue.items) do look(item, shown[item]) end
+        end
+        if library.collection then
+            for _, item in ipairs(library.collection.items) do look(item, shown[item]) end
         end
         if library.feed then
             for _, item in ipairs(Feed.items(library.feed)) do look(item, shown[item]) end
@@ -424,9 +455,7 @@ function Yaknigi:showLibrary(quiet)
         item_table = items,
         place = library_place,
         on_sign_in = not signed_in and function() self:showLogin() end or nil,
-        onMenuSelect = function(_library, item)
-            if item.found then self:openFound(item) else self:openCard(item.card) end
-        end,
+        onMenuSelect = function(_library, item, from_dock) self:openItem(item, from_dock) end,
         on_catalogue = function(state) self:askCatalogue(state) end,
         on_feed = function(state) self:askFeed(state) end,
         load_feed = function() return self:savedFeed() end,
@@ -455,7 +484,7 @@ function Yaknigi:showLibrary(quiet)
     if quiet then return end
     if signed_in then
         UIManager:nextTick(function() self:refreshLibrary(cached == nil) end)
-        if cached then UIManager:nextTick(function() self:fetchCovers(cached) end) end
+        if cached then UIManager:nextTick(function() self:fetchCovers(without_episodes(cached)) end) end
         -- Back from a book, to what had been found: the covers that came meanwhile, or did not.
         if library.catalogue then
             for _, item in ipairs(library.catalogue.items) do
@@ -463,6 +492,12 @@ function Yaknigi:showLibrary(quiet)
             end
             library:refreshScreen()
             local cards = Catalogue.cards(library.catalogue.items)
+            UIManager:nextTick(function() self:fetchCovers(cards) end)
+        end
+        if library.collection then
+            self:freshenList(library.collection)
+            library:refreshScreen()
+            local cards = Catalogue.cards(library.collection.items)
             UIManager:nextTick(function() self:fetchCovers(cards) end)
         end
         if library.feed then
@@ -529,7 +564,7 @@ function Yaknigi:pollLibrary(tell_failure)
             if not cards then return end
             if #cards == 0 then self.library.message = "Библиотека пуста. Книги можно найти через поиск." end
             self.library:switchItemTable(nil, self:libraryItems(cards))
-            self:fetchCovers(cards)
+            self:fetchCovers(without_episodes(cards))
         elseif kind == "auth" then
             save_token(nil)
             self:showLibrary()
@@ -542,9 +577,27 @@ end
 
 -- Catalogue -------------------------------------------------------------------
 
-local function catalogue_error(kind)
+local function catalogue_error(kind, state)
     if kind == "network" then return "Нет связи с Яндекс Книгами." end
-    return "Поиск сейчас не работает."
+    return state.kind and "Этот список сейчас не открывается." or "Поиск сейчас не работает."
+end
+
+--- Asks for a page of what was searched for, or of a list. Runs in the forked process.
+local function ask_page(api, state, cursor)
+    if state.kind then
+        local page, kind = api:collection(state.kind, state.uuid, cursor)
+        if not page then return nil, kind end
+        return { items = Catalogue.from_page(state.kind, page), cursor = page.cursor }
+    end
+    local answer, kind = api:search(state.query, cursor)
+    if not answer then return nil, kind end
+    local items = {}
+    for _, found in ipairs(answer.page) do
+        local item = Catalogue.item(found)
+        -- Search does not say which series are of audiobooks only.
+        if item and (item.kind ~= "series" or api:series_has_books(item.uuid)) then items[#items + 1] = item end
+    end
+    return { items = items, cursor = answer.cursor or "" }
 end
 
 --- Gets the next books found, if they are not on their way already. In a forked process,
@@ -557,14 +610,10 @@ function Yaknigi:askCatalogue(state)
         local token, cursor = saved_token(), state.cursor
         local pid = ffiutil.runInSubProcess(function()
             local api = Api.new(token)
-            local answer, kind = api:search(state.query, cursor)
+            local answer, kind = ask_page(api, state, cursor)
             api:close()
             if answer then
-                local items = {}
-                for _, found in ipairs(answer.page) do
-                    items[#items + 1] = Catalogue.item(found)
-                end
-                write_json(path, { kind = "ok", items = items, cursor = answer.cursor or "" })
+                write_json(path, { kind = "ok", items = answer.items, cursor = answer.cursor })
             else
                 write_json(path, { kind = kind or "network" })
             end
@@ -573,7 +622,7 @@ function Yaknigi:askCatalogue(state)
         if pid then
             self:pollCatalogue(state, pid, path)
         else
-            Catalogue.fail(state, catalogue_error("http"))
+            Catalogue.fail(state, catalogue_error("http", state))
         end
     end
     if state.cursor == "" then
@@ -581,7 +630,7 @@ function Yaknigi:askCatalogue(state)
     elseif NetworkMgr:isOnline() then
         start()
     else
-        Catalogue.fail(state, catalogue_error("network"))
+        Catalogue.fail(state, catalogue_error("network", state))
     end
 end
 
@@ -594,9 +643,9 @@ function Yaknigi:pollCatalogue(state, pid, path)
         local result = read_json(path) or {}
         os.remove(path)
         local library = shown_library
-        local current = library and library.catalogue == state
+        local current = library and (library.catalogue == state or library.collection == state)
         if result.kind == "auth" then
-            Catalogue.fail(state, catalogue_error("http"))
+            Catalogue.fail(state, catalogue_error("http", state))
             if current then
                 save_token(nil)
                 if self.library == library then self:showLibrary() end
@@ -607,11 +656,15 @@ function Yaknigi:pollCatalogue(state, pid, path)
         if result.kind == "ok" then
             new = Catalogue.add(state, result.items, result.cursor)
             for _, item in ipairs(new) do item.cover = Covers.find(COVERS, item.card) end
+            self:freshenList(state)
         else
-            Catalogue.fail(state, catalogue_error(result.kind or "network"))
+            Catalogue.fail(state, catalogue_error(result.kind or "network", state))
         end
         if not current then return end
-        if library.view == "catalogue" then library:refreshScreen() end
+        if (library.view == "catalogue" and library.catalogue == state)
+            or (library.view == "collection" and library.collection == state) then
+            library:refreshScreen()
+        end
         if new and self.library == library then self:fetchCovers(Catalogue.cards(new)) end
     end)
 end
@@ -718,11 +771,48 @@ end
 -- Opening what was found -------------------------------------------------------
 
 function Yaknigi:ownedCard(book_uuid)
+    if episode_cards[book_uuid] then return episode_cards[book_uuid] end
     local library = shown_library or self.library
     for _, item in ipairs(library and library.item_table or {}) do
         local book = item.card and item.card.book
         if book and book.uuid == book_uuid then return item.card end
     end
+end
+
+--- The episodes of a list as they stand here now: which are in the library, and how far read.
+function Yaknigi:freshenList(state)
+    if state.kind ~= "serial" then return end
+    for _, item in ipairs(state.items) do
+        local card = item.kind == "episode" and episode_cards[item.card.book.uuid]
+        if card then
+            local here = reading_here(card)
+            local progress = here or tonumber(card.progress) or 0
+            item.card = card
+            item.in_library = true
+            item.mandatory = progress > 0 and (math.floor(progress) .. "%") or nil
+        end
+    end
+end
+
+--- Opens the list that this leads to, on the screen where it was tapped.
+function Yaknigi:openList(kind, uuid, title)
+    local library = shown_library or self.library
+    if not library then return end
+    library:openCollection(Catalogue.collection(kind, uuid, title))
+end
+
+--- A tap on what is in a list. A serial shows its episodes, except where it stands for what is
+-- being read: there it goes on with the episode.
+function Yaknigi:openItem(item, from_dock)
+    if item.kind == "author" or item.kind == "series" then
+        return self:openList(item.kind, item.uuid, item.title)
+    end
+    if item.kind == "serial" then
+        local current = from_dock and episode_cards[item.card.current_episode_uuid or ""]
+        if current then return self:openCard(current) end
+        return self:openList("serial", item.card.book.uuid, item.title)
+    end
+    if item.found then self:openFound(item) else self:openCard(item.card) end
 end
 
 --- A book from the library opens at once. Any other shows what it is first, as opening it
@@ -744,6 +834,27 @@ function Yaknigi:openFound(item)
     end
 end
 
+--- Gets the card of a book, from Yandex and into the library if need be. An episode comes with
+-- its whole serial, as on the phone. Returns the card, what went wrong, and all the new cards.
+local function take_card(api, serial, uuid)
+    if not serial then
+        local card, kind = api:card_for_reading(uuid)
+        return card, kind, card and { card }
+    end
+    local cards, kind = api:add_serial(serial)
+    if not cards then return nil, kind end
+    for _, card in ipairs(cards) do
+        if card.book and card.book.uuid == uuid then return card, nil, cards end
+    end
+    return nil, "http"
+end
+
+--- The serial something found is of, if it is.
+local function serial_of_item(item)
+    if item.kind == "serial" then return item.card.book.uuid end
+    return item.kind == "episode" and item.serial or nil
+end
+
 --- Gets a library card for a found book and opens it.
 function Yaknigi:takeFound(item, screen)
     NetworkMgr:runWhenOnline(function()
@@ -752,12 +863,12 @@ function Yaknigi:takeFound(item, screen)
         local wait = InfoMessage:new{ text = opening_text(item.card) }
         UIManager:show(wait)
         os.remove(TAKE_RESULT)
-        local token, uuid = saved_token(), item.card.book.uuid
+        local token, uuid, serial = saved_token(), item.card.book.uuid, serial_of_item(item)
         local pid = ffiutil.runInSubProcess(function()
             local api = Api.new(token)
-            local card, kind = api:card_for_reading(uuid)
+            local card, kind, cards = take_card(api, serial, uuid)
             api:close()
-            write_json(TAKE_RESULT, { kind = kind or "ok", card = card })
+            write_json(TAKE_RESULT, { kind = kind or "ok", card = card, cards = cards })
             os.exit(0)
         end)
         if not pid then
@@ -785,7 +896,7 @@ function Yaknigi:pollTake(item, screen, wait, pid)
             if screen then UIManager:close(screen) end
             Catalogue.mark_added(item, result.card)
             -- So that the library has it now, whatever becomes of opening it.
-            self:rememberCard(result.card)
+            self:rememberCards(result.cards)
             self:openCard(result.card)
         elseif kind == "auth" then
             if screen then UIManager:close(screen) end
@@ -802,17 +913,20 @@ function Yaknigi:pollTake(item, screen, wait, pid)
 end
 
 --- A new card goes into the library's list at once, and the screen shows it.
-function Yaknigi:rememberCard(card)
+function Yaknigi:rememberCards(new)
     local cards = read_json(LIBRARY_CACHE) or {}
-    local known = false
-    for _, mine in ipairs(cards) do
-        known = known or mine.uuid == card.uuid
+    local known = {}
+    for _, mine in ipairs(cards) do known[mine.uuid] = true end
+    local changed = false
+    for i = #new, 1, -1 do
+        if not known[new[i].uuid] then
+            table.insert(cards, 1, new[i])
+            changed = true
+        end
     end
-    if not known then
-        table.insert(cards, 1, card)
-        write_json(LIBRARY_CACHE, cards)
-    end
+    if changed then write_json(LIBRARY_CACHE, cards) end
     self:showCards(cards)
+    if shown_library and shown_library.collection then self:freshenList(shown_library.collection) end
 end
 
 --- What the library shows, from the list as it now is.
@@ -837,12 +951,12 @@ function Yaknigi:addFound(item, after)
         if shown_library then shown_library:refreshScreen() end
         add_requests = add_requests + 1
         local path = ADD_RESULT .. add_requests
-        local token, uuid = saved_token(), item.card.book.uuid
+        local token, uuid, serial = saved_token(), item.card.book.uuid, serial_of_item(item)
         local pid = ffiutil.runInSubProcess(function()
             local api = Api.new(token)
-            local card, kind = api:card_for_reading(uuid)
+            local card, kind, cards = take_card(api, serial, uuid)
             api:close()
-            write_json(path, { kind = kind or "ok", card = card })
+            write_json(path, { kind = kind or "ok", card = card, cards = cards })
             os.exit(0)
         end)
         if not pid then
@@ -868,7 +982,7 @@ function Yaknigi:pollAdd(item, path, pid, after)
         if kind == "ok" and result.card then
             local title = item.title
             Catalogue.mark_added(item, result.card)
-            self:rememberCard(result.card)
+            self:rememberCards(result.cards)
             if after then
                 after(result.card)
             else
@@ -984,10 +1098,18 @@ function Yaknigi:removeFromLibrary(card)
         UIManager:show(wait)
         remove_requests = remove_requests + 1
         local path = REMOVE_RESULT .. remove_requests
-        local token, uuid = saved_token(), card.uuid
+        local token = saved_token()
+        -- The episodes of a serial have their cards, and go with it.
+        local episodes = {}
+        for _, mine in ipairs(read_json(LIBRARY_CACHE) or {}) do
+            if mine.book and mine.book.parent_uuid == card.book.uuid then episodes[#episodes + 1] = mine end
+        end
         local pid = ffiutil.runInSubProcess(function()
             local api = Api.new(token)
-            local ok, kind = api:remove_card(uuid)
+            local ok, kind = api:remove_card(card.uuid)
+            for _, episode in ipairs(episodes) do
+                if ok then ok, kind = api:remove_card(episode.uuid) end
+            end
             api:close()
             write_json(path, { kind = ok and "ok" or kind or "network" })
             os.exit(0)
@@ -997,14 +1119,14 @@ function Yaknigi:removeFromLibrary(card)
             message(error_text("http"), 3)
             return
         end
-        self:pollRemove(card, wait, path, pid)
+        self:pollRemove(card, episodes, wait, path, pid)
     end)
 end
 
-function Yaknigi:pollRemove(card, wait, path, pid)
+function Yaknigi:pollRemove(card, episodes, wait, path, pid)
     UIManager:scheduleIn(0.2, function()
         if not ffiutil.isSubProcessDone(pid) then
-            self:pollRemove(card, wait, path, pid)
+            self:pollRemove(card, episodes, wait, path, pid)
             return
         end
         UIManager:close(wait)
@@ -1019,22 +1141,30 @@ function Yaknigi:pollRemove(card, wait, path, pid)
             message(kind == "network" and error_text(kind) or "Яндекс Книги не дали удалить эту книгу.", 3)
             return
         end
+        local gone = { [card.uuid] = true }
+        local gone_books = { [card.book.uuid] = true }
+        for _, episode in ipairs(episodes) do
+            gone[episode.uuid] = true
+            gone_books[episode.book.uuid] = true
+        end
         local cards = {}
         for _, mine in ipairs(read_json(LIBRARY_CACHE) or {}) do
-            if mine.uuid ~= card.uuid then cards[#cards + 1] = mine end
+            if not gone[mine.uuid] then cards[#cards + 1] = mine end
         end
         write_json(LIBRARY_CACHE, cards)
+        for _, episode in ipairs(episodes) do self:removeFromDevice(episode) end
         self:removeFromDevice(card)
         -- Where it was found it can be added again.
         if shown_library then
             local function forget(items)
                 for _, item in ipairs(items) do
-                    if item.card and item.card.book and item.card.book.uuid == card.book.uuid then
+                    if item.card and item.card.book and gone_books[item.card.book.uuid] then
                         Catalogue.mark_removed(item)
                     end
                 end
             end
             if shown_library.catalogue then forget(shown_library.catalogue.items) end
+            if shown_library.collection then forget(shown_library.collection.items) end
             if shown_library.feed then forget(Feed.items(shown_library.feed)) end
         end
         self:showCards(cards)
@@ -1047,8 +1177,11 @@ function Yaknigi:showBookMenu(item)
     local uuid = item.card.book.uuid
     local card = self:ownedCard(uuid) or item.card
     local function read()
-        if card.uuid then self:openCard(card) else self:openFound(item) end
+        if item.kind == "serial" then self:openItem(item)
+        elseif card.uuid then self:openCard(card)
+        else self:openFound(item) end
     end
+    local serial, episode = item.kind == "serial", item.kind == "episode"
     local entries = { {
         key = "about",
         text = "О книге",
@@ -1071,7 +1204,9 @@ function Yaknigi:showBookMenu(item)
             UIManager:show(screen)
         end,
     } }
-    if saving[uuid] then
+    if serial then
+        -- Its episodes are what is saved, each on its own.
+    elseif saving[uuid] then
         entries[#entries + 1] = { key = "saving", text = "Сохраняю…", file = "wait", disabled = true }
     elseif is_whole(card) then
         entries[#entries + 1] = { key = "remove_device", text = "Удалить с устройства", file = "cloud.off",
@@ -1080,11 +1215,23 @@ function Yaknigi:showBookMenu(item)
         entries[#entries + 1] = { key = "save", text = "Сохранить на устройство", file = "cloud.down",
             action = function() self:saveBook(card) end }
     end
-    if card.uuid then
+    for _, link in ipairs(Catalogue.links(card.book)) do
+        local is_series = link.kind == "series"
+        entries[#entries + 1] = {
+            key = link.kind,
+            text = (is_series and "Серия " or "Автор: ") .. (is_series and quoted(link.title) or link.title),
+            icon = "chevron.right",
+            action = function() self:openList(link.kind, link.uuid, link.title) end,
+        }
+    end
+    -- An episode goes only with its serial, as on the phone.
+    if card.uuid and not episode then
         entries[#entries + 1] = { key = "remove_library", text = "Удалить из библиотеки", file = "trash",
             action = function()
                 UIManager:show(ConfirmBox:new{
-                    text = "Удалить " .. quoted(item.title) .. " из библиотеки? Она исчезнет и в приложении на телефоне.",
+                    text = serial
+                        and "Удалить " .. quoted(item.title) .. " из библиотеки со всеми эпизодами? Они исчезнут и в приложении на телефоне."
+                        or "Удалить " .. quoted(item.title) .. " из библиотеки? Она исчезнет и в приложении на телефоне.",
                     ok_text = "Удалить",
                     ok_callback = function() self:removeFromLibrary(card) end,
                 })
@@ -1169,6 +1316,7 @@ function Yaknigi:afterClearing(picks)
         end
     end
     if shown_library.catalogue then look(shown_library.catalogue.items) end
+    if shown_library.collection then look(shown_library.collection.items) end
     if shown_library.feed then look(Feed.items(shown_library.feed)) end
     shown_library:refreshScreen()
     self:fetchCovers(cards)
@@ -1182,6 +1330,10 @@ end
 
 function Yaknigi:openCard(card)
     local id = card.book and card.book.uuid
+    -- A serial has nothing to read in itself.
+    if card.book and card.book.source_type == "serial" then
+        return self:openList("serial", id, card.book.title)
+    end
     if id then book_covers[id] = card.book.cover or book_covers[id] end
     opening_message = opening_text(card)
     local store = Store.open(BOOKS, id)
@@ -1321,10 +1473,53 @@ function Yaknigi:chooseSleepCover(store)
     UIManager:scheduleIn(POLL_SECONDS, wait)
 end
 
+--- The card of the serial an episode is of, and the next episode's. Looks through the list only
+-- once for a book being read.
+local function serial_cards(book_id)
+    local cards = read_json(LIBRARY_CACHE) or {}
+    local this
+    for _, card in ipairs(cards) do
+        if card.book and card.book.uuid == book_id then this = card end
+    end
+    local parent = this and this.book.parent_uuid
+    if not parent then return nil end
+    local serial, following
+    for _, card in ipairs(cards) do
+        local book = card.book or {}
+        if book.uuid == parent then serial = card end
+        if book.parent_uuid == parent and this.book.position and book.position == this.book.position + 1 then
+            following = card
+        end
+    end
+    return serial, following
+end
+
+--- At the end of an episode, the next one is what is on offer, not KOReader's questions.
+function Yaknigi:offerNextEpisode(following)
+    local status = self.ui.status
+    if not following or not status then return end
+    status.onEndOfBook = function()
+        UIManager:show(ConfirmBox:new{
+            text = "Эпизод окончен. Читать дальше: " .. quoted(following.book.title) .. "?",
+            ok_text = "Читать",
+            cancel_text = "Остаться",
+            ok_callback = function()
+                open_next = following
+                self:leaveBook()
+                UIManager:nextTick(function() self.ui:onHome() end)
+            end,
+        })
+        return true
+    end
+end
+
 function Yaknigi:onReaderReady()
     local store = self:readerStore()
     if not store or not store.manifest then return end
     self.store = store
+    local serial, following = serial_cards(store.id)
+    self.serial_card = serial
+    self:offerNextEpisode(following)
     self.reading_session = Sync.new_session()
     self.queued_at = os.time()
     self:keepChapter()
@@ -1481,6 +1676,8 @@ function Yaknigi:sendPosition()
             card = card,
             book = store.id,
             document = store.manifest.document_uuid,
+            serial = self.serial_card and self.serial_card.book.uuid or nil,
+            serial_card = self.serial_card and self.serial_card.uuid or nil,
             state = state ~= "finished" and "reading" or nil,
             read_at = os.date("!%Y-%m-%dT%H:%M:%S.000+00:00", now),
             session = self.reading_session or Sync.new_session(),
@@ -1656,7 +1853,12 @@ function Yaknigi:init()
     if APP_MODE and not self.ui.document then
         -- It stands under the library and is never to be seen, not even for a moment.
         self.ui.paintTo = function() end
-        UIManager:nextTick(function() self:showLibrary() end)
+        UIManager:nextTick(function()
+            self:showLibrary()
+            local card = open_next
+            open_next = nil
+            if card then UIManager:nextTick(function() self:openCard(card) end) end
+        end)
     end
 end
 

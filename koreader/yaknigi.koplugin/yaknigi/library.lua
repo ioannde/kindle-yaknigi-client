@@ -74,10 +74,14 @@ function Library:init()
     self.query = not self.on_sign_in and self.place.query or nil
     self.page = self.place.page or 1
     self.catalogue = self.place.catalogue
+    self.collection, self.trail = self.place.collection, self.place.trail or {}
     self.feed, self.section = self.place.feed, self.place.section
     self.feed_page = self.place.feed_page or 1
     if self.view == "catalogue" and not self.catalogue then
         self.view, self.query = "home", nil
+    end
+    if self.view == "collection" and not self.collection then
+        self.view, self.trail = "home", {}
     end
     if (self.view == "feed" or self.view == "feed_section") and not self.feed then
         self.view = "home"
@@ -167,6 +171,9 @@ function Library:rowButton(item, height)
     local function menu() self.on_book_menu(item) end
     if item.adding or status == "saving" then
         file, action = "wait", function() end
+    elseif item.kind == "author" or item.kind == "series"
+        or (item.kind == "serial" and item.found and (item.in_library or self:inLibrary(item))) then
+        name, action = "chevron.right", function() self:onMenuSelect(item) end
     elseif not item.found then
         file, action = "dots", menu
     elseif status == "whole" then
@@ -200,6 +207,7 @@ function Library:row(item, width, height)
     local state = {}
     -- A book of the feed may well be in the library.
     local mine = item.found and self:inLibrary(item)
+    if item.kind_text then state[#state + 1] = item.kind_text end
     if item.mandatory then state[#state + 1] = item.mandatory
     elseif mine then state[#state + 1] = mine.mandatory or "в библиотеке" end
     if item.whole then state[#state + 1] = "скачана" end
@@ -244,7 +252,7 @@ local FEED_SECTIONS = 3 -- on a page
 
 --- The book being read, a tap away on the screens where one might choose what to read.
 function Library:dock(item, width)
-    local percent = math.max(0, math.min(100, tonumber((item.mandatory or ""):match("%d+")) or 0))
+    local percent = math.max(0, math.min(100, item.percent or tonumber((item.mandatory or ""):match("%d+")) or 0))
     local pad = Kit.px(16)
     local done = math.floor(width * percent / 100)
     local thickness = Kit.px(DOCK_LINE_H)
@@ -276,7 +284,7 @@ function Library:dock(item, width)
     end
     self.dock_item = item
     self.dock_widget = Kit.Tappable:new{
-        callback = function() self:onMenuSelect(item) end,
+        callback = function() self:onMenuSelect(item, true) end,
         VerticalGroup:new{ align = "left",
             bar,
             LeftContainer:new{
@@ -503,8 +511,7 @@ function Library:listBody(width, area)
 end
 
 --- What was found, with the next books asked for before the list runs out of them.
-function Library:catalogueBody(width, area)
-    local state = self.catalogue
+function Library:catalogueBody(width, area, state)
     local books = state.items
     local row_h = Kit.px(ROW_H)
     local per_page = math.max(1, math.floor(area / row_h))
@@ -533,7 +540,9 @@ function Library:catalogueBody(width, area)
             body[1] = CenterContainer:new{ dimen = box, self.retry_button }
         else
             local text = "Ничего не нашлось"
-            if not state.query then text = "Введите название или автора"
+            if state.kind then
+                text = state.finished and "Здесь нет книг, которые можно читать" or "Загружаю…"
+            elseif not state.query then text = "Введите название или автора"
             elseif not state.finished then text = #books == 0 and "Ищу…" or "Загружаю…" end
             body[1] = CenterContainer:new{ dimen = box, Kit.text(text, 18, { color = Blitbuffer.COLOR_DARK_GRAY }) }
         end
@@ -564,7 +573,8 @@ function Library:build()
     tab_bar, self.tab_cells = Tabs.bar(W, self:currentTab(), function(id) self:selectTab(id) end)
     local bottom_h = Tabs.height()
     -- Typing a search is no time to go back to a book, and there is no room on the screen.
-    local reading = not self.on_sign_in and view ~= "catalogue" and Shelves.list(items, "reading")[1]
+    local reading = not self.on_sign_in and view ~= "catalogue" and view ~= "collection"
+        and Shelves.list(items, "reading")[1]
     local dock = reading and self:dock(reading, W)
     if dock then bottom_h = bottom_h + dock:getSize().h end
 
@@ -577,7 +587,9 @@ function Library:build()
     elseif view == "catalogue" then
         search_bar = self:searchBar(inner)
         body_top = body_top + Kit.px(SEARCH_H)
-        body = self:catalogueBody(inner, H - body_top - bottom_h - footer_h)
+        body = self:catalogueBody(inner, H - body_top - bottom_h - footer_h, self.catalogue)
+    elseif view == "collection" then
+        body = self:catalogueBody(inner, free - footer_h, self.collection)
     elseif in_feed then
         body = self:feedBody(inner, free - footer_h)
     elseif view == "feed_section" then
@@ -618,7 +630,8 @@ function Library:build()
         end
     else
         self.back_button = Kit.icon_button("chevron.left", side, function() self:goBack() end, { edge = "left", margin = pad })
-        local title = view == "feed_section" and self.section.name
+        local title = view == "collection" and self.collection.title
+            or view == "feed_section" and self.section.name
             or ("%s · %d"):format(Shelves.name(view), self.shown or 0)
         header_row = HorizontalGroup:new{ align = "center",
             Kit.fixed(self.back_button, side),
@@ -667,12 +680,15 @@ function Library:build()
     local place = self.place
     place.view, place.query, place.page = self.view, self.query, self.page
     place.feed, place.section, place.feed_page = self.feed, self.section, self.feed_page
+    place.collection, place.trail = self.collection, self.trail
 end
 
 --- Which tab this screen belongs to.
 function Library:currentTab()
-    if self.view == "catalogue" then return "search" end
-    if self.view == "feed" or self.view == "feed_section" then return "feed" end
+    -- A list belongs where it was opened from.
+    local view = self.trail[1] and self.trail[1].view or self.view
+    if view == "catalogue" then return "search" end
+    if view == "feed" or view == "feed_section" then return "feed" end
     return "library"
 end
 
@@ -714,8 +730,19 @@ function Library:openSection(section)
     self.on_covers(Catalogue.cards(section.items))
 end
 
+--- A series, an author or a serial, on a screen of its own. Back leads to where it was opened from.
+function Library:openCollection(state)
+    table.insert(self.trail, { view = self.view, query = self.query, page = self.page, collection = self.collection })
+    self.collection = state
+    self:show("collection")
+end
+
 function Library:goBack()
-    if self.view == "feed_section" then
+    if self.view == "collection" then
+        local back = table.remove(self.trail) or { view = "home" }
+        self.collection = back.collection
+        self:show(back.view, back.query, back.page)
+    elseif self.view == "feed_section" then
         self.section = nil
         self:show("feed", nil, self.feed_page)
     else
@@ -735,6 +762,8 @@ end
 --- Goes to another screen of the library, without keeping the old one's page.
 function Library:show(view, query, page)
     self.view, self.query, self.page = view, query, page or 1
+    -- Every other screen is reached by its tab, or is the first of the way back.
+    if view ~= "collection" then self.trail, self.collection = {}, nil end
     self:build()
     UIManager:setDirty(self, "partial")
     self:askForMore()
@@ -746,6 +775,8 @@ function Library:askForMore()
     local near_end = self.page >= self.total_pages - 1
     if self.view == "catalogue" and near_end then
         self.on_catalogue(self.catalogue)
+    elseif self.view == "collection" and near_end then
+        self.on_catalogue(self.collection)
     elseif self.view == "feed" and (near_end or self.feed.stale) then
         self.on_feed(self.feed)
     end

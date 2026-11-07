@@ -894,6 +894,161 @@ local function test_reading_screen()
 end
 
 -- The picture at the right of a row, the book's menu, and what is kept on the device.
+--- What search finds besides books, and the lists all that leads to.
+local function test_lists()
+    local function to_library()
+        tap_widget(top().tab_cells.library)
+        return wait("the library", function() return top().item_table and top().view == "home" and top() end)
+    end
+    local function here(item)
+        return reader() and reader().document and top().name == "ReaderUI"
+            and reader().document.file:find("/" .. item .. "/", 1, true)
+    end
+    local function finished(menu, title)
+        return wait("the list of " .. title, function()
+            return menu.view == "collection" and menu.collection.title == title and menu.collection.finished
+        end)
+    end
+    local function of_kind(menu, kind)
+        for _, row in ipairs(menu.rows) do
+            if row.kind == kind then return row end
+        end
+        fail("nothing of kind " .. kind)
+    end
+    local menu = to_library()
+    local cards_before = #menu.item_table
+
+    menu:search("подборка")
+    wait("what was found", function() return menu.catalogue.finished and #menu.rows > 0 end)
+    local titles = {}
+    for _, row in ipairs(menu.rows) do titles[#titles + 1] = row.title end
+    if table.concat(titles, "|") ~= "Автор подборки|Подборка|Новый сериал|Найденная книга 20" then
+        fail("what was found: " .. table.concat(titles, "|"))
+    end
+    if of_kind(menu, "author").kind_text ~= "Автор · 751 произведение" then fail("the author's line") end
+    if of_kind(menu, "series").kind_text ~= "Серия · 2 книги" then fail("the series' line") end
+    if of_kind(menu, "serial").kind_text ~= "Сериал · 2 эпизода" then fail("the serial's line") end
+    wait("the pictures", function()
+        for _, row in ipairs(menu.rows) do
+            if not row.cover then return false end
+        end
+        return true
+    end)
+    UIManager:forceRePaint()
+    shot("70-search-kinds")
+
+    -- From an author to a series, and the same way back.
+    tap_widget(menu.row_buttons[of_kind(menu, "author")])
+    finished(menu, "Автор подборки")
+    titles = {}
+    for _, row in ipairs(menu.rows) do titles[#titles + 1] = row.title end
+    if table.concat(titles, "|") ~= "Подборка|Найденная книга 20|Найденная книга 22" then
+        fail("the author's list: " .. table.concat(titles, "|"))
+    end
+    if menu:currentTab() ~= "search" then fail("the list left its tab") end
+    UIManager:forceRePaint()
+    shot("71-author")
+    tap_widget(menu.row_buttons[of_kind(menu, "series")])
+    finished(menu, "Подборка")
+    if #menu.rows ~= 2 or menu.rows[2].kind_text ~= "Книга 3" then fail("the series: audiobooks stay out, the numbers stay") end
+    UIManager:forceRePaint()
+    shot("72-series")
+    menu:goBack()
+    finished(menu, "Автор подборки")
+
+    -- A book leads to its series and its author.
+    menu.on_book_menu(menu.rows[2])
+    wait("the menu with the links", is_named("YaknigiBookMenu"))
+    local links = top().rows
+    if not links.series or not links.author then fail("no way from a book to its series and author") end
+    UIManager:forceRePaint()
+    shot("73-book-links")
+    tap_widget(links.series)
+    finished(menu, "Подборка")
+    menu:goBack()
+    finished(menu, "Автор подборки")
+    menu:goBack()
+    if menu.view ~= "catalogue" or menu.query ~= "подборка" then fail("the way back to the results: " .. menu.view) end
+
+    -- A serial is added with its episodes, the serial first.
+    local serial = of_kind(menu, "serial")
+    tap_widget(menu.row_buttons[serial])
+    wait("the serial to be added", function() return serial.in_library end)
+    local taken = mock_get("/test/serial").taken
+    if table.concat(taken, ","):sub(-20) ~= "serial-2,ep2-1,ep2-2" then fail("what was added: " .. table.concat(taken, ",")) end
+    wait("the word about it to go", function() return top() == menu end)
+    if #menu.item_table ~= cards_before + 1 then fail("episodes stand in the library by themselves") end
+
+    menu:onMenuSelect(serial)
+    finished(menu, "Новый сериал")
+    if not (menu.rows[1].in_library and menu.rows[2].in_library) then fail("the episodes are not marked as added") end
+    UIManager:forceRePaint()
+    shot("74-serial-added")
+
+    -- An episode reads as a book, tells of the serial, and leads to the next.
+    menu:onMenuSelect(menu.rows[1])
+    wait("the episode", function() return here("ep2-1") end)
+    reader().rolling:onGotoXPointer("/body/DocFragment[3]")
+    reader():handleEvent(require("ui/event"):new("EndOfBook"))
+    wait("the question about the next episode", function() return top().ok_callback end)
+    if not top().text:find("Эпизод 2", 1, true) then fail("what is offered next: " .. top().text) end
+    UIManager:forceRePaint()
+    shot("75-next-episode")
+    answer(top(), true)
+    wait("the next episode", function() return here("ep2-2") end, 60)
+    wait("the place to reach the serial", function()
+        local update = mock_get("/test/serial").updates["c-serial-2"]
+        return update and update.current_episode_uuid
+    end, 60)
+    local told = mock_get("/test/serial")
+    if not told.progress or told.progress.uuid ~= "serial-2" or not told.progress.episode:find("^ep2") then
+        fail("the serial's progress was not sent as a serial's")
+    end
+    if not told.updates["c-ep2-1"] then fail("the episode's own card was not told") end
+    reader():onHome()
+    wait("the library after the episode", function() return top().item_table and top() end)
+    menu = to_library()
+
+    -- What is being read of a serial opens as it is, from the place where it goes on.
+    local serial_1 = find_item(menu, "Сериал")
+    menu:onMenuSelect(serial_1, true)
+    wait("the current episode", function() return here("ep1-1") end, 60)
+    reader():onHome()
+    wait("the library once more", function() return top().item_table and top() end)
+    menu = to_library()
+
+    -- Out of the library, all together.
+    menu:openShelf("all")
+    wait("the shelf", function() return #menu.rows > 0 end)
+    local row
+    local guard = 0
+    while not row do
+        for _, candidate in ipairs(menu.rows) do
+            if candidate.title == "Новый сериал" then row = candidate end
+        end
+        if not row then
+            guard = guard + 1
+            if guard > 10 then fail("the new serial is not on the shelf") end
+            menu:show("all", nil, menu.page + 1)
+        end
+    end
+    tap_widget(menu.row_buttons[row])
+    wait("the serial's menu", is_named("YaknigiBookMenu"))
+    local sheet = top()
+    if sheet.rows.save or sheet.rows.remove_device then fail("a serial is saved episode by episode") end
+    if not sheet.rows.remove_library then fail("a serial cannot be removed") end
+    tap_widget(sheet.rows.remove_library)
+    wait("the question", function() return top().ok_callback end)
+    if not top().text:find("эпизодами", 1, true) then fail("the question does not mention the episodes") end
+    answer(top(), true)
+    wait("the serial to go", function() return #menu.item_table == cards_before end)
+    local removed = table.concat(mock_get("/test/removed").removed, ",")
+    if not removed:find("c-serial-2,c-ep2-1,c-ep2-2", 1, true) then fail("what Yandex was told to remove: " .. removed) end
+    tap_widget(menu.tab_cells.settings)
+    wait("the settings after the lists", is_named("YaknigiSettings"))
+    UIManager:forceRePaint()
+end
+
 local function test_books_and_memory(settings)
     local lfs = require("libs/libkoreader-lfs")
     local books = require("datastorage"):getDataDir() .. "/yaknigi/books"
@@ -1151,7 +1306,6 @@ local function script()
         fail("no progress in the library: " .. tostring(menu.item_table[1].mandatory))
     end
 
-    -- A serial explains itself rather than failing silently.
     wait("the covers", function()
         for _, item in ipairs(menu.item_table) do
             if not item.cover then return false end
@@ -1221,10 +1375,15 @@ local function script()
     if top() ~= menu or menu.view ~= "home" then fail("a second tap in the corner did something") end
     shot("03c-library-covers")
 
+    -- A serial shows its episodes.
     menu:onMenuSelect(find_item(menu, "Сериал"))
-    wait("the serial message", function() return (top().text or ""):find("Сериалы", 1, true) end)
+    wait("the episodes", function() return menu.view == "collection" and menu.collection.finished and #menu.rows == 3 end)
+    if not menu.rows[1].in_library or menu.rows[3].in_library then fail("which episodes are in the library") end
+    if menu.rows[1].kind_text ~= "Эпизод 1" then fail("the name of an episode: " .. tostring(menu.rows[1].kind_text)) end
+    UIManager:forceRePaint()
     shot("04-serial")
-    UIManager:close(top())
+    menu:goBack()
+    if menu.view ~= "home" then fail("the way back from a serial: " .. menu.view) end
 
     -- First open: goes to the position from Yandex without the whole book.
     local seconds = open(menu, "Книга номер 0")
@@ -1664,6 +1823,7 @@ local function script()
     end
     shot("55-settings-last-page")
     test_books_and_memory(settings)
+    test_lists()
     settings = top()
     local f = io.open(OUT .. "/PASS", "w")
     f:write("ok\n")
@@ -1686,7 +1846,7 @@ function Driver:init()
         local ok, err = coroutine.resume(co)
         if not ok then fail(err) end
     end)
-    UIManager:scheduleIn(420, function() fail("the whole test timed out") end)
+    UIManager:scheduleIn(560, function() fail("the whole test timed out") end)
     logger.info("yaknigi test driver armed")
 end
 

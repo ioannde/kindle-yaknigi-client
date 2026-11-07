@@ -66,7 +66,8 @@ function Feed.sections(page)
             and section.__typename ~= "FeaturedSection" then
             local books, seen = {}, {}
             for _, entry in ipairs(list) do
-                local item = type(entry) == "table" and entry.__typename == "TextBook" and Catalogue.item(entry)
+                local readable = type(entry) == "table" and (entry.__typename == "TextBook" or entry.__typename == "TextSerial")
+                local item = readable and Catalogue.item(entry)
                 if item and not seen[item.card.book.uuid] then
                     seen[item.card.book.uuid] = true
                     books[#books + 1] = item

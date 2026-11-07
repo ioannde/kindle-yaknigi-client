@@ -263,6 +263,61 @@ eq(Cfi.locate(page, "/body/nonsense"), nil, "not in a chapter")
 eq(Cfi.locate(nil, F), nil, "no chapter")
 eq(Cfi.locate("<html><head/><body><img/></body></html>", F .. "/img"), nil, "no text at all")
 
+-- what search finds besides books, and the lists
+eq(Catalogue.count(1, "книга", "книги", "книг"), "1 книга", "one")
+eq(Catalogue.count(3, "книга", "книги", "книг"), "3 книги", "few")
+eq(Catalogue.count(11, "книга", "книги", "книг"), "11 книг", "eleven")
+eq(Catalogue.count(751, "произведение", "произведения", "произведений"), "751 произведение", "and so on")
+local person = { __typename = "Person", uuid = "p1", name = "Автор", worksCount = 22, roles = { "TRANSLATOR", "AUTHOR" },
+    avatar = { url = "https://h/a-large.jpeg" } }
+eq(Catalogue.item(person).kind, "author", "an author")
+eq(Catalogue.item(person).kind_text, "Автор · 22 произведения", "what an author has")
+eq(Catalogue.item(person).card.book.cover.small, "https://h/a-thumb.jpeg", "a small portrait")
+person.avatar.url = "https://h/default/a.jpeg"
+eq(Catalogue.item(person).card.book.cover, nil, "the drawing for no portrait is no portrait")
+person.worksCount = 0
+eq(Catalogue.item(person), nil, "an author with nothing")
+person.worksCount, person.roles = 1, { "TRANSLATOR" }
+eq(Catalogue.item(person), nil, "not an author")
+local found_series = Catalogue.item({ __typename = "Series", uuid = "s1", name = "Серия", authors = { { name = "А" } },
+    items = { total = 8 }, cover = { url = "https://h/s-large.jpeg" } })
+eq(found_series.kind, "series", "a series")
+eq(found_series.kind_text, "Серия · 8 книг", "how long it is")
+eq(found_series.authors, "А", "its authors")
+local found_serial = Catalogue.item({ __typename = "TextSerial", episodes = { total = 9 },
+    book = { uuid = "x1", name = "Сериал", authors = { { name = "Б", uuid = "b" } } } })
+eq(found_serial.kind, "serial", "a serial")
+eq(found_serial.kind_text, "Сериал · 9 эпизодов", "how many episodes")
+eq(found_serial.uuid, "x1", "a serial's id")
+local rest = Catalogue.rest_book({ uuid = "b1", title = "Книга", authors = "А, Б", in_library = true,
+    cover = { small = "s", large = "l" } })
+eq(rest.authors, "А, Б", "authors as text")
+eq(rest.mandatory, "в библиотеке", "in the library")
+eq(rest.card.book.cover.large, "l", "the cover")
+eq(Catalogue.rest_book({ uuid = "b2", source_type = "serial", title = "С", episodes_count = 2 }).kind, "serial", "a serial in a list")
+eq(Catalogue.part({ resource_type = "audiobook", resource = { uuid = "a" } }), nil, "an audiobook in a series")
+eq(Catalogue.part({ resource_type = "book", position_label = "2", resource = { uuid = "b" } }).kind_text, "Книга 2", "a part")
+local listed = Catalogue.episode({ uuid = "e1", title = "Э", parent_uuid = "x1", position = 4, in_library = true })
+eq(listed.kind, "episode", "an episode")
+eq(listed.serial, "x1", "of what")
+eq(listed.mandatory, nil, "an episode is not marked as a book is")
+eq(listed.kind_text, "Эпизод 4", "which")
+eq(listed.card.book.parent_uuid, "x1", "the card knows its serial")
+local of_author = Catalogue.from_page("author", {
+    series = { { uuid = "s1", title = "Книги", kinds = { "books" }, parts_count = 2 }, { uuid = "s2", title = "Аудио", kinds = { "audio" } } },
+    books = { { uuid = "b1", title = "Книга" } },
+})
+eq(#of_author, 2, "audio-only series stay out")
+eq(of_author[1].kind, "series", "series before the books")
+eq(of_author[2].title, "Книга", "then the books")
+local links = Catalogue.links({ series_list = { { uuid = "s", title = "Серия" } }, authors_objects = { { uuid = "a", name = "А" } } })
+eq(links[1].kind, "series", "a book leads to its series")
+eq(links[2].title, "А", "and to its author")
+eq(#Catalogue.links({ authors = "текстом" }), 0, "nowhere, if nothing is known")
+local list_state = Catalogue.collection("author", "a1", "А")
+eq(list_state.kind, "author", "a list knows what it is")
+eq(list_state.finished, false, "and is to be asked for")
+
 -- catalogue
 local function found_book(uuid, extra)
     local found = { book = { uuid = uuid, name = "Идиот", authors = { { name = "Ф. Достоевский" }, { name = "Б" } },
