@@ -1075,8 +1075,9 @@ local function test_lists()
     reader().rolling:onGotoXPointer("/body/DocFragment[5]")
     reader().yaknigi:sendPosition()
     wait("the place to reach the serial", function()
-        local update = mock_get("/test/serial").updates["c-serial-2"]
-        return update and update.current_episode_uuid == "ep2-2"
+        local updates = mock_get("/test/serial").updates
+        local update = updates["c-serial-2"]
+        return update and update.current_episode_uuid == "ep2-2" and updates["c-ep2-2"]
     end, 60)
     local told = mock_get("/test/serial")
     if not told.progress or told.progress.uuid ~= "serial-2" or told.progress.episode ~= "ep2-2" then
@@ -1085,7 +1086,6 @@ local function test_lists()
     if not told.updates["c-serial-2"].sent_cfi:find("^/6/4!") then
         fail("the place on the serial's card: " .. told.updates["c-serial-2"].sent_cfi)
     end
-    if not told.updates["c-ep2-2"] then fail("the episode's own card was not told") end
     local sent = mock_get("/test/position?book=ep2-2")
     if not tostring(sent.start):find("^/6/4!") then fail("the place sent: " .. tostring(sent.start)) end
 
