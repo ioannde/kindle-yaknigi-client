@@ -1963,28 +1963,55 @@ local function script()
     if not plugin then fail("plugin is not loaded") end
 
     -- Sign-in: the QR, then the code. The mock checks PKCE against this challenge.
-    local qr = wait("the QR code", function()
+    local login = wait("the sign-in screen", function()
         local w = top()
-        return w.text and w.text:find("code_challenge=", 1, true) and w
+        return w.name == "YaknigiLogin" and w.url:find("code_challenge=", 1, true) and w
     end)
     shot("01-login-qr")
-    local challenge = qr.text:match("code_challenge=([^&]+)")
+    local challenge = login.url:match("code_challenge=([^&]+)")
     local http = require("socket.http")
     http.request(os.getenv("YB_OAUTH_BASE") .. "/challenge?c=" .. challenge)
-    qr:onTapClose()
     -- The keyboard is the topmost widget, above the dialog it belongs to.
-    local dialog = wait("the code dialog", function()
+    local function code_dialog(what)
+        return wait(what, function()
+            for _, window in ipairs(UIManager._window_stack) do
+                if window.widget.getInputText then return window.widget end
+            end
+        end)
+    end
+    local function press(dialog, text)
+        for _, b in ipairs(dialog.buttons[1]) do
+            if b.text == text then return b.callback() end
+        end
+        fail("no button " .. text)
+    end
+    tap_widget(login.enter_button)
+    local dialog = code_dialog("the code dialog")
+    -- Back is back on the steps, and the steps lead to the same dialog.
+    press(dialog, "Назад")
+    wait("the steps again", function() return top().name == "YaknigiLogin" end)
+    tap_widget(login.enter_button)
+    dialog = code_dialog("the code dialog again")
+    -- As long as Yandex's code really is. A code refused stays there to be corrected.
+    dialog:setInputText("abcd1234efgh5678")
+    shot("02-login-code")
+    press(dialog, "Войти")
+    local refused = wait("the code refused", function()
         for _, window in ipairs(UIManager._window_stack) do
-            if window.widget.getInputText then return window.widget end
+            local w = window.widget
+            if w.getInputText and w ~= dialog then return w end
         end
     end)
-    shot("02-login-code")
-    dialog:setInputText("abc123")
-    local sign_in
-    for _, b in ipairs(dialog.buttons[1]) do
-        if b.text == "Войти" then sign_in = b end
-    end
-    sign_in.callback()
+    if refused:getInputText() ~= "abcd1234efgh5678" then fail("the refused code is gone") end
+    shot("02b-login-refused")
+    refused:setInputText("abc123")
+    press(refused, "Войти")
+    wait("the sign-in screen closed", function()
+        for _, window in ipairs(UIManager._window_stack) do
+            if window.widget.name == "YaknigiLogin" then return false end
+        end
+        return true
+    end)
 
     -- Library, with 21 books over 3 pages, most recent first.
     local menu = library_with(21)

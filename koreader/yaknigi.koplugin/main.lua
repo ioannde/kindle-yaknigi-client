@@ -12,7 +12,6 @@ local InputDialog = require("ui/widget/inputdialog")
 local Notification = require("ui/widget/notification")
 local LuaSettings = require("luasettings")
 local NetworkMgr = require("ui/network/manager")
-local QRMessage = require("ui/widget/qrmessage")
 local Screen = require("device").screen
 local UIManager = require("ui/uimanager")
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
@@ -29,6 +28,7 @@ local Cfi = require("yaknigi/cfi")
 local Crypt = require("yaknigi/crypt")
 local Feed = require("yaknigi/feed")
 local Library = require("yaknigi/library")
+local Login = require("yaknigi/login")
 local NoteSync = require("yaknigi/notesync")
 local NotesLocal = require("yaknigi/notes_local")
 local Prefs = require("yaknigi/prefs")
@@ -204,20 +204,18 @@ function Yaknigi:showLogin()
         UIManager:show(InfoMessage:new{ text = "В этой сборке нет идентификатора приложения Яндекса: войти нельзя." })
         return
     end
-    local dialog
-    local function ask_code()
+    local dialog, login
+    local function ask_code(problem, typed)
         G_reader_settings:saveSetting("keyboard_layout", "en") -- the code is in Latin letters
         dialog = InputDialog:new{
-            title = "Вход в Яндекс",
-            description = "Откройте ссылку из QR-кода на телефоне, войдите и введите код, который там появится.",
+            title = "Код с телефона",
+            description = problem or "Наберите код, который показан на экране телефона.",
+            input = typed,
             input_hint = "Код",
             buttons = { {
                 {
-                    text = "Показать QR",
-                    callback = function()
-                        UIManager:close(dialog)
-                        self:showLoginQr(url, ask_code)
-                    end,
+                    text = "Назад",
+                    callback = function() UIManager:close(dialog) end,
                 },
                 {
                     text = "Войти",
@@ -226,7 +224,7 @@ function Yaknigi:showLogin()
                         local code = dialog:getInputText():gsub("%s+", ""):lower()
                         if code == "" then return end
                         UIManager:close(dialog)
-                        self:finishLogin(code, verifier, ask_code)
+                        self:finishLogin(code, verifier, login, ask_code)
                     end,
                 },
             } },
@@ -234,31 +232,23 @@ function Yaknigi:showLogin()
         UIManager:show(dialog)
         dialog:onShowKeyboard()
     end
-    self:showLoginQr(url, ask_code)
+    login = Login:new{ url = url, on_enter = function() ask_code() end }
+    UIManager:show(login, "full")
 end
 
-function Yaknigi:showLoginQr(url, on_dismiss)
-    local side = math.floor(math.min(Screen:getWidth(), Screen:getHeight()) * 0.8)
-    UIManager:show(QRMessage:new{
-        text = url,
-        width = side,
-        height = side,
-        -- Runs while the QR is being closed; the dialog must not be shown from inside that.
-        dismiss_callback = function() UIManager:nextTick(on_dismiss) end,
-    })
-end
-
-function Yaknigi:finishLogin(code, verifier, retry)
+function Yaknigi:finishLogin(code, verifier, login, retry)
     NetworkMgr:runWhenOnline(function()
         local token, kind = Api.exchange_code(code, verifier)
         if token then
             save_token(token)
+            UIManager:close(login)
             library_place = {} -- another account may have other books
             self:showLibrary()
             return
         end
-        message(kind == "bad_code" and "Код не подошёл." or error_text(kind), 3)
-        retry()
+        retry(kind == "bad_code"
+            and "Код не подошёл. Проверьте его. Если не поможет, вернитесь назад и снова откройте QR-код."
+            or error_text(kind), code)
     end)
 end
 
