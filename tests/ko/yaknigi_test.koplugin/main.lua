@@ -885,13 +885,18 @@ local function test_reading_screen()
         if name:find("%.jpg$") then portraits = portraits + 1 end
     end
     if portraits ~= 10 then fail("the portraits in the package: " .. portraits) end
+    -- KOReader seeds the choice with the time, in seconds: these sleeps are an hour apart.
+    local real_time, hours = os.time, 0
     for _ = 1, 40 do
+        hours = hours + 1
+        os.time = function() return real_time() + hours * 3600 end
         Screensaver:setup("suspend")
         local file = tostring(Screensaver.image_file)
         if file:sub(1, #Prefs.FACES_DIR + 1) ~= Prefs.FACES_DIR .. "/" then fail("the collection's picture: " .. file) end
         kinds[file] = true
         Screensaver:cleanup()
     end
+    os.time = real_time
     local picked = 0
     for _ in pairs(kinds) do picked = picked + 1 end
     if picked < 3 then fail("the same portraits at each sleep: " .. picked) end
