@@ -9,11 +9,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Confirmed in Phase 0 from the reference client (docs/PHASE0-FINDINGS.md):
+/* The API this client talks to:
  *   REST base : https://api.bookmate.yandex.net/api/v5
  *   GraphQL   : https://api-gateway.bookmate.yandex.net/graphql
  *   Auth      : header "Auth-Token: <y0_token>" (NOT "Authorization: OAuth")
- *   plus the App-x, Bookmate-Version and okhttp headers below.
+ *   plus the language and API version headers below.
  * Both URLs are overridable via env for flexibility. */
 #define YB_API_BASE_DEFAULT    "https://api.bookmate.yandex.net/api/v5"
 #define YB_GRAPHQL_URL_DEFAULT "https://api-gateway.bookmate.yandex.net/graphql"
@@ -33,12 +33,10 @@ const char *yb_api_graphql_url(void) {
 #define YB_BOOKMATE_HEADERS(token)                       \
     {                                                    \
         { "Auth-Token", (token) ? (token) : "" },        \
-        { "App-Platform", "android" },                   \
         { "App-Language", "ru" },                        \
         { "App-Locale", "ru" },                          \
-        { "Device-Os", "Android" },                      \
         { "Bookmate-Version", "20200305" },              \
-        { "User-Agent", "okhttp/4.12.0" },               \
+        { "User-Agent", "yaknigi-koreader/1.0" },        \
         { NULL, NULL },                                   \
     }
 

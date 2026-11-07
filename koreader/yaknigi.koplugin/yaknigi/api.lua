@@ -33,12 +33,11 @@ end
 function Api:headers(content_type)
     return {
         ["Auth-Token"] = self.token,
-        ["App-Platform"] = "android",
         ["App-Language"] = "ru",
         ["App-Locale"] = "ru",
-        ["Device-Os"] = "Android",
+        -- The date of the API's answers this client was written against: another one renames fields.
         ["Bookmate-Version"] = "20200305",
-        ["User-Agent"] = "okhttp/4.12.0",
+        ["User-Agent"] = Http.USER_AGENT,
         ["Content-Type"] = content_type,
     }
 end

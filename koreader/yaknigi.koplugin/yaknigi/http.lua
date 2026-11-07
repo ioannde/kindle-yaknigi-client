@@ -3,6 +3,9 @@
 -- LuaSocket's client opens a new connection for every request, and on the Kindle
 -- each TLS handshake costs far more than downloading a chapter.
 local Http = {}
+
+-- How this client names itself to every server it asks.
+Http.USER_AGENT = "yaknigi-koreader/1.0"
 Http.__index = Http
 
 --- connect(host, port, is_tls) returns an object with send/receive/close, as a

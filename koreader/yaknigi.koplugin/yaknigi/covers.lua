@@ -102,7 +102,7 @@ function Covers.fetch_best(root, uuid, urls)
         pcall(function() ffi.C.nice(10) end)
         local http = Http.new(Net.connect)
         for _, url in ipairs(urls) do
-            local status, body = http:request("GET", url, { ["User-Agent"] = "okhttp/4.12.0" })
+            local status, body = http:request("GET", url, { ["User-Agent"] = Http.USER_AGENT })
             local ext = status == 200 and #body <= BIGGEST_COVER and extension(body)
             if ext then
                 local f = io.open(base .. ".tmp", "wb")
@@ -126,7 +126,7 @@ local function download(wanted)
         local http = Http.new(Net.connect)
         for _, item in ipairs(wanted) do
             for _, url in ipairs(item.urls) do
-                local status, body = http:request("GET", url, { ["User-Agent"] = "okhttp/4.12.0" })
+                local status, body = http:request("GET", url, { ["User-Agent"] = Http.USER_AGENT })
                 local ext = status == 200 and extension(body)
                 if ext then
                     local f = io.open(item.base .. ".tmp", "wb")
