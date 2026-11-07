@@ -23,12 +23,14 @@ local UIManager = require("ui/uimanager")
 local VerticalGroup = require("ui/widget/verticalgroup")
 local Screen = Device.screen
 
+local AppState = require("yaknigi/appstate")
 local Kit = require("yaknigi/kit")
 local Power = require("yaknigi/power")
 local Prefs = require("yaknigi/prefs")
 local Status = require("yaknigi/status")
 local Storage = require("yaknigi/storage")
 local Tabs = require("yaknigi/tabs")
+local Terms = require("yaknigi/terms")
 
 local ROW_H, HEADING_H, BAR_H, PAGER_H = 60, 46, 56, 56
 
@@ -42,6 +44,7 @@ local Settings = InputContainer:extend{
     storage = nil, -- { measure(done), clear(picks, done) }; what is on the device, from the library
     body_height = nil, -- how much room the list has; the rest of the screen unless given
     all_rows = nil, -- also the rows that this device has no use for
+    updates = nil, -- { version, enabled, check() }; from the library
 }
 
 local function index_of(list, value)
@@ -120,6 +123,21 @@ function Settings:entries()
             action = function() self:openCache() end }
     end
 
+    heading("О программе")
+    if self.updates then
+        list[#list + 1] = { key = "version", title = "Версия", value = self.updates.version }
+        if self.updates.enabled then
+            switch("auto_update", "Обновлять автоматически", AppState:nilOrTrue("auto_update"), function(on)
+                AppState:saveSetting("auto_update", on)
+                AppState:flush()
+            end)
+            list[#list + 1] = { key = "check_update", title = "Проверить обновления", action = self.updates.check }
+        end
+    end
+    list[#list + 1] = { key = "terms", title = "Условия использования", leads_on = true, action = function()
+        UIManager:show(Terms:new{})
+    end }
+
     if self.on_sign_out then
         heading("Аккаунт")
         switch("private_notes", "Приватные заметки", Prefs.private_notes(), function(on)
@@ -193,6 +211,8 @@ function Settings:mainRows()
                 widget = self:row(entry.title, right, room, entry.action)
             elseif entry.action then
                 widget = self:row(entry.title, nil, nil, entry.action)
+            elseif entry.value then
+                widget = self:row(entry.title, Kit.text(entry.value, 18), nil, function() end)
             else
                 widget = self:row(entry.title, Kit.Switch:new{ on = entry.on }, nil, function()
                     entry.set(not entry.on)

@@ -48,18 +48,7 @@ function Login:init()
     local inner = W - 2 * Kit.px(40)
     local button_h = Kit.px(56)
 
-    self.enter_button = Kit.Tappable:new{
-        callback = self.on_enter,
-        FrameContainer:new{
-            background = Blitbuffer.COLOR_BLACK,
-            bordersize = 0, padding = 0,
-            radius = math.floor(button_h / 2),
-            CenterContainer:new{
-                dimen = Geom:new{ w = inner, h = button_h },
-                Kit.text("Ввести код", 20, { bold = true, color = Blitbuffer.COLOR_WHITE }),
-            },
-        },
-    }
+    self.enter_button = Kit.pill("Ввести код", inner, button_h, self.on_enter)
     self.later_button = Kit.button(Kit.text("Не сейчас", 19), inner, button_h, function()
         UIManager:close(self)
     end)

@@ -9,6 +9,8 @@ With "koreader", books have many chapters, a stylesheet, a table of contents and
 reading position, and chapters take a moment to arrive, as for the KOReader plugin.
 """
 import base64
+import io
+import tarfile
 from html.parser import HTMLParser
 import hashlib
 import json
@@ -133,6 +135,19 @@ def big_chapter(path):
     )
 
 
+def update_archive():
+    """A release of the plugin, as small as can still be started."""
+    out = io.BytesIO()
+    with tarfile.open(fileobj=out, mode="w") as tar:
+        for name, text in (("yaknigi.koplugin/main.lua", b"return {}\n"),
+                           ("yaknigi.koplugin/_meta.lua", b"return {}\n"),
+                           ("yaknigi.koplugin/yaknigi/VERSION", b"9.9.9\n")):
+            info = tarfile.TarInfo(name)
+            info.size = len(text)
+            tar.addfile(info, io.BytesIO(text))
+    return out.getvalue()
+
+
 class Chapter(HTMLParser):
     """The tree of a chapter, written apart from the plugin's walker to check its answers."""
     VOID = {"br", "img", "hr", "meta", "link"}
@@ -233,6 +248,18 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def reply_update_manifest(self):
+        mode = getattr(self.server, "update", "none")
+        if mode == "none":
+            self.reply(404, b"")
+            return
+        digest = hashlib.sha256(update_archive()).hexdigest()
+        self.reply_json(200, {
+            "version": "9.9.9",
+            "base": "another" if mode == "manual" else "test-base",
+            "sha256": "0" * 64 if mode == "corrupt" else digest,
+        })
 
     def reply_json(self, code, value):
         self.reply(code, json.dumps(value).encode())
@@ -878,6 +905,18 @@ class Handler(BaseHTTPRequestHandler):
             card = "card3" if uuid == "serial-1" else f"c-{uuid}" if uuid in self.server.taken else None
             self.reply_json(200, {"book": {**self.serial_book(uuid), "in_library": card is not None,
                                            "library_card_uuid": card}})
+        elif url.path == "/test/update":
+            self.server.update = query["mode"][0]
+            self.reply(200, b"")
+        elif url.path == "/update/manifest.json":
+            self.reply_update_manifest()
+        elif url.path == "/update/yaknigi-update.tar":
+            self.send_response(302)
+            self.send_header("Location", "http://" + self.headers["Host"] + "/update/moved.tar")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+        elif url.path == "/update/moved.tar":
+            self.reply(200, update_archive())
         elif url.path == "/challenge":
             # The simulator cannot scan a QR code, so the test script passes it here.
             self.server.challenge = query["c"][0]

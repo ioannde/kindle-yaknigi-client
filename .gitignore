@@ -10,6 +10,8 @@
 
 # Local config / secrets
 koreader/yaknigi.koplugin/yaknigi/client_id.lua
+koreader/yaknigi.koplugin/yaknigi/VERSION
+koreader/yaknigi.koplugin/yaknigi/BASE
 *.conf
 config
 

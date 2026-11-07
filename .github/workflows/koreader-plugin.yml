@@ -2,8 +2,14 @@ name: KOReader plugin
 on:
   push:
     branches: [main]
-    paths: ['koreader/**', 'kual/**', 'tests/ko/**', 'tests/lua/**', 'tools/mock/**', '.github/workflows/koreader-plugin.yml']
+    paths: ['koreader/**', 'kual/**', 'scriptlet/**', 'tests/**', 'tools/mock/**', '.github/workflows/koreader-plugin.yml']
+    # A tag vX.Y.Z is a release: the job at the end publishes what was built.
+    tags: ['v*']
   workflow_dispatch:
+    inputs:
+      version:
+        description: A version number to build with, to try an update out. No release is made.
+        required: false
 permissions:
   contents: read
 env:
@@ -24,7 +30,9 @@ jobs:
           mkdir ko && tar xf ko.tar.xz -C ko
           echo "KO_DIR=$(dirname "$(find "$PWD/ko" -maxdepth 3 -name luajit | head -1)")" >> "$GITHUB_ENV"
       - name: Pure Lua tests
-        run: luajit tests/lua/run.lua
+        run: YB_CLIENT_ID=test-client luajit tests/lua/run.lua
+      - name: Installing an update
+        run: sh tests/update/apply_test.sh
       - name: Certificate checks
         run: cd "$KO_DIR" && ./luajit "$GITHUB_WORKSPACE/tests/ko/tls_check.lua" "$GITHUB_WORKSPACE/koreader/yaknigi.koplugin"
       - name: UI against the mock server
@@ -46,7 +54,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           YANDEX_CLIENT_ID: ${{ secrets.YANDEX_CLIENT_ID }}
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
+          # A tag decides the version; a build with none has no version and takes no updates.
+          version=$INPUT_VERSION
+          case "$GITHUB_REF" in refs/tags/*) version=${GITHUB_REF_NAME#v} ;; esac
+          if [ -n "$version" ]; then
+              echo "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "::error::bad version: $version"; exit 1; }
+          fi
           # The registration at oauth.yandex.ru is not in the repository: without it nobody can sign in.
           test -n "$YANDEX_CLIENT_ID" || { echo "::error::set the secret YANDEX_CLIENT_ID"; exit 1; }
           gh release download "$KO_VERSION" -R koreader/koreader -p "koreader-kindlehf-$KO_VERSION.zip" -O ko.zip
@@ -55,7 +70,23 @@ jobs:
           cp kual/yaknigi-ko/* koreader/settings.reader.lua "$ext/"
           unzip -q ko.zip 'koreader/*' -d "$ext"
           cp -R koreader/yaknigi.koplugin "$ext/koreader/plugins/"
-          printf 'return "%s"\n' "$YANDEX_CLIENT_ID" > "$ext/koreader/plugins/yaknigi.koplugin/yaknigi/client_id.lua"
+          plugin=$ext/koreader/plugins/yaknigi.koplugin
+          printf 'return "%s"\n' "$YANDEX_CLIENT_ID" > "$plugin/yaknigi/client_id.lua"
+          # What an update cannot bring. Another of these means installing by hand.
+          launcher=$(cat kual/yaknigi-ko/run.sh kual/yaknigi-ko/apply-update.sh scriptlet/yaknigi.sh koreader/settings.reader.lua | sha256sum | cut -c1-8)
+          base="$KO_VERSION-$launcher"
+          echo "$base" > "$plugin/yaknigi/BASE"
+          mkdir -p update
+          if [ -n "$version" ]; then
+              echo "$version" > "$plugin/yaknigi/VERSION"
+              jq --argjson v "[${version//./,}]" '.version = $v' kpm/manifest.json > kpm/manifest.json.new
+              mv kpm/manifest.json.new kpm/manifest.json
+              tar -C "$ext/koreader/plugins" --owner=0 --group=0 -cf update/yaknigi-update.tar yaknigi.koplugin
+              jq -n --arg version "$version" --arg base "$base" \
+                  --arg sha256 "$(sha256sum update/yaknigi-update.tar | cut -d' ' -f1)" \
+                  '{version: $version, base: $base, sha256: $sha256}' > update/manifest.json
+              cat update/manifest.json
+          fi
           cp LICENSE "$ext/"
           du -sh "$ext"
           # Without KUAL, on the newer jailbreaks: a scriptlet is shown among the books.
@@ -80,3 +111,25 @@ jobs:
           name: yaknigi-ko-kpkg
           path: kpkg
           if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: yaknigi-update
+          path: update
+          if-no-files-found: ignore
+  release:
+    needs: package
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          (cd yaknigi-ko-kindlehf && zip -qr ../yaknigi-ko-kindlehf.zip .)
+          gh release create "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --verify-tag --generate-notes \
+              yaknigi-update/manifest.json yaknigi-update/yaknigi-update.tar \
+              yaknigi-ko-kindlehf.zip yaknigi-ko-kpkg/yaknigi-ko_kindlehf.kpkg

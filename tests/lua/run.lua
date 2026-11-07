@@ -8,6 +8,7 @@ local Shelves = require("yaknigi/shelves")
 local Catalogue = require("yaknigi/catalogue")
 local Prefs = require("yaknigi/prefs")
 local NoteSync = require("yaknigi/notesync")
+local Updater = require("yaknigi/updater")
 
 local failed, passed = 0, 0
 local function eq(got, want, name)
@@ -914,6 +915,60 @@ do
             path .. " makes icons through the kit")
     end
     eq(used > 20, true, "the icons in use were found")
+end
+
+-- updates
+eq(Updater.newer("1.0.1", "1.0.0"), true, "a later patch")
+eq(Updater.newer("1.10.0", "1.9.9"), true, "numbers, not letters")
+eq(Updater.newer("1.0.0", "1.0.0"), false, "the same is not later")
+eq(Updater.newer("1.0.0", "2.0.0"), false, "an earlier one")
+local good_manifest = { version = "1.2.3", base = "b", sha256 = ("a"):rep(64) }
+eq(Updater.valid_manifest(good_manifest), true, "a manifest")
+eq(Updater.valid_manifest({ version = "1.2", base = "b", sha256 = ("a"):rep(64) }), false, "a bad version")
+eq(Updater.valid_manifest({ version = "1.2.3", base = "b", sha256 = "abc" }), false, "a short digest")
+eq(Updater.valid_manifest({ version = "1.2.3", sha256 = ("a"):rep(64) }), false, "no base")
+eq(Updater.valid_manifest("1.2.3"), false, "not a table")
+eq(Updater.decide(good_manifest, "1.2.3", "b"), "none", "nothing newer")
+eq(Updater.decide(good_manifest, "1.2.2", "b"), "download", "newer")
+eq(Updater.decide(good_manifest, "1.2.2", "other"), "manual", "another launcher")
+eq(Updater.decide(good_manifest, "1.2.2", "b", "1.2.3"), "none", "this one did not start here")
+eq(Updater.decide(good_manifest, "1.2.2", "b", "1.2.1"), "download", "another one did not start")
+local from = "https://github.com/o/r/releases/latest/download/x"
+eq(Updater.redirect_allowed(from, "https://github.com/o/r/releases/download/v1/x"), true, "github")
+eq(Updater.redirect_allowed(from, "https://release-assets.githubusercontent.com/x"), true, "the assets")
+eq(Updater.redirect_allowed(from, "http://github.com/x"), false, "never down to plain HTTP")
+eq(Updater.redirect_allowed(from, "https://example.com/x"), false, "another host")
+eq(Updater.redirect_allowed(from, "https://evilgithub.com/x"), false, "a name that only ends the same")
+eq(Updater.redirect_allowed(from, "https://github.com.evil.org/x"), false, "a name that only starts the same")
+eq(Updater.redirect_allowed(from, "/relative"), false, "not a whole address")
+eq(Updater.redirect_allowed("http://127.0.0.1:1/a", "http://127.0.0.1:1/b"), true, "the same host")
+eq(Updater.redirect_allowed("http://127.0.0.1:1/a", "http://127.0.0.1:2/b"), false, "another port")
+eq(Updater.due(nil, 100), true, "never asked")
+eq(Updater.due(100, 100 + Updater.DAY - 1), false, "asked today")
+eq(Updater.due(100, 100 + Updater.DAY), true, "asked yesterday")
+eq(Updater.due(1000, 100), true, "the clock went back")
+do
+    local replies = {
+        ["https://github.com/a"] = { 302, "", { location = "https://github.com/b" } },
+        ["https://github.com/b"] = { 200, "body", {} },
+        ["https://github.com/gone"] = { 404, "", {} },
+        ["https://github.com/loop"] = { 302, "", { location = "https://github.com/loop" } },
+        ["https://github.com/out"] = { 302, "", { location = "https://example.com/" } },
+        ["https://github.com/bad"] = { 500, "", {} },
+    }
+    local fake = {
+        request = function(_, _, url)
+            local r = replies[url]
+            return r[1], r[2], r[3]
+        end,
+    }
+    eq(Updater.get(fake, "https://github.com/a"), "body", "a redirect is followed")
+    eq(select(2, Updater.get(fake, "https://github.com/gone")), "not_found", "nothing there")
+    eq(select(2, Updater.get(fake, "https://github.com/loop")), "network", "a loop ends")
+    eq(select(2, Updater.get(fake, "https://github.com/out")), "network", "no way out of GitHub")
+    eq(select(2, Updater.get(fake, "https://github.com/bad")), "network", "a server error")
+    local down = { request = function() return nil, "timeout" end }
+    eq(select(2, Updater.get(down, "https://github.com/a")), "network", "no network")
 end
 
 print(("%d passed, %d failed"):format(passed, failed))

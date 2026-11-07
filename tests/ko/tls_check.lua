@@ -17,6 +17,8 @@ local function check(host, want_ok)
 end
 check("api.bookmate.yandex.net", true)
 check("oauth.yandex.ru", true)
+check("github.com", true)
+check("release-assets.githubusercontent.com", true)
 check("wrong.host.badssl.com", false)
 check("expired.badssl.com", false)
 check("self-signed.badssl.com", false)

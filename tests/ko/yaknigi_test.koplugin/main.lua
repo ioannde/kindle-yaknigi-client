@@ -1958,9 +1958,95 @@ local function test_books_and_memory(settings)
     end
 end
 
+--- Ending as it does in the real thing short of the restart, which would end the test run.
+local function test_updates(plugin)
+    local http = require("socket.http")
+    local Updater = require("yaknigi/updater")
+    local update_dir = require("datastorage"):getDataDir() .. "/yaknigi/update"
+    local base = os.getenv("YB_OAUTH_BASE")
+    local function info(text)
+        local w = wait("the message: " .. text, function()
+            local t = top()
+            return t.text and tostring(t.text):find(text, 1, true) and t
+        end)
+        return w
+    end
+
+    if not Updater.enabled() then fail("updates are off in a numbered version") end
+    plugin:showSettings()
+    local settings = wait("the settings", function()
+        local w = top()
+        return w.name == "YaknigiSettings" and w
+    end)
+    UIManager:forceRePaint()
+    for _ = 2, settings.pages or 1 do
+        if settings.rows.terms then break end
+        tap_widget(settings.pager_next)
+        UIManager:forceRePaint()
+    end
+    if not settings.rows.terms or not settings.rows.version then fail("no «О программе» in the settings") end
+    shot("40-settings-about")
+
+    -- Nothing is out.
+    plugin:checkUpdates(true)
+    UIManager:close(info("последняя версия"))
+
+    -- What came is not what the manifest promised: nothing is left to install.
+    http.request(base .. "/test/update?mode=corrupt")
+    plugin:checkUpdates(true)
+    UIManager:close(info("не удалось"))
+    if Updater.pending(update_dir) then fail("a corrupt update waits to be installed") end
+
+    -- A later KOReader or launcher: only a new install will do.
+    http.request(base .. "/test/update?mode=manual")
+    plugin:checkUpdates(true)
+    UIManager:close(info("вручную"))
+    if Updater.pending(update_dir) then fail("an update for another base waits to be installed") end
+
+    -- A good one, through a redirect, comes with an offer that is made once.
+    http.request(base .. "/test/update?mode=good")
+    plugin:checkUpdates(true)
+    local box = info("Загружена новая версия 9.9.9")
+    shot("41-update-offer")
+    UIManager:close(box)
+    if Updater.pending(update_dir) ~= "9.9.9" then fail("the update is not waiting") end
+    local f = io.open(update_dir .. "/pending/yaknigi.koplugin/main.lua")
+    if not f then fail("the update was not unpacked") end
+    f:close()
+    plugin:autoUpdate()
+    UIManager:forceRePaint()
+    if tostring(top().text or ""):find("Загружена", 1, true) then fail("the offer came twice") end
+    os.execute("rm -rf '" .. update_dir .. "'")
+
+    -- The terms, in the settings.
+    tap_widget(settings.rows.terms)
+    local terms = top()
+    if terms.name ~= "YaknigiTerms" then fail("the terms do not open from the settings") end
+    if terms.accept_button then fail("the terms ask again") end
+    tap_widget(terms.close_button)
+    if top() ~= settings then fail("the settings are not back after the terms") end
+    UIManager:close(settings)
+end
+
 local function script()
     local plugin = require("apps/filemanager/filemanager").instance.yaknigi
     if not plugin then fail("plugin is not loaded") end
+
+    -- The terms come before anything else, and are asked for once.
+    local terms = wait("the terms", function()
+        local w = top()
+        return w.name == "YaknigiTerms" and w
+    end)
+    shot("00-terms")
+    if not terms.text.text:find("Неофициальный проект", 1, true) then fail("the terms have no text") end
+    if not terms.text.text:find("Лицензии", 1, true) then fail("the terms do not end") end
+    if require("yaknigi/terms").accepted() then fail("the terms count as accepted already") end
+    local first_line = terms.text.text_widget.virtual_line_num
+    terms:onSwipe(nil, { direction = "north" })
+    if terms.text.text_widget.virtual_line_num == first_line then fail("the terms do not scroll") end
+    shot("00a-terms-scrolled")
+    tap_widget(terms.accept_button)
+    if not require("yaknigi/terms").accepted() then fail("the terms were not accepted") end
 
     -- Sign-in: the QR, then the code. The mock checks PKCE against this challenge.
     local login = wait("the sign-in screen", function()
@@ -2533,6 +2619,7 @@ local function script()
     test_books_and_memory(settings)
     test_lists()
     test_notes()
+    test_updates(plugin)
     settings = top()
     local f = io.open(OUT .. "/PASS", "w")
     f:write("ok\n")

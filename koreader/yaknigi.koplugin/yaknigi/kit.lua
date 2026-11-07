@@ -178,6 +178,22 @@ end
 
 Kit.Tappable = Tappable
 
+--- The screen's main action: white words on a black pill.
+function Kit.pill(text, width, height, callback)
+    return Tappable:new{
+        callback = callback,
+        FrameContainer:new{
+            background = Blitbuffer.COLOR_BLACK,
+            bordersize = 0, padding = 0,
+            radius = math.floor(height / 2),
+            CenterContainer:new{
+                dimen = Geom:new{ w = width, h = height },
+                Kit.text(text, 20, { bold = true, color = Blitbuffer.COLOR_WHITE }),
+            },
+        },
+    }
+end
+
 --- Tappable content centred in a box of the given size.
 function Kit.button(content, width, height, callback)
     return Tappable:new{

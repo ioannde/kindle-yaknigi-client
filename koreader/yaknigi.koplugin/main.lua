@@ -41,6 +41,9 @@ local Session = require("yaknigi/session")
 local Shell = require("yaknigi/shell")
 local Store = require("yaknigi/store")
 local Sync = require("yaknigi/sync")
+local AppState = require("yaknigi/appstate")
+local Terms = require("yaknigi/terms")
+local Updater = require("yaknigi/updater")
 
 local ROOT = DataStorage:getDataDir() .. "/yaknigi"
 local BOOKS = ROOT .. "/books"
@@ -55,11 +58,14 @@ local ADD_RESULT = ROOT .. "/add.result"
 local SAVE_RESULT = ROOT .. "/save.result"
 local REMOVE_RESULT = ROOT .. "/remove.result"
 local STORAGE_RESULT = ROOT .. "/storage.result"
+local UPDATE_DIR = ROOT .. "/update"
+local UPDATE_RESULT = ROOT .. "/update.result"
 os.execute("mkdir -p '" .. BOOKS .. "' '" .. COVERS .. "'")
 
 -- The app mode shows the library instead of the file manager, and leaves with it.
 local APP_MODE = os.getenv("YAKNIGI_APP") == "1"
 local POLL_SECONDS = 2
+local STARTED_SECONDS = 5
 local COVER_POLL_SECONDS = 1
 local NOTES_AFTER_OPENING_SECONDS = 2
 local NOTES_AFTER_CHANGE_SECONDS = 3
@@ -78,6 +84,10 @@ local add_requests = 0
 local remove_requests = 0
 local save_requests = 0
 local storage_requests = 0
+-- A check or a download is under way.
+local updating = false
+-- The version the restart was offered for, so that it is offered once.
+local update_offered = nil
 -- The books being saved on the device, by book id.
 local saving = {}
 
@@ -428,6 +438,11 @@ function Yaknigi:showSettings()
         ui = self.ui,
         on_sign_out = saved_token() and function() self:signOut() end or nil,
         storage = self:storageActions(),
+        updates = {
+            version = Updater.version(),
+            enabled = Updater.enabled(),
+            check = function() self:checkUpdates(true) end,
+        },
         on_close_app = function()
             if self.library then self.library:onClose() end
         end,
@@ -440,6 +455,18 @@ end
 --- The library on the screen. quiet: only that, as when it comes up over a book being closed,
 -- and the file manager that comes after will show it again and bring it up to date.
 function Yaknigi:showLibrary(quiet)
+    if not Terms.accepted() then
+        UIManager:show(Terms:new{
+            on_accept = function()
+                Terms.accept()
+                self:showLibrary(quiet)
+            end,
+            on_decline = function()
+                if APP_MODE then UIManager:quit() end
+            end,
+        })
+        return
+    end
     if self.library then UIManager:close(self.library) end
     if shown_library and shown_library ~= self.library then UIManager:close(shown_library) end
     local signed_in = saved_token() ~= nil
@@ -481,6 +508,7 @@ function Yaknigi:showLibrary(quiet)
     shown_library = library
     UIManager:show(library)
     if quiet then return end
+    UIManager:nextTick(function() self:autoUpdate() end)
     if signed_in then
         UIManager:nextTick(function() self:refreshLibrary(cached == nil) end)
         if cached then UIManager:nextTick(function() self:fetchCovers(without_episodes(cached)) end) end
@@ -513,6 +541,94 @@ function Yaknigi:showLibrary(quiet)
     else
         UIManager:nextTick(function() self:showLogin() end)
     end
+end
+
+-- Updates -----------------------------------------------------------------------
+
+--- At each coming to the library: says what is ready, or asks once a day with nothing in the way.
+function Yaknigi:autoUpdate()
+    if not Updater.enabled() or updating then return end
+    local ready = Updater.pending(UPDATE_DIR)
+    if ready then
+        self:offerRestart(ready)
+        return
+    end
+    if not AppState:nilOrTrue("auto_update") or not NetworkMgr:isOnline() then return end
+    if Updater.due(AppState:readSetting("update_checked"), os.time()) then
+        self:checkUpdates(false)
+    end
+end
+
+--- tell: asked for from the settings, so it says how it ended, whatever the ending.
+function Yaknigi:checkUpdates(tell)
+    if updating then return end
+    if tell and not NetworkMgr:isOnline() then
+        NetworkMgr:runWhenOnline(function() self:checkUpdates(true) end)
+        return
+    end
+    updating = true
+    if tell then UIManager:show(Notification:new{ text = "Проверяем обновления" }) end
+    os.remove(UPDATE_RESULT)
+    local pid = ffiutil.runInSubProcess(function()
+        pcall(function() require("ffi").C.nice(10) end)
+        local ok, kind, version = pcall(Updater.run, UPDATE_DIR)
+        write_json(UPDATE_RESULT, { kind = ok and kind or "broken", version = version })
+        os.exit(0)
+    end)
+    if pid then
+        self:pollUpdate(pid, tell)
+    else
+        updating = false
+    end
+end
+
+function Yaknigi:pollUpdate(pid, tell)
+    UIManager:scheduleIn(1, function()
+        if not ffiutil.isSubProcessDone(pid) then
+            self:pollUpdate(pid, tell)
+            return
+        end
+        updating = false
+        local result = read_json(UPDATE_RESULT) or { kind = "broken" }
+        os.remove(UPDATE_RESULT)
+        -- Without the network nothing was learned, and the next visit to the library may try again.
+        if result.kind ~= "network" then
+            AppState:saveSetting("update_checked", os.time())
+            AppState:flush()
+        end
+        if result.kind == "ready" then
+            -- Over a book it would be in the way: the library will say it.
+            if tell or UIManager:getTopmostVisibleWidget() == shown_library then
+                update_offered = nil
+                self:offerRestart(result.version)
+            end
+        elseif tell then
+            local text = "Обновление не удалось. Попробуйте позже."
+            if result.kind == "none" then
+                text = "У вас последняя версия."
+            elseif result.kind == "manual" then
+                text = "Версию " .. tostring(result.version) .. " нужно установить заново вручную: "
+                    .. "скачайте её на странице проекта на GitHub."
+            end
+            UIManager:show(InfoMessage:new{ text = text })
+        end
+    end)
+end
+
+function Yaknigi:offerRestart(version)
+    if update_offered == version then return end
+    update_offered = version
+    UIManager:show(ConfirmBox:new{
+        text = "Загружена новая версия " .. version .. ". Перезапустить приложение и установить её? "
+            .. "Иначе она установится при следующем запуске.",
+        ok_text = "Перезапустить",
+        cancel_text = "Позже",
+        ok_callback = function()
+            G_reader_settings:flush()
+            Updater.apply()
+            UIManager:restartKOReader()
+        end,
+    })
 end
 
 --- Out of the book: the library is up at once, whatever closing the book takes.
@@ -2225,6 +2341,13 @@ function Yaknigi:init()
         self.ui.paintTo = function() end
         UIManager:nextTick(function()
             self:showLibrary()
+        end)
+        -- Still here after a moment: a new version has started, and the launcher keeps it.
+        UIManager:scheduleIn(STARTED_SECONDS, function()
+            local version = Updater.confirm(UPDATE_DIR)
+            if version then
+                UIManager:show(Notification:new{ text = "Установлена версия " .. version })
+            end
         end)
     end
 end
