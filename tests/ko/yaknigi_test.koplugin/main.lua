@@ -1337,11 +1337,18 @@ local function test_lists()
     shot("86-followed-shelf-menu")
     tap_widget(top().rows.unfollow)
     wait("the unfollowing", function() return shelves()["shelf-2"].following == false end)
-    finished(menu, "Чужая полка")
+    -- The server knows a moment before the reader does.
+    wait("the shelf anew, unfollowed", function()
+        return menu.collection.finished and menu.collection.shelf and menu.collection.shelf.following == false
+            and menu.shelf_button and top() == menu
+    end)
     tap_widget(menu.shelf_button)
     tap_widget(sheet_with("follow"))
     wait("the following", function() return shelves()["shelf-2"].following == true end)
-    finished(menu, "Чужая полка")
+    wait("the shelf anew, followed", function()
+        return menu.collection.finished and menu.collection.shelf and menu.collection.shelf.following == true
+            and top() == menu
+    end)
 
     -- A list that is closed is no reason to sign out.
     local token_before = saved_token()
