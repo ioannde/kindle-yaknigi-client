@@ -1158,7 +1158,7 @@ local function test_lists()
     wait("the menu to go again", function() return top() == menu end)
     wait("the serial to be saved", function()
         for _, item in ipairs(menu.item_table) do
-            if item.title == "Новый сериал" and item.whole then row = item; return true end
+            if item.title == "Новый сериал" and menu.book_status(item) == "whole" then row = item; return true end
         end
     end, 60)
     menu.on_book_menu(row)
