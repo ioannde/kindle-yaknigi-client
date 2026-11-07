@@ -1068,7 +1068,10 @@ local function test_lists()
     UIManager:forceRePaint()
     shot("74-serial")
 
+    local shown = store:read(store.paths[1])
+    if not shown or not shown:find("<body>", 1, true) then fail("an episode's chapter is not a page") end
     -- At Yandex a place is in an episode: the second chapter of the second, here the fifth.
+    reader().yaknigi:sendPosition() -- the place it was opened at
     reader().rolling:onGotoXPointer("/body/DocFragment[5]")
     reader().yaknigi:sendPosition()
     wait("the place to reach the serial", function()
@@ -1113,6 +1116,8 @@ local function test_lists()
             fail("a closed episode's page: " .. store.paths[closed])
         end
     end
+    reader().yaknigi:sendPosition() -- the place it was opened at
+    os.remove(store.dir .. "/to_send")
     reader().rolling:onGotoXPointer("/body/DocFragment[7]")
     UIManager:forceRePaint()
     shot("75-serial-closed")

@@ -812,7 +812,8 @@ class Handler(BaseHTTPRequestHandler):
             path = query["path"][0]
             if "/d-ep" in url.path:
                 # An episode's document has the episode's own paths, not those of the whole serial.
-                self.reply(404 if "ep" in path else 200, chapter(path).encode())
+                page = f'<html xmlns="http://www.w3.org/1999/xhtml"><body>{chapter(path)}</body></html>'
+                self.reply(404 if "ep" in path else 200, page.encode())
                 return
             # This route knows a book by its document, not its uuid: these names are that book's.
             if path.endswith("title.xhtml"):
