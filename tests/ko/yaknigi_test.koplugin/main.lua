@@ -2088,15 +2088,25 @@ local function test_finished(plugin)
         UIManager:forceRePaint()
         return top()
     end
-    local function write_waiting(position)
-        local f = io.open(dir .. "/to_send", "wb")
-        f:write(json.encode(position))
-        f:close()
-    end
+
+    -- A position waiting to go keeps its time, but no longer says what state the book is in.
+    local Sync = require("yaknigi/sync")
+    local aside = root .. "/forget-state-test"
+    require("libs/libkoreader-lfs").mkdir(aside)
+    local f = io.open(aside .. "/to_send", "wb")
+    f:write(json.encode({ state = "reading", start = "x", timespent = 1000 }))
+    f:close()
+    Sync.forget_state(aside)
+    f = io.open(aside .. "/to_send", "rb")
+    local waiting = json.decode(f:read("*a"))
+    f:close()
+    if waiting.state ~= nil then fail("a position waiting would undo the mark") end
+    if waiting.timespent ~= 1000 or waiting.start ~= "x" then fail("the position waiting lost something") end
+    os.remove(aside .. "/to_send")
+    os.remove(aside)
 
     if cached().state ~= "reading" then fail("card0 to begin with: " .. tostring(cached().state)) end
     local progress = cached().progress
-    write_waiting({ state = "reading", card = "card0", timespent = 1000 })
     local sheet = menu()
     shot("70-book-menu-finished")
     tap_widget(sheet.rows.finished)
@@ -2104,12 +2114,6 @@ local function test_finished(plugin)
     if mock_get("/test/marks").card0 ~= "finished" then fail("Yandex was not told of the mark") end
     if tonumber(cached().progress) ~= tonumber(progress) then fail("the mark changed what was read") end
     if select(2, Session.read_card(dir)) ~= "finished" then fail("the book's own note of the state") end
-    local f = io.open(dir .. "/to_send", "rb")
-    local waiting = json.decode(f:read("*a"))
-    f:close()
-    if waiting.state ~= nil then fail("a position waiting would undo the mark") end
-    if waiting.timespent ~= 1000 then fail("the position waiting lost its time") end
-    os.remove(dir .. "/to_send")
 
     -- Yandex answers yes and does nothing.
     mock_get("/test/ignore_state?on=1")
@@ -2132,10 +2136,8 @@ end
 --- What is said of a book Yandex will not open, by what the subscription says.
 local function test_no_access(plugin)
     local Catalogue = require("yaknigi/catalogue")
-    local function denied()
-        plugin:takeFound({ found = true, title = "Книга вне подписки",
-            card = { book = { uuid = "found-denied", title = "Книга вне подписки" } } })
-    end
+    -- The way here from a refused book is gone through in the catalogue's test.
+    local function denied() plugin:showNoAccess("Книга вне подписки") end
     local function screen_says(verdict, name)
         wait("the refusal: " .. verdict, is_named("YaknigiNoAccess"))
         if top().verdict ~= verdict then fail("the refusal says " .. tostring(top().verdict) .. ", not " .. verdict) end
