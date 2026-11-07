@@ -2100,6 +2100,7 @@ local function script()
     local settings = top()
     if settings.name ~= "YaknigiSettings" then fail("no settings from the library") end
     if not settings.rows.sign_out then fail("no way out of the account in the settings") end
+    if not settings.rows.private_notes then fail("no privacy of notes in the account section") end
     shot("46-settings-library")
     -- Airplane mode, as far as it can be seen: the Wi-Fi is off.
     local NetworkMgr = require("ui/network/manager")

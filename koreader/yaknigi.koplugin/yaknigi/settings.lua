@@ -96,11 +96,6 @@ function Settings:entries()
         Prefs.set_refresh_rate(rates[i])
     end, "Как часто экран полностью перерисовывается со вспышкой. Реже — меньше мигает, но заметнее следы прошлых страниц.")
 
-    heading("Приватность")
-    switch("private_notes", "Новые выделения и заметки приватные", Prefs.private_notes(), function(on)
-        G_reader_settings:saveSetting("yaknigi_private_notes", on)
-    end)
-
     heading("Сон")
     local sleep_note = "Обложка книги, открытой последней"
     if Device:isKindle() and not Device:supportsScreensaver() then
@@ -125,6 +120,9 @@ function Settings:entries()
 
     if self.on_sign_out then
         heading("Аккаунт")
+        switch("private_notes", "Приватные заметки", Prefs.private_notes(), function(on)
+            G_reader_settings:saveSetting("yaknigi_private_notes", on)
+        end)
         list[#list + 1] = { key = "sign_out", title = "Выйти из аккаунта", action = function()
             self:close()
             UIManager:nextTick(self.on_sign_out)
