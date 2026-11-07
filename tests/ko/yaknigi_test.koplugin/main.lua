@@ -1987,35 +1987,78 @@ local function test_updates(plugin)
     if not settings.rows.terms or not settings.rows.version then fail("no «О программе» in the settings") end
     shot("40-settings-about")
 
+    local AppState = require("yaknigi/appstate")
+    local function offer()
+        return wait("the offer", function()
+            local t = top()
+            return t.name == "YaknigiUpdateOffer" and t
+        end)
+    end
+    local function press(box, which)
+        box[which .. "_callback"]()
+        UIManager:close(box)
+    end
+
     -- Nothing is out.
     plugin:checkUpdates(true)
     UIManager:close(info("последняя версия"))
-
-    -- What came is not what the manifest promised: nothing is left to install.
-    http.request(base .. "/test/update?mode=corrupt")
-    plugin:checkUpdates(true)
-    UIManager:close(info("не удалось"))
-    if Updater.pending(update_dir) then fail("a corrupt update waits to be installed") end
 
     -- A later KOReader or launcher: only a new install will do.
     http.request(base .. "/test/update?mode=manual")
     plugin:checkUpdates(true)
     UIManager:close(info("вручную"))
     if Updater.pending(update_dir) then fail("an update for another base waits to be installed") end
+    AppState:delSetting("update_skipped")
 
-    -- A good one, through a redirect, comes with an offer that is made once.
+    -- Nothing is fetched before the answer, and to be reminded leaves everything as it was.
     http.request(base .. "/test/update?mode=good")
     plugin:checkUpdates(true)
-    local box = info("Загружена новая версия 9.9.9")
+    local box = offer()
     shot("41-update-offer")
-    UIManager:close(box)
+    if Updater.pending(update_dir) then fail("the update came before it was asked for") end
+    press(box, "choice1")
+    if AppState:readSetting("update_skipped") then fail("«later» counted as skipping") end
+
+    -- A skipped version is not offered by itself, but is on asking.
+    plugin:checkUpdates(true)
+    press(offer(), "choice2")
+    if AppState:readSetting("update_skipped") ~= "9.9.9" then fail("the version was not skipped") end
+    AppState:delSetting("update_checked")
+    plugin:autoUpdate()
+    wait("the daily check", function() return AppState:readSetting("update_checked") end)
+    if top().name == "YaknigiUpdateOffer" then fail("a skipped version was offered") end
+
+    -- The switch stops the daily check, and only that.
+    AppState:saveSetting("check_updates", false)
+    AppState:delSetting("update_checked")
+    plugin:autoUpdate()
+    UIManager:forceRePaint()
+    if AppState:readSetting("update_checked") then fail("it checked with the checking off") end
+    AppState:delSetting("check_updates")
+
+    -- What came is not what the manifest promised: nothing is left to install.
+    local apply, restart = Updater.apply, UIManager.restartKOReader
+    local applied, restarted = false, false
+    Updater.apply = function() applied = true end
+    UIManager.restartKOReader = function() restarted = true end
+    http.request(base .. "/test/update?mode=corrupt")
+    plugin:checkUpdates(true)
+    press(offer(), "cancel")
+    UIManager:close(info("Не удалось загрузить"))
+    if Updater.pending(update_dir) then fail("a corrupt update waits to be installed") end
+    if applied or restarted then fail("a corrupt update was installed") end
+
+    -- A good one, through a redirect: fetched, put in place, and the app restarts.
+    http.request(base .. "/test/update?mode=good")
+    plugin:checkUpdates(true)
+    press(offer(), "cancel")
+    wait("the restart", function() return restarted end)
+    Updater.apply, UIManager.restartKOReader = apply, restart
+    if not applied then fail("the update was not put in place") end
     if Updater.pending(update_dir) ~= "9.9.9" then fail("the update is not waiting") end
     local f = io.open(update_dir .. "/pending/yaknigi.koplugin/main.lua")
     if not f then fail("the update was not unpacked") end
     f:close()
-    plugin:autoUpdate()
-    UIManager:forceRePaint()
-    if tostring(top().text or ""):find("Загружена", 1, true) then fail("the offer came twice") end
     os.execute("rm -rf '" .. update_dir .. "'")
 
     -- The terms, in the settings.

@@ -912,7 +912,7 @@ class Handler(BaseHTTPRequestHandler):
             self.reply_update_manifest()
         elif url.path == "/update/yaknigi-update.tar":
             self.send_response(302)
-            self.send_header("Location", "http://" + self.headers["Host"] + "/update/moved.tar")
+            self.send_header("Location", "http://127.0.0.1:%d/update/moved.tar" % self.server.server_port)
             self.send_header("Content-Length", "0")
             self.end_headers()
         elif url.path == "/update/moved.tar":

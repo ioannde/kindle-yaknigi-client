@@ -8,6 +8,8 @@ local ConfirmBox = require("ui/widget/confirmbox")
 local DataStorage = require("datastorage")
 local DocSettings = require("docsettings")
 local InfoMessage = require("ui/widget/infomessage")
+local MultiConfirmBox = require("ui/widget/multiconfirmbox")
+local ReaderUI = require("apps/reader/readerui")
 local InputDialog = require("ui/widget/inputdialog")
 local Notification = require("ui/widget/notification")
 local LuaSettings = require("luasettings")
@@ -86,8 +88,6 @@ local save_requests = 0
 local storage_requests = 0
 -- A check or a download is under way.
 local updating = false
--- The version the restart was offered for, so that it is offered once.
-local update_offered = nil
 -- The books being saved on the device, by book id.
 local saving = {}
 
@@ -545,95 +545,118 @@ end
 
 -- Updates -----------------------------------------------------------------------
 
---- At each coming to the library: says what is ready, or asks once a day with nothing in the way.
-function Yaknigi:autoUpdate()
-    if not Updater.enabled() or updating then return end
-    local ready = Updater.pending(UPDATE_DIR)
-    if ready then
-        self:offerRestart(ready)
+--- Runs work(...) in a forked process, and on_done with what it wrote.
+function Yaknigi:updateStep(work, on_done)
+    updating = true
+    os.remove(UPDATE_RESULT)
+    local pid = ffiutil.runInSubProcess(function()
+        pcall(function() require("ffi").C.nice(10) end)
+        local ok, kind, detail = pcall(work)
+        write_json(UPDATE_RESULT, ok and { kind = kind, detail = detail } or { kind = "broken", detail = tostring(kind) })
+        os.exit(0)
+    end)
+    if not pid then
+        updating = false
+        on_done({ kind = "broken", detail = "fork" })
         return
     end
-    if not AppState:nilOrTrue("auto_update") or not NetworkMgr:isOnline() then return end
+    local function poll()
+        if not ffiutil.isSubProcessDone(pid) then
+            UIManager:scheduleIn(1, poll)
+            return
+        end
+        updating = false
+        local result = read_json(UPDATE_RESULT) or { kind = "broken", detail = "no result" }
+        os.remove(UPDATE_RESULT)
+        logger.info("Yaknigi update:", result.kind, type(result.detail) == "string" and result.detail or "")
+        on_done(result)
+    end
+    UIManager:scheduleIn(1, poll)
+end
+
+--- Asks once a day, on starting, with the network already up: never turns the Wi-Fi on for this.
+function Yaknigi:autoUpdate()
+    if not Updater.enabled() or updating then return end
+    if not AppState:nilOrTrue("check_updates") or not NetworkMgr:isOnline() then return end
     if Updater.due(AppState:readSetting("update_checked"), os.time()) then
         self:checkUpdates(false)
     end
 end
 
---- tell: asked for from the settings, so it says how it ended, whatever the ending.
+--- tell: asked for from the settings, so it says how it ended, and a skipped version counts again.
 function Yaknigi:checkUpdates(tell)
     if updating then return end
     if tell and not NetworkMgr:isOnline() then
         NetworkMgr:runWhenOnline(function() self:checkUpdates(true) end)
         return
     end
-    updating = true
     if tell then UIManager:show(Notification:new{ text = "Проверяем обновления" }) end
-    os.remove(UPDATE_RESULT)
-    local pid = ffiutil.runInSubProcess(function()
-        pcall(function() require("ffi").C.nice(10) end)
-        local ok, kind, version, why = pcall(Updater.run, UPDATE_DIR)
-        write_json(UPDATE_RESULT, {
-            kind = ok and kind or "broken",
-            version = ok and version or nil,
-            why = ok and why or tostring(kind),
-        })
-        os.exit(0)
+    self:updateStep(function() return Updater.check(UPDATE_DIR) end, function(result)
+        self:updateChecked(result, tell)
     end)
-    if pid then
-        self:pollUpdate(pid, tell)
-    else
-        updating = false
+end
+
+function Yaknigi:updateChecked(result, tell)
+    local kind, manifest = result.kind, result.detail
+    -- Nothing was learned; or a book has been opened meanwhile, and this can wait for the next start.
+    if not tell and (kind == "network" or ReaderUI.instance) then return end
+    if kind ~= "network" then
+        AppState:saveSetting("update_checked", os.time())
+        AppState:flush()
+    end
+    local version = type(manifest) == "table" and manifest.version or nil
+    local skipped = version and not tell and AppState:readSetting("update_skipped") == version
+    if kind == "available" and not skipped then
+        self:offerUpdate(manifest)
+    elseif kind == "manual" and not skipped then
+        -- Said once, unless asked: there is nothing to do about it from here.
+        AppState:saveSetting("update_skipped", version)
+        AppState:flush()
+        UIManager:show(InfoMessage:new{
+            text = "Вышла версия " .. tostring(version) .. ". Её нужно установить заново вручную: "
+                .. "скачайте её на странице проекта на GitHub.",
+        })
+    elseif tell and kind == "none" then
+        UIManager:show(InfoMessage:new{ text = "У вас последняя версия." })
+    elseif tell and kind ~= "available" then
+        UIManager:show(InfoMessage:new{ text = "Не удалось проверить обновления. Попробуйте позже." })
     end
 end
 
-function Yaknigi:pollUpdate(pid, tell)
-    UIManager:scheduleIn(1, function()
-        if not ffiutil.isSubProcessDone(pid) then
-            self:pollUpdate(pid, tell)
-            return
-        end
-        updating = false
-        local result = read_json(UPDATE_RESULT) or { kind = "broken" }
-        os.remove(UPDATE_RESULT)
-        logger.info("Yaknigi update:", result.kind, result.version, result.why)
-        -- Without the network nothing was learned, and the next visit to the library may try again.
-        if result.kind ~= "network" then
-            AppState:saveSetting("update_checked", os.time())
+function Yaknigi:offerUpdate(manifest)
+    UIManager:show(MultiConfirmBox:new{
+        name = "YaknigiUpdateOffer",
+        text = "Вышла новая версия " .. manifest.version .. ", у вас " .. Updater.version() .. ". "
+            .. "Обновить? После загрузки приложение перезапустится.",
+        cancel_text = "Обновить",
+        cancel_callback = function() self:downloadUpdate(manifest) end,
+        choice1_text = "Напомнить позже",
+        choice1_callback = function() end, -- the next daily check
+        choice2_text = "Пропустить",
+        choice2_callback = function()
+            AppState:saveSetting("update_skipped", manifest.version)
             AppState:flush()
-        end
-        if result.kind == "ready" then
-            -- Over a book it would be in the way: the library will say it.
-            if tell or UIManager:getTopmostVisibleWidget() == shown_library then
-                update_offered = nil
-                self:offerRestart(result.version)
-            end
-        elseif tell then
-            local text = "Обновление не удалось. Попробуйте позже."
-            if result.kind == "none" then
-                text = "У вас последняя версия."
-            elseif result.kind == "manual" then
-                text = "Версию " .. tostring(result.version) .. " нужно установить заново вручную: "
-                    .. "скачайте её на странице проекта на GitHub."
-            end
-            UIManager:show(InfoMessage:new{ text = text })
-        end
-    end)
+        end,
+    })
 end
 
-function Yaknigi:offerRestart(version)
-    if update_offered == version then return end
-    update_offered = version
-    UIManager:show(ConfirmBox:new{
-        text = "Загружена новая версия " .. version .. ". Перезапустить приложение и установить её? "
-            .. "Иначе она установится при следующем запуске.",
-        ok_text = "Перезапустить",
-        cancel_text = "Позже",
-        ok_callback = function()
+function Yaknigi:downloadUpdate(manifest)
+    if updating then return end
+    local progress = InfoMessage:new{ text = "Загружаем версию " .. manifest.version .. "…" }
+    UIManager:show(progress)
+    self:updateStep(function() return Updater.download(UPDATE_DIR, manifest) end, function(result)
+        UIManager:close(progress)
+        if result.kind ~= "ready" then
+            UIManager:show(InfoMessage:new{ text = "Не удалось загрузить обновление. Попробуйте позже." })
+        elseif ReaderUI.instance then
+            -- A book was opened while it loaded. run.sh installs what waits at the next start.
+            UIManager:show(Notification:new{ text = "Версия " .. manifest.version .. " установится при следующем запуске" })
+        else
             G_reader_settings:flush()
             Updater.apply()
             UIManager:restartKOReader()
-        end,
-    })
+        end
+    end)
 end
 
 --- Out of the book: the library is up at once, whatever closing the book takes.

@@ -1,7 +1,8 @@
 -- New versions of the plugin, from the project's releases on GitHub.
 --
--- The check and the download run in a forked process and only prepare update/pending. The
--- launcher's apply-update.sh puts it in place at a start, and takes it back if that start fails.
+-- The check and, once the user agrees, the download run in forked processes and only prepare
+-- update/pending. The launcher's apply-update.sh puts it in place at a start, and takes it back
+-- if that start fails.
 local Http = require("yaknigi/http")
 
 local Updater = {}
@@ -139,38 +140,43 @@ local function unpack_archive(dir, archive, manifest)
     return true
 end
 
---- The whole of it, for the forked process. Returns kind ("none", "manual", "ready", "network"
--- or "broken"), the version concerned, and what broke.
-function Updater.run(dir)
+--- Whether there is anything new, for a forked process. Returns kind ("none", "manual",
+-- "available", "network" or "broken"), and the manifest when there is one.
+function Updater.check(dir)
     local json = require("rapidjson")
+    local Net = require("yaknigi/net")
+    local http = Http.new(Net.connect)
+    local body, err = Updater.get(http, Updater.RELEASES .. "/manifest.json")
+    http:close()
+    -- No release is out, which is not a failure of anything.
+    if not body then return err == "not_found" and "none" or "network" end
+    local ok, manifest = pcall(json.decode, body)
+    if not ok or not Updater.valid_manifest(manifest) then return "broken" end
+    local decision = Updater.decide(manifest, Updater.version(), Updater.base(), read_line(dir .. "/bad"))
+    if decision == "none" then return "none" end
+    return decision == "download" and "available" or decision, manifest
+end
+
+--- Fetches what the user agreed to, for a forked process. Returns "ready", "network" or
+-- "broken", and what broke.
+function Updater.download(dir, manifest)
+    if Updater.pending(dir) == manifest.version then return "ready" end
     local sha2 = require("ffi/sha2")
     local Net = require("yaknigi/net")
     os.execute("mkdir -p " .. shell_quote(dir))
     local http = Http.new(Net.connect)
-    local function finish(kind, version, why)
-        http:close()
-        return kind, version, why
-    end
-    local body, err = Updater.get(http, Updater.RELEASES .. "/manifest.json")
-    -- No release is out, which is not a failure of anything.
-    if not body then return finish(err == "not_found" and "none" or "network") end
-    local ok, manifest = pcall(json.decode, body)
-    if not ok or not Updater.valid_manifest(manifest) then return finish("broken", nil, "manifest") end
-    local decision = Updater.decide(manifest, Updater.version(), Updater.base(), read_line(dir .. "/bad"))
-    if decision ~= "download" then return finish(decision, manifest.version) end
-    if Updater.pending(dir) == manifest.version then return finish("ready", manifest.version) end
-
-    body = Updater.get(http, Updater.RELEASES .. "/" .. Updater.ARCHIVE)
-    if not body then return finish("network") end
-    if sha2.sha256(body):lower() ~= manifest.sha256:lower() then return finish("broken", manifest.version, "digest") end
+    local body = Updater.get(http, Updater.RELEASES .. "/" .. Updater.ARCHIVE)
+    http:close()
+    if not body then return "network" end
+    if sha2.sha256(body):lower() ~= manifest.sha256:lower() then return "broken", "digest" end
     local archive = dir .. "/" .. Updater.ARCHIVE
     local f = io.open(archive, "wb")
-    if not f then return finish("broken", manifest.version, "write") end
+    if not f then return "broken", "write" end
     f:write(body)
     f:close()
     local unpacked, why = unpack_archive(dir, archive, manifest)
     os.remove(archive)
-    return finish(unpacked and "ready" or "broken", manifest.version, why)
+    return unpacked and "ready" or "broken", why
 end
 
 --- Puts what waits in place. The caller then restarts.

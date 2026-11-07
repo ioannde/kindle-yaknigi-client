@@ -127,11 +127,11 @@ function Settings:entries()
     if self.updates then
         list[#list + 1] = { key = "version", title = "Версия", value = self.updates.version }
         if self.updates.enabled then
-            switch("auto_update", "Обновлять автоматически", AppState:nilOrTrue("auto_update"), function(on)
-                AppState:saveSetting("auto_update", on)
+            switch("check_updates", "Проверять обновления", AppState:nilOrTrue("check_updates"), function(on)
+                AppState:saveSetting("check_updates", on)
                 AppState:flush()
             end)
-            list[#list + 1] = { key = "check_update", title = "Проверить обновления", action = self.updates.check }
+            list[#list + 1] = { key = "check_update", title = "Проверить сейчас", action = self.updates.check }
         end
     end
     list[#list + 1] = { key = "terms", title = "Условия использования", leads_on = true, action = function()
