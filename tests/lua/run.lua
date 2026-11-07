@@ -511,6 +511,20 @@ do
 end
 
 -- what search finds besides books, and the lists
+do
+    local list = Catalogue.collection("bookshelf", "s", "Полка")
+    list.items, list.seen, list.cursor, list.finished, list.failed = { 1 }, { a = true }, "2", true, "нет"
+    Catalogue.renew(list)
+    eq(#list.items, 0, "a renewed list has no books")
+    eq(next(list.seen), nil, "and has seen none")
+    eq(list.cursor, "", "and starts from the first page")
+    eq(list.finished, false, "and is not finished")
+    eq(list.failed, nil, "and has not failed")
+    eq(Catalogue.start(list), true, "and can be asked for")
+    local round = list.round
+    Catalogue.renew(list)
+    eq(list.round ~= round, true, "what was on its way is of the old list")
+end
 eq(Catalogue.count(1, "книга", "книги", "книг"), "1 книга", "one")
 eq(Catalogue.count(3, "книга", "книги", "книг"), "3 книги", "few")
 eq(Catalogue.count(11, "книга", "книги", "книг"), "11 книг", "eleven")

@@ -326,10 +326,108 @@ class Handler(BaseHTTPRequestHandler):
             book["series_list"] = [{"position": 1, "position_label": "1", "uuid": "series-1", "title": "Подборка"}]
         return book
 
-    def shelf(self, uuid, title, count):
-        return {"uuid": uuid, "title": title, "books_count": count, "editable": uuid == "shelf-1",
+    def shelf(self, uuid):
+        shelf = self.server.shelves[uuid]
+        count = len(shelf["posts"]) if shelf["count"] is None else shelf["count"]
+        return {"uuid": uuid, "title": shelf["title"], "annotation": shelf["annotation"], "state": shelf["state"],
+                "books_count": count, "editable": shelf["editable"], "following": shelf["following"],
                 "creator": {"name": "Читатель"},
                 "cover": {"small": self.cover(150), "large": self.cover(150)}}
+
+    def shelf_book(self, uuid):
+        found = re.fullmatch(r"found(\d+)", uuid)
+        if found:
+            return self.rest_book(int(found.group(1)))
+        return {"uuid": uuid, "title": f"Книга {uuid}", "authors": "Автор", "can_be_read": True,
+                "source_type": "html", "cover": {"small": self.cover(160), "large": self.cover(160)},
+                "in_library": True, "library_card": None}
+
+    def shelf_form(self, raw):
+        """The fields of a shelf, in the very form the phone app sends them, or None."""
+        match = re.fullmatch(r"multipart/form-data; boundary=(\S+)", self.headers.get("Content-Type", ""))
+        if not match:
+            return None
+        boundary = match.group(1).encode()
+        part = re.compile(rb'Content-Disposition: form-data; name="([^"]+)"\r\n'
+                          rb"Content-Transfer-Encoding: binary\r\n"
+                          rb"Content-Type: text/plain; charset=UTF-8\r\n"
+                          rb"Content-Length: (\d+)\r\n\r\n")
+        form, at = {}, 0
+        opening = b"--" + boundary + b"\r\n"
+        while raw.startswith(opening, at):
+            head = part.match(raw, at + len(opening))
+            if not head:
+                return None
+            end = head.end() + int(head.group(2))
+            if raw[end:end + 2] != b"\r\n":
+                return None
+            form[head.group(1).decode()] = raw[head.end():end].decode()
+            at = end + 2
+        wanted = {"bookshelf[title]", "bookshelf[annotation]", "bookshelf[state]"}
+        if raw[at:] != b"--" + boundary + b"--\r\n" or set(form) != wanted:
+            return None
+        return form
+
+    def shelf_write(self, method, raw):
+        """Shelves being changed, as the capture of the phone app has it. True if it was about them."""
+        path = urlparse(self.path).path
+        follow = re.search(r"/bookshelves/([^/]+)/followers$", path)
+        posts = re.search(r"/bookshelves/([^/]+)/posts$", path)
+        post = re.search(r"/posts/([^/]+)$", path)
+        one = re.search(r"/bookshelves/([^/]+)$", path)
+        made = path.endswith("/bookshelves") and method == "POST"
+        if not (follow or posts or post or one or made):
+            return False
+        if self.headers.get("Auth-Token") != "mock-token":
+            self.reply(401, b"")
+            return True
+        shelves = self.server.shelves
+        known = (follow or posts or one) and (follow or posts or one).group(1)
+        if known and known not in shelves:
+            self.reply(404, b"")
+        elif made:
+            form = self.shelf_form(raw)
+            if not form or not form["bookshelf[title]"]:
+                self.reply(400, b"")
+                return True
+            self.server.shelf_count += 1
+            uuid = f"made-{self.server.shelf_count}"
+            shelves[uuid] = {"title": form["bookshelf[title]"], "annotation": form["bookshelf[annotation]"],
+                             "state": form["bookshelf[state]"], "editable": True, "following": False,
+                             "count": None, "posts": []}
+            self.reply_json(200, {"bookshelf": self.shelf(uuid)})
+        elif follow and method in ("POST", "DELETE"):
+            shelves[known]["following"] = method == "POST"
+            self.reply(204, b"")
+        elif posts and method == "POST":
+            form = parse_qs(raw.decode(), keep_blank_values=True)
+            if (self.headers.get("Content-Type", "").split(";")[0] != "application/x-www-form-urlencoded"
+                    or form.get("post[resource_name]") != ["book"] or not form.get("post[resource_uuid]")
+                    or form.get("post[annotation]") != [""]):
+                self.reply(400, b"")
+                return True
+            self.server.shelf_count += 1
+            entry = [f"post-{self.server.shelf_count}", form["post[resource_uuid]"][0]]
+            shelves[known]["posts"].append(entry)
+            self.reply_json(200, {"post": {"uuid": entry[0], "resource": {"uuid": entry[1]}}})
+        elif post and method == "DELETE":
+            for shelf in shelves.values():
+                shelf["posts"] = [entry for entry in shelf["posts"] if entry[0] != post.group(1)]
+            self.reply(204, b"")
+        elif one and method == "PUT":
+            form = self.shelf_form(raw)
+            if not form or "complete_topics=true" not in self.path:
+                self.reply(400, b"")
+                return True
+            shelves[known].update(title=form["bookshelf[title]"], annotation=form["bookshelf[annotation]"],
+                                  state=form["bookshelf[state]"])
+            self.reply_json(200, {"bookshelf": self.shelf(known)})
+        elif one and method == "DELETE":
+            del shelves[known]
+            self.reply(204, b"")
+        else:
+            self.reply(405, b"")
+        return True
 
     def rest_series(self, uuid):
         title, kinds, parts = {"series-1": ("Подборка", ["books"], 2),
@@ -511,6 +609,8 @@ class Handler(BaseHTTPRequestHandler):
         self.reply_json(200, {list_name: entries[:2]})
 
     def do_DELETE(self):
+        if self.shelf_write("DELETE", b""):
+            return
         note = re.search(r"/(quotes|bookmarks)/([^/]+)$", self.path)
         if note and self.headers.get("Auth-Token") == "mock-token":
             found = self.server.notes.get(note.group(2))
@@ -531,7 +631,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_PUT(self):
         length = int(self.headers.get("Content-Length", 0))
-        form = parse_qs(self.rfile.read(length).decode(), keep_blank_values=True)
+        raw = self.rfile.read(length)
+        if self.shelf_write("PUT", raw):
+            return
+        form = parse_qs(raw.decode(), keep_blank_values=True)
         quote = re.search(r"/quotes/([^/]+)$", self.path)
         if quote and self.headers.get("Auth-Token") == "mock-token":
             found = self.server.notes.get(quote.group(1))
@@ -616,7 +719,10 @@ class Handler(BaseHTTPRequestHandler):
         if note:
             self.create_note(note.group(1), note.group(2))
             return
-        form = parse_qs(self.rfile.read(int(self.headers.get("Content-Length", 0))).decode())
+        raw = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        if self.shelf_write("POST", raw):
+            return
+        form = parse_qs(raw.decode())
         verifier = form.get("code_verifier", [""])[0]
         digest = hashlib.sha256(verifier.encode()).digest()
         challenge = base64.urlsafe_b64encode(digest).decode().rstrip("=")
@@ -698,13 +804,36 @@ class Handler(BaseHTTPRequestHandler):
         elif re.fullmatch(r".*/series/[^/]+", url.path):
             self.reply_json(200, {"series": self.rest_series(url.path.split("/")[-1])})
         elif url.path.endswith("/profile/bookshelves"):
-            self.reply_json(200, {"bookshelves": [self.shelf("shelf-1", "Моя полка", 2)]})
+            own = [self.shelf(uuid) for uuid, shelf in self.server.shelves.items() if shelf["editable"]]
+            self.reply_json(200, {"bookshelves": own if query.get("page") == ["1"] else []})
         elif url.path.endswith("/profile/bookshelves/following"):
-            shelves = [self.shelf("shelf-1", "Моя полка", 2), self.shelf("shelf-2", "Чужая полка", 21)]
+            shelves = [self.shelf(uuid) for uuid, shelf in self.server.shelves.items() if shelf["following"]]
             self.reply_json(200, {"bookshelves": shelves if query.get("page") == ["1"] else []})
-        elif url.path.endswith("/bookshelves/shelf-1/books"):
-            books = [self.rest_book(20), self.rest_book(22)]
+        elif url.path == "/test/shelves":
+            self.reply_json(200, self.server.shelves)
+        elif re.search(r"/bookshelves/closed(/books)?$", url.path):
+            self.reply(403, b"")
+        elif re.search(r"/bookshelves/[^/]+/books$", url.path):
+            shelf = self.server.shelves.get(url.path.split("/")[-2])
+            if shelf is None:
+                self.reply(404, b"")
+                return
+            books = [self.shelf_book(entry[1]) for entry in shelf["posts"]]
             self.reply_json(200, {"books": books if query.get("page") == ["1"] else []})
+        elif re.search(r"/bookshelves/[^/]+/posts$", url.path):
+            shelf = self.server.shelves.get(url.path.split("/")[-2])
+            if shelf is None:
+                self.reply(404, b"")
+                return
+            posts = [{"uuid": entry[0], "resource_type": "book", "resource": {"uuid": entry[1]}}
+                     for entry in shelf["posts"]]
+            self.reply_json(200, {"posts": posts if query.get("page") == ["1"] else []})
+        elif re.search(r"/bookshelves/[^/]+$", url.path):
+            uuid = url.path.split("/")[-1]
+            if uuid in self.server.shelves:
+                self.reply_json(200, {"bookshelf": self.shelf(uuid)})
+            else:
+                self.reply(404, b"")
         elif url.path.endswith("/series/series-1/parts"):
             first = query.get("page") == ["1"]
             closed = self.rest_book(23)
@@ -852,6 +981,13 @@ if __name__ == "__main__":
     server.positions["ep1-2"] = {"start": "/6/4!/4/2:0", "end": "/6/4!/4/2:0", "writes": 0}
     server.serial_progress = None
     server.removed = []
+    server.shelf_count = 0
+    server.shelves = {
+        "shelf-1": {"title": "Моя полка", "annotation": "Для тестов", "state": "published", "editable": True,
+                    "following": True, "count": None, "posts": [["post-a", "found20"], ["post-b", "found22"]]},
+        "shelf-2": {"title": "Чужая полка", "annotation": "", "state": "published", "editable": False,
+                    "following": True, "count": 21, "posts": [["post-c", "found21"]]},
+    }
     server.fail_search = 0
     server.fail_showcase = 0
     server.fail_card = 0

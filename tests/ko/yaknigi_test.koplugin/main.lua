@@ -2,6 +2,7 @@
 -- Writes screenshots and timings to YAKNIGI_TEST_OUT and "PASS" there at the end;
 -- any failure exits at once with a non-zero code.
 local Event = require("ui/event")
+local Catalogue = require("yaknigi/catalogue")
 local Geom = require("ui/geometry")
 local Screen = require("device").screen
 local UIManager = require("ui/uimanager")
@@ -1211,6 +1212,147 @@ local function test_lists()
     if #menu.rows ~= 2 then fail("the books of the shelf") end
     UIManager:forceRePaint()
     shot("78-shelf")
+    local function shelves() return mock_get("/test/shelves") end
+    local function shelf_named(title)
+        for uuid, shelf in pairs(shelves()) do
+            if shelf.title == title then return uuid, shelf end
+        end
+    end
+    local function name_dialog()
+        return wait("the shelf's name", function()
+            for _, window in ipairs(UIManager._window_stack) do
+                if window.widget.getInputText then return window.widget end
+            end
+        end)
+    end
+    local function press(dialog, text)
+        for _, button in ipairs(dialog.buttons[1]) do
+            if button.text == text then button.callback() return end
+        end
+        fail("no button " .. text)
+    end
+    local function sheet_with(key)
+        return wait("the sheet with " .. key, function()
+            local rows = top().rows
+            return top().name == "YaknigiBookMenu" and rows[key]
+        end)
+    end
+
+    -- On one's own shelf the books have their menu, with the way off the shelf.
+    if not menu.shelf_button then fail("no menu of one's own shelf") end
+    menu.on_book_menu(menu.rows[1])
+    sheet_with("remove_shelf")
+    if not top().rows.add_library then fail("a book not in the library cannot be added from its menu") end
+    UIManager:forceRePaint()
+    shot("79-book-on-shelf-menu")
+    top():dismiss()
+
+    -- A new shelf: from the list of them, under a name with spaces round it.
+    menu:goBack()
+    finished(menu, "Полки")
+    if not menu.shelf_button then fail("no way to make a shelf") end
+    tap_widget(menu.shelf_button)
+    local dialog = name_dialog()
+    UIManager:forceRePaint()
+    shot("80-new-shelf")
+    dialog:setInputText("  Полка из теста ")
+    press(dialog, "Создать")
+    wait("the new shelf in the list", function()
+        return menu.view == "collection" and menu.collection.finished and #menu.rows == 3
+    end)
+    local new_uuid, new_shelf = shelf_named("Полка из теста")
+    if not new_uuid then fail("the shelf was not made") end
+    if new_shelf.state ~= "hidden" or new_shelf.annotation ~= "" then fail("what the new shelf says") end
+    if menu.rows[2].title ~= "Полка из теста" or menu.rows[2].kind_text ~= "Моя полка · 0 книг" then
+        fail("the new shelf's row: " .. tostring(menu.rows[2].title) .. " " .. tostring(menu.rows[2].kind_text))
+    end
+    UIManager:forceRePaint()
+    shot("81-shelves-with-new")
+
+    -- A book onto it, from a book's menu.
+    tap_widget(menu.row_buttons[menu.rows[1]])
+    finished(menu, "Моя полка")
+    menu.on_book_menu(menu.rows[1])
+    tap_widget(sheet_with("add_shelf"))
+    local choice = sheet_with("shelf:" .. new_uuid)
+    UIManager:forceRePaint()
+    shot("82-choose-shelf")
+    tap_widget(choice)
+    wait("the book on the shelf", function()
+        local posts = shelves()[new_uuid].posts
+        return posts[1] and posts[1][2] == "found20"
+    end)
+    wait("the shelf's books anew", function() return menu.collection.finished end)
+
+    -- And off it again: the shelf, empty, says so, and is one's own to name and to delete.
+    menu:goBack()
+    wait("the shelves anew", function()
+        return menu.view == "collection" and menu.collection.finished and menu.rows[2]
+            and menu.rows[2].kind_text == "Моя полка · 1 книга"
+    end)
+    tap_widget(menu.row_buttons[menu.rows[2]])
+    finished(menu, "Полка из теста")
+    if #menu.rows ~= 1 then fail("the book is not shown on the shelf") end
+    menu.on_book_menu(menu.rows[1])
+    tap_widget(sheet_with("remove_shelf"))
+    wait("the book off the shelf", function() return #shelves()[new_uuid].posts == 0 end)
+    wait("the empty shelf", function() return menu.collection.finished and #menu.rows == 0 end)
+    UIManager:forceRePaint()
+    shot("83-empty-own-shelf")
+    tap_widget(menu.shelf_button)
+    tap_widget(sheet_with("rename"))
+    UIManager:forceRePaint()
+    dialog = name_dialog()
+    if dialog:getInputText() ~= "Полка из теста" then fail("the name to change: " .. dialog:getInputText()) end
+    dialog:setInputText("Новое имя")
+    press(dialog, "Сохранить")
+    wait("the new name", function() return shelves()[new_uuid].title == "Новое имя" end)
+    finished(menu, "Новое имя")
+    local renamed = shelves()[new_uuid]
+    if renamed.state ~= "hidden" or renamed.annotation ~= "" then fail("what else renaming changed") end
+    tap_widget(menu.shelf_button)
+    sheet_with("delete")
+    UIManager:forceRePaint()
+    shot("84-own-shelf-menu")
+    tap_widget(top().rows.delete)
+    local confirm = wait("the question about the shelf", function()
+        return top().ok_text == "Удалить" and top()
+    end)
+    UIManager:forceRePaint()
+    shot("85-delete-shelf")
+    answer(confirm, true)
+    wait("the shelf to go", function() return shelves()[new_uuid] == nil end)
+    wait("the list without it", function()
+        return menu.view == "collection" and menu.collection.kind == "bookshelves"
+            and menu.collection.finished and #menu.rows == 2
+    end)
+
+    -- Someone else's shelf can only be followed or not.
+    tap_widget(menu.row_buttons[menu.rows[2]])
+    finished(menu, "Чужая полка")
+    wait("the other shelf's menu", function() return menu.shelf_button end)
+    tap_widget(menu.shelf_button)
+    if not sheet_with("unfollow") or top().rows.rename or top().rows.delete then fail("the menu of another's shelf") end
+    UIManager:forceRePaint()
+    shot("86-followed-shelf-menu")
+    tap_widget(top().rows.unfollow)
+    wait("the unfollowing", function() return shelves()["shelf-2"].following == false end)
+    finished(menu, "Чужая полка")
+    tap_widget(menu.shelf_button)
+    tap_widget(sheet_with("follow"))
+    wait("the following", function() return shelves()["shelf-2"].following == true end)
+    finished(menu, "Чужая полка")
+
+    -- A list that is closed is no reason to sign out.
+    local token_before = saved_token()
+    local closed = Catalogue.collection("bookshelf", "closed", "Закрытая полка")
+    menu:openCollection(closed)
+    wait("the closed list", function() return closed.failed end)
+    if closed.failed ~= "Этот список закрыт." then fail("a closed list says: " .. closed.failed) end
+    if saved_token() ~= token_before or not saved_token() then fail("a 403 signed the reader out") end
+    if top() ~= menu then fail("a 403 led away from the library") end
+    menu:goBack()
+
     menu:goBack()
     finished(menu, "Полки")
     menu:goBack()

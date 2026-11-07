@@ -473,6 +473,8 @@ function Yaknigi:showLibrary(quiet)
         on_settings = function() self:showSettings() end,
         on_book_menu = function(item) self:showBookMenu(item) end,
         on_bookshelves = function() self:openList("bookshelves", nil, "Полки") end,
+        on_new_shelf = function() self:newShelf() end,
+        on_shelf_menu = function(state) self:showShelfMenu(state) end,
         on_add = function(item) self:addFound(item) end,
         on_save = function(item) self:saveFound(item) end,
         book_status = function(item)
@@ -590,7 +592,7 @@ local function ask_page(api, state, cursor)
     if state.kind then
         local page, kind = api:collection(state.kind, state.uuid, cursor)
         if not page then return nil, kind end
-        return { items = Catalogue.from_page(state.kind, page), cursor = page.cursor }
+        return { items = Catalogue.from_page(state.kind, page), cursor = page.cursor, shelf = page.shelf }
     end
     local answer, kind = api:search(state.query, cursor)
     if not answer then return nil, kind end
@@ -610,20 +612,20 @@ function Yaknigi:askCatalogue(state)
     local function start()
         catalogue_requests = catalogue_requests + 1
         local path = CATALOGUE_RESULT .. catalogue_requests
-        local token, cursor = saved_token(), state.cursor
+        local token, cursor, round = saved_token(), state.cursor, state.round
         local pid = ffiutil.runInSubProcess(function()
             local api = Api.new(token)
             local answer, kind = ask_page(api, state, cursor)
             api:close()
             if answer then
-                write_json(path, { kind = "ok", items = answer.items, cursor = answer.cursor })
+                write_json(path, { kind = "ok", items = answer.items, cursor = answer.cursor, shelf = answer.shelf })
             else
                 write_json(path, { kind = kind or "network" })
             end
             os.exit(0)
         end)
         if pid then
-            self:pollCatalogue(state, pid, path)
+            self:pollCatalogue(state, pid, path, round)
         else
             Catalogue.fail(state, catalogue_error("http", state))
         end
@@ -637,14 +639,15 @@ function Yaknigi:askCatalogue(state)
     end
 end
 
-function Yaknigi:pollCatalogue(state, pid, path)
+function Yaknigi:pollCatalogue(state, pid, path, round)
     UIManager:scheduleIn(0.3, function()
         if not ffiutil.isSubProcessDone(pid) then
-            self:pollCatalogue(state, pid, path)
+            self:pollCatalogue(state, pid, path, round)
             return
         end
         local result = read_json(path) or {}
         os.remove(path)
+        if state.round ~= round then return end -- the list was renewed meanwhile
         local library = shown_library
         local current = library and (library.catalogue == state or library.collection == state)
         if result.kind == "auth" then
@@ -658,6 +661,7 @@ function Yaknigi:pollCatalogue(state, pid, path)
         local new
         if result.kind == "ok" then
             new = Catalogue.add(state, result.items, result.cursor)
+            if result.shelf then state.shelf = result.shelf end
             for _, item in ipairs(new) do item.cover = Covers.find(COVERS, item.card) end
         else
             Catalogue.fail(state, catalogue_error(result.kind or "network", state))
@@ -1189,9 +1193,13 @@ function Yaknigi:showBookMenu(item)
     elseif is_whole(card) then
         entries[#entries + 1] = { key = "remove_device", text = "Удалить с устройства", icon = "cloud.off",
             action = function() self:removeFromDevice(card) end }
-    else
+    elseif not item.unavailable then
         entries[#entries + 1] = { key = "save", text = "Сохранить на устройство", icon = "cloud.down",
-            action = function() self:saveBook(card) end }
+            action = function() self:saveFound(item) end }
+    end
+    if not card.uuid and not item.in_library and not item.unavailable then
+        entries[#entries + 1] = { key = "add_library", text = "Добавить в библиотеку", icon = "plus",
+            action = function() self:addFound(item) end }
     end
     for _, link in ipairs(Catalogue.links(card.book)) do
         local is_series = link.kind == "series"
@@ -1201,6 +1209,16 @@ function Yaknigi:showBookMenu(item)
             icon = "chevron.right",
             action = function() self:openList(link.kind, link.uuid, link.title) end,
         }
+    end
+    -- Only a book's way of standing on a shelf is known so far, not a serial's.
+    if not serial then
+        entries[#entries + 1] = { key = "add_shelf", text = "Добавить на полку", icon = "shelves",
+            action = function() self:chooseShelf(item) end }
+    end
+    local own_shelf = shown_library and shown_library:ownShelf()
+    if own_shelf then
+        entries[#entries + 1] = { key = "remove_shelf", text = "Убрать с полки", icon = "close",
+            action = function() self:removeFromShelf(own_shelf, item) end }
     end
     if card.uuid then
         entries[#entries + 1] = { key = "remove_library", text = "Удалить из библиотеки", icon = "trash",
@@ -1253,6 +1271,175 @@ local function in_background(work, done)
         done(result.value)
     end
     UIManager:scheduleIn(0.2, wait)
+end
+
+-- Shelves ---------------------------------------------------------------------
+
+local function shelf_error(kind)
+    if kind == "network" then return "Нет связи с Яндекс Книгами." end
+    if kind == "denied" then return "Яндекс Книги не разрешили это сделать." end
+    return "Не получилось. Попробуйте ещё раз."
+end
+
+--- Does something to shelves in a process of its own, saying so meanwhile. work(api) returns
+-- what done gets, or nothing and why: then the reader is told, and done is not called.
+function Yaknigi:shelfWork(text, work, done)
+    NetworkMgr:runWhenOnline(function()
+        local busy = InfoMessage:new{ text = text }
+        UIManager:show(busy)
+        local token = saved_token()
+        in_background(function()
+            local api = Api.new(token)
+            local value, kind, detail = work(api)
+            api:close()
+            return { value = value, kind = kind, detail = detail }
+        end, function(result)
+            UIManager:close(busy)
+            result = result or {}
+            if result.kind == "auth" then
+                save_token(nil)
+                self:showLibrary()
+            elseif result.value == nil or result.value == false then
+                logger.warn("yaknigi: shelf:", result.kind, result.detail)
+                message(shelf_error(result.kind), 3)
+            else
+                done(result.value)
+            end
+        end)
+    end)
+end
+
+local function ask_shelf_name(title, name, ok_text, done)
+    -- The sign-in code leaves the Latin keyboard on.
+    if #(G_reader_settings:readSetting("keyboard_layouts") or {}) == 0 then
+        G_reader_settings:saveSetting("keyboard_layouts", { "ru", "en" })
+    end
+    G_reader_settings:saveSetting("keyboard_layout", "ru")
+    local dialog
+    dialog = InputDialog:new{
+        title = title,
+        input = name or "",
+        input_hint = "Название полки",
+        buttons = { {
+            { text = "Отмена", id = "close", callback = function() UIManager:close(dialog) end },
+            {
+                text = ok_text,
+                is_enter_default = true,
+                callback = function()
+                    local typed = dialog:getInputText():match("^%s*(.-)%s*$")
+                    if typed == "" then return end
+                    UIManager:close(dialog)
+                    done(typed)
+                end,
+            },
+        } },
+    }
+    UIManager:show(dialog)
+    dialog:onShowKeyboard()
+end
+
+--- Makes a shelf; after(shelf) goes on from there.
+function Yaknigi:newShelf(after)
+    ask_shelf_name("Новая полка", "", "Создать", function(name)
+        self:shelfWork("Создаю полку…", function(api) return api:create_shelf(name) end, function(shelf)
+            toast("Полка " .. quoted(name) .. " создана")
+            if shown_library then shown_library:reloadShelves() end
+            if after then after(shelf) end
+        end)
+    end)
+end
+
+--- What can be done with the shelf on the screen: with one's own, it is all of it.
+function Yaknigi:showShelfMenu(state)
+    local shelf = state.shelf
+    local entries
+    if shelf.editable == true then
+        entries = {
+            { key = "rename", text = "Переименовать", icon = "pencil", action = function()
+                ask_shelf_name("Название полки", state.title, "Сохранить", function(name)
+                    self:shelfWork("Сохраняю…", function(api) return api:rename_shelf(shelf, name) end, function()
+                        state.title, shelf.title = name, name
+                        if shown_library then shown_library:reloadShelves() end
+                    end)
+                end)
+            end },
+            { key = "delete", text = "Удалить полку", icon = "trash", action = function()
+                UIManager:show(ConfirmBox:new{
+                    text = "Удалить полку " .. quoted(state.title) .. "? Она исчезнет и в приложении на телефоне. Книги останутся в библиотеке.",
+                    ok_text = "Удалить",
+                    ok_callback = function()
+                        self:shelfWork("Удаляю полку…", function(api) return api:delete_shelf(state.uuid) end, function()
+                            toast("Полка удалена")
+                            if shown_library then shown_library:reloadShelves(true) end
+                        end)
+                    end,
+                })
+            end },
+        }
+    else
+        local on = shelf.following ~= true
+        entries = { {
+            key = on and "follow" or "unfollow",
+            text = on and "Подписаться" or "Отписаться",
+            icon = on and "plus" or "close",
+            action = function()
+                self:shelfWork(on and "Подписываюсь…" or "Отписываюсь…",
+                    function(api) return api:follow_shelf(state.uuid, on) end,
+                    function()
+                        shelf.following = on
+                        toast(on and "Вы подписаны на полку" or "Вы отписаны от полки")
+                        if shown_library then shown_library:reloadShelves() end
+                    end)
+            end,
+        } }
+    end
+    UIManager:show(BookMenu:new{ title = state.title, entries = entries })
+end
+
+local SHELVES_AT_ONCE = 6 -- the sheet does not scroll
+
+--- The sheet to choose a shelf from, in parts if there are many.
+function Yaknigi:showShelfChoice(item, shelves, first)
+    local book = item.card.book.uuid
+    local entries = {}
+    local function put_on(shelf)
+        self:shelfWork("Добавляю на полку…", function(api) return api:shelf_add(shelf.uuid, book) end, function()
+            toast(quoted(item.title) .. " — на полке " .. quoted(shelf.title))
+            if shown_library then shown_library:reloadShelves() end
+        end)
+    end
+    if first == 1 then
+        entries[1] = { key = "new", text = "Новая полка", icon = "plus", action = function()
+            self:newShelf(function(shelf)
+                put_on({ uuid = shelf.uuid, title = shelf.title })
+            end)
+        end }
+    end
+    local last = math.min(#shelves, first + SHELVES_AT_ONCE - 1)
+    for i = first, last do
+        local shelf = shelves[i]
+        entries[#entries + 1] = { key = "shelf:" .. shelf.uuid, text = shelf.title, icon = "shelves",
+            action = function() put_on(shelf) end }
+    end
+    if last < #shelves then
+        entries[#entries + 1] = { key = "more", text = "Ещё полки", icon = "chevron.right",
+            action = function() self:showShelfChoice(item, shelves, last + 1) end }
+    end
+    UIManager:show(BookMenu:new{ title = "Добавить на полку", authors = quoted(item.title), entries = entries })
+end
+
+function Yaknigi:chooseShelf(item)
+    self:shelfWork("Смотрю полки…", function(api) return api:own_shelves() end, function(shelves)
+        self:showShelfChoice(item, shelves, 1)
+    end)
+end
+
+function Yaknigi:removeFromShelf(state, item)
+    local book = item.card.book.uuid
+    self:shelfWork("Убираю с полки…", function(api) return api:shelf_remove(state.uuid, book) end, function()
+        toast(quoted(item.title) .. " убрана с полки")
+        if shown_library then shown_library:reloadShelves() end
+    end)
 end
 
 --- What the settings can do about the memory. Only from the library, with no book open: the

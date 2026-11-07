@@ -168,7 +168,9 @@ function Library:rowButton(item, height)
     local status = self.book_status and self.book_status(item)
     local name, action
     local function menu() self.on_book_menu(item) end
-    if item.unavailable then
+    if self:ownShelf() and not (item.adding or status == "saving") then
+        name, action = "dots", menu -- a book that cannot be read can still be taken off
+    elseif item.unavailable then
         name, action = "lock", function() self:onMenuSelect(item) end
     elseif item.adding or status == "saving" then
         name, action = "wait", function() end
@@ -541,7 +543,8 @@ function Library:catalogueBody(width, area, state)
             if state.kind == "bookshelves" then
                 text = state.finished and "Полок пока нет" or "Загружаю…"
             elseif state.kind then
-                text = state.finished and "Здесь нет книг, которые можно читать" or "Загружаю…"
+                local nothing = self:ownShelf() and "На полке пока нет книг" or "Здесь нет книг, которые можно читать"
+                text = state.finished and nothing or "Загружаю…"
             elseif not state.query then text = "Введите название или автора"
             elseif not state.finished then text = #books == 0 and "Ищу…" or "Загружаю…" end
             body[1] = CenterContainer:new{ dimen = box, Kit.text(text, 18, { color = Blitbuffer.COLOR_DARK_GRAY }) }
@@ -640,6 +643,16 @@ function Library:build()
                 Kit.text(title, 20, { bold = true, max_width = W - 2 * side }),
             },
         }
+        self.shelf_button = nil
+        local list = view == "collection" and self.collection
+        if list and list.kind == "bookshelves" then
+            self.shelf_button = Kit.icon_button("plus", side, function() self.on_new_shelf() end,
+                { edge = "right", margin = pad })
+        elseif list and list.kind == "bookshelf" and list.shelf then
+            self.shelf_button = Kit.icon_button("dots", side, function() self.on_shelf_menu(list) end,
+                { edge = "right", margin = pad })
+        end
+        if self.shelf_button then header_row[3] = Kit.fixed(self.shelf_button, side) end
     end
     local header = VerticalGroup:new{ align = "left", overlap_offset = { 0, 0 }, Status:new{ width = W }, header_row }
     if not top_level then header[3] = Kit.line(W) end
@@ -735,6 +748,30 @@ function Library:openCollection(state)
     table.insert(self.trail, { view = self.view, query = self.query, page = self.page, collection = self.collection })
     self.collection = state
     self:show("collection")
+end
+
+--- The shelf on the screen, if it is one's own.
+function Library:ownShelf()
+    local state = self.view == "collection" and self.collection
+    if state and state.kind == "bookshelf" and type(state.shelf) == "table" and state.shelf.editable == true then
+        return state
+    end
+end
+
+--- Shelves have changed: all that shows them is asked for anew, the one on the screen at once.
+-- With leave, the one on the screen is gone, and the way leads back from it.
+function Library:reloadShelves(leave)
+    local function is_shelves(state) return state and (state.kind == "bookshelves" or state.kind == "bookshelf") end
+    for _, step in ipairs(self.trail) do
+        if is_shelves(step.collection) then Catalogue.renew(step.collection) end
+    end
+    if self.view ~= "collection" or not is_shelves(self.collection) then return end
+    if leave then
+        self:goBack()
+    else
+        Catalogue.renew(self.collection)
+        self:show("collection", nil, self.page)
+    end
 end
 
 function Library:goBack()

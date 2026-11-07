@@ -317,6 +317,11 @@ function Api:collection(kind, uuid, cursor)
         end
         answer.bookshelves = shelves
     end
+    -- Whose the shelf is, for what can be done with it. Not knowing only leaves that out.
+    if kind == "bookshelf" and number == 1 then
+        local about = self:get_json(API_BASE .. "/bookshelves/" .. id)
+        if type(about) == "table" and type(about.bookshelf) == "table" then answer.shelf = drop_nulls(about.bookshelf) end
+    end
     -- An author's series stand before the books. Having none is not a reason to show nothing.
     if kind == "author" and number == 1 then
         local series = self:get_json(API_BASE .. "/authors/" .. id .. "/series?role=author")
@@ -366,6 +371,116 @@ function Api:remove_card(card_uuid)
         self:headers())
     if status == 200 or status == 204 or status == 404 then return true end
     return status_error(status, body)
+end
+
+-- Shelves, as the phone app writes them ---------------------------------------
+
+local SHELF_BOUNDARY = "yaknigi-bookshelf-form-7f3a9c"
+
+--- A form in parts, each saying its length, as the app sends for a shelf. Fields are { name, value }.
+function Api.multipart(fields)
+    local parts = {}
+    for _, field in ipairs(fields) do
+        parts[#parts + 1] = "--" .. SHELF_BOUNDARY .. "\r\n"
+            .. 'Content-Disposition: form-data; name="' .. field[1] .. '"\r\n'
+            .. "Content-Transfer-Encoding: binary\r\n"
+            .. "Content-Type: text/plain; charset=UTF-8\r\n"
+            .. "Content-Length: " .. #field[2] .. "\r\n\r\n"
+            .. field[2] .. "\r\n"
+    end
+    parts[#parts + 1] = "--" .. SHELF_BOUNDARY .. "--\r\n"
+    return "multipart/form-data; boundary=" .. SHELF_BOUNDARY, table.concat(parts)
+end
+
+local function shelf_form(title, annotation, state)
+    return Api.multipart({
+        { "bookshelf[title]", title },
+        { "bookshelf[annotation]", annotation },
+        { "bookshelf[state]", state },
+    })
+end
+
+local function shelf_answer(status, body)
+    if status ~= 200 and status ~= 201 then return status_error(status, body) end
+    local ok, data = pcall(json.decode, body)
+    local shelf = ok and type(data) == "table" and data.bookshelf
+    if type(shelf) ~= "table" or type(shelf.uuid) ~= "string" then return nil, "http", "no shelf" end
+    return drop_nulls(shelf)
+end
+
+--- A new shelf of one's own. It is hidden from others until one says otherwise in the app.
+function Api:create_shelf(title)
+    local content_type, body = shelf_form(title, "", "hidden")
+    return shelf_answer(self.http:request("POST", API_BASE .. "/bookshelves", self:headers(content_type), body))
+end
+
+--- A new name; what else the shelf says is sent as it was, as the form replaces it.
+function Api:rename_shelf(shelf, title)
+    local content_type, body = shelf_form(title, shelf.annotation or "", shelf.state or "hidden")
+    return shelf_answer(self.http:request("PUT", API_BASE .. "/bookshelves/" .. encode(shelf.uuid) .. "?complete_topics=true",
+        self:headers(content_type), body))
+end
+
+--- Takes the shelf away; the books stay in the library. One already gone is as good as taken.
+function Api:delete_shelf(uuid)
+    local status, body = self.http:request("DELETE", API_BASE .. "/bookshelves/" .. encode(uuid), self:headers())
+    if status == 200 or status == 204 or status == 404 then return true end
+    return status_error(status, body)
+end
+
+function Api:follow_shelf(uuid, on)
+    local status, body = self.http:request(on and "POST" or "DELETE",
+        API_BASE .. "/bookshelves/" .. encode(uuid) .. "/followers", self:headers(), on and "" or nil)
+    if status == 200 or status == 204 then return true end
+    return status_error(status, body)
+end
+
+function Api:shelf_add(shelf_uuid, book_uuid)
+    local status, body = self.http:request("POST", API_BASE .. "/bookshelves/" .. encode(shelf_uuid) .. "/posts",
+        self:headers("application/x-www-form-urlencoded"),
+        "post%5Bresource_name%5D=book&post%5Bresource_uuid%5D=" .. encode(book_uuid) .. "&post%5Bannotation%5D=")
+    if status == 200 or status == 201 then return true end
+    return status_error(status, body)
+end
+
+--- A book stands on a shelf as a post of its own, so that is looked for first.
+-- A book that is not there any more is as good as taken off.
+function Api:shelf_remove(shelf_uuid, book_uuid)
+    local number = 1
+    while number <= 100 do
+        local data, kind, detail = self:get_json(API_BASE .. "/bookshelves/" .. encode(shelf_uuid)
+            .. "/posts?page=" .. number .. "&per_page=" .. LIST_PAGE)
+        if not data then return nil, kind, detail end
+        local posts = type(data.posts) == "table" and data.posts or {}
+        for _, post in ipairs(posts) do
+            if type(post) == "table" and type(post.resource) == "table" and post.resource.uuid == book_uuid then
+                local status, body = self.http:request("DELETE", API_BASE .. "/posts/" .. encode(post.uuid), self:headers())
+                if status == 200 or status == 204 or status == 404 then return true end
+                return status_error(status, body)
+            end
+        end
+        if #posts < LIST_PAGE then return true end
+        number = number + 1
+    end
+    return true
+end
+
+--- One's own shelves, all of them: only what it takes to choose one.
+function Api:own_shelves()
+    local shelves, number = {}, 1
+    while number <= 100 do
+        local data, kind, detail = self:get_json(API_BASE .. "/profile/bookshelves?page=" .. number .. "&per_page=" .. LIST_PAGE)
+        if not data then return nil, kind, detail end
+        local got = type(data.bookshelves) == "table" and data.bookshelves or {}
+        for _, shelf in ipairs(got) do
+            if type(shelf) == "table" and type(shelf.uuid) == "string" then
+                shelves[#shelves + 1] = { uuid = shelf.uuid, title = type(shelf.title) == "string" and shelf.title or "?" }
+            end
+        end
+        if #got < LIST_PAGE then break end
+        number = number + 1
+    end
+    return shelves
 end
 
 --- Returns the library card to read a found book by. The library here may be behind the

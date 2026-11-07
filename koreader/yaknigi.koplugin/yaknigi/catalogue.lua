@@ -33,6 +33,13 @@ function Catalogue.start(state)
     return true
 end
 
+--- From the first page again, for a list that has changed. What is on its way is of the old list.
+function Catalogue.renew(state)
+    state.items, state.seen, state.cursor = {}, {}, ""
+    state.finished, state.loading, state.failed = false, false, nil
+    state.round = (state.round or 0) + 1
+end
+
 function Catalogue.fail(state, kind)
     state.loading = false
     state.failed = kind

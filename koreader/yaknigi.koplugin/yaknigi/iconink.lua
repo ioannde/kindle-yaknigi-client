@@ -16,6 +16,7 @@ return {
     ["menu"] = { left = 0.1000, right = 0.1000, top = 0.2250, bottom = 0.2250 },
     ["panel.notes"] = { left = 0.2042, right = 0.2042, top = 0.0792, bottom = 0.0792 },
     ["panel.toc"] = { left = 0.1000, right = 0.0792, top = 0.2042, bottom = 0.2042 },
+    ["pencil"] = { left = 0.1208, right = 0.1417, top = 0.1417, bottom = 0.1208 },
     ["plus"] = { left = 0.1208, right = 0.1208, top = 0.1208, bottom = 0.1208 },
     ["power"] = { left = 0.1000, right = 0.1000, top = 0.0792, bottom = 0.0592 },
     ["reload"] = { left = 0.1000, right = 0.1000, top = 0.1000, bottom = 0.0992 },
