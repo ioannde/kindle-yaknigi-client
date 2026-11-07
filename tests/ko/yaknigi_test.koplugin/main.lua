@@ -1061,7 +1061,13 @@ local function test_lists()
 
     -- The rest of the shelves are a list of their own, and a shelf found can be followed.
     tap_widget(menu.next_button)
-    wait("the second page of results", function() return menu.page == 2 and #menu.rows > 0 end)
+    wait("the second page of results, with pictures", function()
+        if menu.page ~= 2 or #menu.rows == 0 then return false end
+        for _, row in ipairs(menu.rows) do
+            if not row.cover then return false end
+        end
+        return true
+    end)
     UIManager:forceRePaint()
     shot("70a-search-shelves")
     tap_widget(menu.row_buttons[of_kind(menu, "found_shelves")])

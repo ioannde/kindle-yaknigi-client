@@ -176,7 +176,8 @@ function Catalogue.with_shelves(items, found, query)
     if #shelves > SHELVES_SHOWN then
         local all = list_item("found_shelves", query, "Все полки", nil, shelves[1].card.book.cover,
             ("Полки по запросу «%s»"):format(query))
-        all.card.book.uuid = "found_shelves:" .. query
+        -- It names a file of the cover: the words of a query have no place there.
+        all.card.book.uuid = "found-shelves-" .. shelves[1].uuid
         all.list_title = ("Полки: «%s»"):format(query)
         table.insert(items, at + SHELVES_SHOWN + 1, all)
     end
