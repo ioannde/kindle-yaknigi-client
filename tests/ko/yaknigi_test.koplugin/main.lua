@@ -1221,13 +1221,13 @@ local function test_notes()
     mock_get("/test/note_edit?hidden=1&uuid=" .. across.uuid)
     -- From a first letter in its own element, as the phone's was: non-breaking spaces at Yandex
     -- are plain ones, so the words there are not the same bytes as those in the book.
-    local capital_first = Cfi.to_point(html, number, "/2/4/2/14/2/1:0")
-    local capital_last = Cfi.to_point(html, number, "/2/4/2/16/1:20")
+    local capital_first = Cfi.to_point(html, number, "/2/4/2/18/2/1:0")
+    local capital_last = Cfi.to_point(html, number, "/2/4/2/20/1:20")
     local capital_words = doc:getTextFromXPointers(capital_first, capital_last)
     if not capital_words:find("^Глава %d+, абзац 7%.\194\160") then
         fail("crengine's words from a first letter: " .. #capital_words .. " bytes")
     end
-    local capital = add("quote", Cfi.make_range(spine, "/2/4/2/14/2/1:0", "/2/4/2/16/1:20"),
+    local capital = add("quote", Cfi.make_range(spine, "/2/4/2/18/2/1:0", "/2/4/2/20/1:20"),
         (capital_words:gsub("\194\160", " ")))
     compare()
     if not by_uuid(capital.uuid) then fail("the highlight from a first letter did not come") end
