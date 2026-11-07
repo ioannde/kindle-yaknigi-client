@@ -8,7 +8,10 @@ local logger = require("logger")
 local API_BASE = os.getenv("YB_API_BASE") or "https://api.bookmate.yandex.net/api/v5"
 local GRAPHQL_URL = os.getenv("YB_GRAPHQL_URL") or "https://api-gateway.bookmate.yandex.net/graphql"
 local OAUTH_BASE = os.getenv("YB_OAUTH_BASE") or "https://oauth.yandex.ru"
-local CLIENT_ID = "CLIENT_ID_REMOVED" -- public; PKCE needs no secret
+-- The registration at oauth.yandex.ru is the builder's own: the build writes this file, and
+-- it stays out of the repository. PKCE needs no secret.
+local has_id, CLIENT_ID = pcall(require, "yaknigi/client_id")
+if not has_id then CLIENT_ID = os.getenv("YB_CLIENT_ID") end
 local REDIRECT = "https://oauth.yandex.ru/verification_code"
 
 local Api = {}
@@ -627,8 +630,10 @@ function Api:content(document_uuid, path)
     return self:get(API_BASE .. "/documents/" .. encode(document_uuid) .. "/content?path=" .. encode(path))
 end
 
---- Returns the URL to sign in at, for the given PKCE verifier.
+--- Returns the URL to sign in at, for the given PKCE verifier. Nil from a build without a
+-- registration at oauth.yandex.ru.
 function Api.login_url(verifier)
+    if not CLIENT_ID then return nil end
     return OAUTH_BASE .. "/authorize?response_type=code&client_id=" .. CLIENT_ID
         .. "&redirect_uri=" .. encode(REDIRECT)
         .. "&code_challenge=" .. Crypt.pkce_challenge(verifier)

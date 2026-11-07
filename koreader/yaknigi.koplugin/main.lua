@@ -200,6 +200,10 @@ end
 function Yaknigi:showLogin()
     local verifier = Crypt.new_verifier()
     local url = Api.login_url(verifier)
+    if not url then
+        UIManager:show(InfoMessage:new{ text = "В этой сборке нет идентификатора приложения Яндекса: войти нельзя." })
+        return
+    end
     local dialog
     local function ask_code()
         G_reader_settings:saveSetting("keyboard_layout", "en") -- the code is in Latin letters

@@ -15,8 +15,10 @@
 #include <string.h>
 #include <time.h>
 
-/* The app's registration at oauth.yandex.ru. This value is public. */
-#define YB_CLIENT_ID "CLIENT_ID_REMOVED"
+/* The registration at oauth.yandex.ru is the builder's own: -DYB_CLIENT_ID='"..."'. */
+#ifndef YB_CLIENT_ID
+#define YB_CLIENT_ID ""
+#endif
 
 #define LIB_ROWS 8
 #define MAX_CODE 40

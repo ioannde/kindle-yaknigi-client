@@ -9,6 +9,7 @@
 *.png
 
 # Local config / secrets
+koreader/yaknigi.koplugin/yaknigi/client_id.lua
 *.conf
 config
 
