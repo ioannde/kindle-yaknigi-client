@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A stand-in for the Yandex Books and OAuth servers, for running yb-sim offline.
+"""A stand-in for the Yandex Books and OAuth servers, for running the plugin offline.
 
 Accepts only the code "abc123" and only with the correct PKCE verifier for the
 challenge the client sent, so that it fails if the client's PKCE is wrong.
