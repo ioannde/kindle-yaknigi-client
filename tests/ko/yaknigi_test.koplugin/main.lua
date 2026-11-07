@@ -884,7 +884,7 @@ local function test_reading_screen()
     for name in lfs.dir(Prefs.FACES_DIR) do
         if name:find("%.jpg$") then portraits = portraits + 1 end
     end
-    if portraits ~= 10 then fail("the portraits in the package: " .. portraits) end
+    if portraits ~= 7 then fail("the portraits in the package: " .. portraits) end
     -- KOReader seeds the choice with the time, in seconds: these sleeps are an hour apart.
     local real_time, hours = os.time, 0
     for _ = 1, 40 do
