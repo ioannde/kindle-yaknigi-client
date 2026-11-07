@@ -169,16 +169,15 @@ function Api:card(uuid)
     return drop_nulls(data.library_card)
 end
 
---- Marks a book as read ("finished") or takes the mark off ("pending"), in the form the phone
--- app sends: the whole card as it is, so the position and what is private stay. Read books
--- go to 99%, and taking the mark off leaves that. The card is read back, as a refusal may
--- look like a yes: returns the card as it now is, or nil and "not_taken".
+--- Changes the state of a book, in the form the phone app sends: the whole card as it is, so
+-- the position, the progress and what is private stay. The card is read back, as a refusal
+-- may look like a yes: returns the card as it now is, or nil and "not_taken".
 function Api:set_card_state(uuid, state)
     local now, kind, detail = self:card(uuid)
     if not now then return nil, kind, detail end
     local status, body = self:put_card(uuid, {
         "lc[state]=" .. encode(state),
-        "lc[progress]=" .. (state == "finished" and 99 or math.floor(tonumber(now.progress) or 0)),
+        "lc[progress]=" .. math.floor(tonumber(now.progress) or 0),
         "lc[public]=" .. tostring(now.public ~= false),
         "lc[is_in_child_library]=" .. tostring(now.is_in_child_library == true),
         "lc[fragment]=" .. encode(now.fragment or ""),

@@ -295,7 +295,6 @@ class Handler(BaseHTTPRequestHandler):
             card["progress"] = update["progress"]
             card["state"] = update["state"] or card["state"]
         card["state"] = self.server.states.get(card["uuid"], card["state"])
-        card["progress"] = self.server.mark_progress.get(card["uuid"], card["progress"])
         if i == 3:
             card["book"].update(self.serial_book("serial-1"))
             self.serial_place(card, "ep1-2")
@@ -709,7 +708,7 @@ class Handler(BaseHTTPRequestHandler):
             state = form["lc[state]"][0]
             want = {
                 "lc[state]": [state],
-                "lc[progress]": ["99" if state == "finished" else str(now["progress"])],
+                "lc[progress]": [str(now["progress"])],
                 "lc[public]": [str(now["public"]).lower()],
                 "lc[is_in_child_library]": [str(now["is_in_child_library"]).lower()],
                 "lc[fragment]": [now["fragment"]],
@@ -717,17 +716,15 @@ class Handler(BaseHTTPRequestHandler):
                 "lc[chapter_uuid]": [now["chapter_uuid"]],
                 "lc[current_episode_uuid]": [now.get("current_episode_uuid") or ""],
             }
-            if state not in ("finished", "pending") or form != want:
+            if state not in ("finished", "reading", "pending") or form != want:
                 print(f"bad mark: {form}", flush=True)
                 self.reply(422, b"")
                 return
             # A server may answer yes and do nothing.
             if not self.server.ignore_state:
                 self.server.states[card] = state
-                self.server.mark_progress[card] = int(form["lc[progress]"][0])
             self.reply_json(200, {"library_card": {"uuid": card}})
             return
-        self.server.mark_progress.pop(card, None)
         # As on the real server, the position in this request changes nothing.
         self.server.card_updates[card] = {
             "progress": int(form["lc[progress]"][0]),
@@ -821,9 +818,6 @@ class Handler(BaseHTTPRequestHandler):
             self.server.access = query["mode"][0]
             self.reply(200, b"")
         elif url.path == "/test/marks":
-            if "clear" in query:
-                self.server.states.clear()
-                self.server.mark_progress.clear()
             self.reply_json(200, self.server.states)
         elif url.path.endswith("/profile/access_levels"):
             if self.headers.get("Auth-Token") != "mock-token":
@@ -1075,7 +1069,6 @@ if __name__ == "__main__":
     server.positions = {}
     server.card_updates = {}
     server.states = {}
-    server.mark_progress = {}
     server.ignore_state = False
     server.access = "active"
     server.fail_writes = 0

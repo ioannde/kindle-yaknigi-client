@@ -2106,12 +2106,13 @@ local function test_finished(plugin)
     os.remove(aside)
 
     if cached().state ~= "reading" then fail("card0 to begin with: " .. tostring(cached().state)) end
+    local progress = cached().progress
     local sheet = menu()
     shot("70-book-menu-finished")
     tap_widget(sheet.rows.finished)
     wait("the book marked", function() return cached().state == "finished" end)
     if mock_get("/test/marks").card0 ~= "finished" then fail("Yandex was not told of the mark") end
-    if tonumber(cached().progress) ~= 99 then fail("a read book is at 99%, not " .. tostring(cached().progress)) end
+    if tonumber(cached().progress) ~= tonumber(progress) then fail("the mark changed what was read") end
     if select(2, Session.read_card(dir)) ~= "finished" then fail("the book's own note of the state") end
 
     -- Yandex answers yes and does nothing.
@@ -2127,11 +2128,9 @@ local function test_finished(plugin)
 
     sheet = menu()
     tap_widget(sheet.rows.finished)
-    wait("the mark off", function() return cached().state == "pending" end)
-    if mock_get("/test/marks").card0 ~= "pending" then fail("Yandex was not told the mark is off") end
-    if tonumber(cached().progress) ~= 99 then fail("taking the mark off moved the progress") end
-    if require("yaknigi/shelves").of(cached().state, cached().progress) ~= "reading" then fail("a book with the mark off left the shelf") end
-    mock_get("/test/marks?clear=1")
+    wait("the mark off", function() return cached().state == "reading" end)
+    if mock_get("/test/marks").card0 ~= "reading" then fail("Yandex was not told the mark is off") end
+    if tonumber(cached().progress) ~= tonumber(progress) then fail("taking the mark off moved the progress") end
     UIManager:forceRePaint()
 end
 
