@@ -393,6 +393,79 @@ function Api:manifest(book_uuid)
     return out
 end
 
+--- All of the reader's quotes or bookmarks, of all books, with those deleted. Yandex gives them
+-- in pages, each picking up after the last change seen.
+function Api:notes(list)
+    local all, since = {}, 0
+    for _ = 1, 200 do
+        local page, kind, detail = self:get_json(API_BASE .. "/" .. list .. "/incremental_sync?changes_count=" .. since)
+        if not page then return nil, kind, detail end
+        local entries = page[list]
+        if type(entries) ~= "table" then return nil, "http", "no " .. list end
+        local last = since
+        for _, entry in ipairs(entries) do
+            all[#all + 1] = drop_nulls(entry)
+            if (entry.changes_count or 0) > last then last = entry.changes_count end
+        end
+        if last == since then return all end
+        since = last
+    end
+    return nil, "http", "too many pages of " .. list
+end
+
+local function form(fields)
+    local parts = {}
+    for i, field in ipairs(fields) do parts[i] = encode(field[1]) .. "=" .. encode(tostring(field[2])) end
+    return table.concat(parts, "&")
+end
+
+local function note_answer(self, method, url, fields, name)
+    local status, body = self.http:request(method, url, self:headers("application/x-www-form-urlencoded"), form(fields))
+    if status ~= 200 then return status_error(status, body) end
+    local answer = json.decode(body)
+    return type(answer) == "table" and answer[name] or nil, "http", "no " .. name
+end
+
+--- Writes a new highlight or bookmark. Returns what Yandex made of it. As from the phone, a
+-- highlight starts public, and that field's name really has no closing bracket.
+function Api:create_note(kind, book, note)
+    local url = API_BASE .. "/books/" .. encode(book) .. "/" .. kind .. "s"
+    if kind == "bookmark" then
+        return note_answer(self, "POST", url, {
+            { "bookmark[cfi]", note.cfi },
+            { "bookmark[content]", note.content or "" },
+            { "bookmark[progress]", note.progress or 0 },
+        }, kind)
+    end
+    return note_answer(self, "POST", url, {
+        { "quote[content]", note.content or "" },
+        { "quote[comment]", note.comment or "" },
+        { "quote[cfi]", note.cfi },
+        { "quote[color]", 2 },
+        { "quote[permanent_hidden", "false" },
+        { "quote[progress]", note.progress or 0 },
+    }, kind)
+end
+
+--- Changes a highlight. Yandex takes the whole of it each time, so what is not being changed has
+-- to be sent as it stands: left out, a private highlight could turn public.
+function Api:update_quote(uuid, quote)
+    return note_answer(self, "PUT", API_BASE .. "/quotes/" .. encode(uuid), {
+        { "quote[content]", quote.content or "" },
+        { "quote[comment]", quote.comment or "" },
+        { "quote[cfi]", quote.cfi },
+        { "quote[color]", quote.color or 2 },
+        { "quote[permanent_hidden", quote.hidden and "true" or "false" },
+    }, "quote")
+end
+
+--- Deletes a highlight or bookmark. One already gone is as good as deleted.
+function Api:delete_note(kind, uuid)
+    local status, body = self.http:request("DELETE", API_BASE .. "/" .. kind .. "s/" .. encode(uuid), self:headers())
+    if status == 200 or status == 204 or status == 404 then return true end
+    return status_error(status, body)
+end
+
 --- Fetches one file of a book, by its path in the book.
 function Api:content(document_uuid, path)
     return self:get(API_BASE .. "/documents/" .. encode(document_uuid) .. "/content?path=" .. encode(path))

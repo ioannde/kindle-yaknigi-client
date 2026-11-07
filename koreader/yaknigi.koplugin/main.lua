@@ -29,6 +29,8 @@ local Cfi = require("yaknigi/cfi")
 local Crypt = require("yaknigi/crypt")
 local Feed = require("yaknigi/feed")
 local Library = require("yaknigi/library")
+local NoteSync = require("yaknigi/notesync")
+local NotesLocal = require("yaknigi/notes_local")
 local Prefs = require("yaknigi/prefs")
 local Settings = require("yaknigi/settings")
 local BookMenu = require("yaknigi/bookmenu")
@@ -58,6 +60,9 @@ os.execute("mkdir -p '" .. BOOKS .. "' '" .. COVERS .. "'")
 local APP_MODE = os.getenv("YAKNIGI_APP") == "1"
 local POLL_SECONDS = 2
 local COVER_POLL_SECONDS = 1
+local NOTES_AFTER_OPENING_SECONDS = 2
+local NOTES_AFTER_CHANGE_SECONDS = 3
+local NOTES_AFTER_WAKING_SECONDS = 10
 -- Wi-Fi takes a while to come back after sleep. Pauses between tries to reach Yandex.
 local WAKE_RETRY_SECONDS = { 5, 15, 30 }
 -- Which screen of the library was open, for coming back to it from a book.
@@ -1527,6 +1532,8 @@ function Yaknigi:onReaderReady()
         self.shell = Shell.new(self.ui, self)
         self.shell:install()
         self:chooseSleepCover(store)
+        -- Not in the way of the first page.
+        UIManager:scheduleIn(NOTES_AFTER_OPENING_SECONDS, function() self:syncNotes() end)
     end
     local state = workers[store.id] or {}
     workers[store.id] = state
@@ -1687,6 +1694,105 @@ function Yaknigi:sendPosition()
     if Sync.waiting(store.dir) then self:exchange() end
 end
 
+function Yaknigi:notesContext()
+    return {
+        ui = self.ui,
+        store = self.store,
+        stubs = self:stubs(),
+        position = function(xp) return self:positionOf(xp) end,
+        progress = math.max(0, math.min(100, math.floor(self.shell:progress() * 100 + 0.5))),
+    }
+end
+
+--- Compares this book's notes with Yandex's, in a forked process. As the book closes, nobody is
+-- left to hear the answer; the next time, the comparison finds the same things done.
+function Yaknigi:syncNotes(closing)
+    local store = self.store
+    if self.closed or not store or not self.shell then return end
+    if self.notes_pid and not ffiutil.isSubProcessDone(self.notes_pid) then
+        self.notes_again = not closing
+        return
+    end
+    local token = saved_token()
+    if not token then return end
+    local known = NotesLocal.known(self.ui)
+    local notes = NotesLocal.collect(self:notesContext(), known)
+    local path = store.dir .. "/notes_answer"
+    local book = store.id
+    os.remove(path)
+    self.notes_dirty = false
+    self.notes_pid = ffiutil.runInSubProcess(function()
+        local api = Api.new(token)
+        local ok, result, kind = pcall(NoteSync.run, api, book, notes, known)
+        api:close()
+        if ok and result then
+            write_json(path, result)
+        else
+            logger.info("yaknigi: notes not compared:", ok and kind or result)
+        end
+        os.exit(0)
+    end, false, closing)
+    if closing then
+        self.notes_pid = nil
+    elseif self.notes_pid then
+        self:pollNotes(path)
+    end
+end
+
+function Yaknigi:pollNotes(path)
+    UIManager:scheduleIn(0.5, function()
+        if self.closed then return end
+        if not ffiutil.isSubProcessDone(self.notes_pid) then
+            self:pollNotes(path)
+            return
+        end
+        self.notes_pid = nil
+        local result = read_json(path)
+        os.remove(path)
+        if result then
+            self:applyNotes(result)
+        else
+            self.notes_dirty = true -- no network, say: tried again on the way to sleep or out
+        end
+        if self.notes_again then
+            self.notes_again = false
+            self:syncNotes()
+        end
+    end)
+end
+
+function Yaknigi:applyNotes(result)
+    -- These changes came from Yandex, and are not news to send back to it.
+    self.notes_applying = true
+    local ok, changed = pcall(NotesLocal.apply, self:notesContext(), result)
+    self.notes_applying = false
+    if not ok then
+        logger.warn("yaknigi: notes not applied:", changed)
+    elseif changed then
+        UIManager:setDirty(self.ui, "ui")
+        self.ui:saveSettings()
+    end
+end
+
+function Yaknigi:notesChanged()
+    if self.notes_applying or not self.shell then return end
+    self.notes_dirty = true
+    if self.notes_soon then UIManager:unschedule(self.notes_soon) end
+    self.notes_soon = function()
+        self.notes_soon = nil
+        self:syncNotes()
+    end
+    UIManager:scheduleIn(NOTES_AFTER_CHANGE_SECONDS, self.notes_soon)
+end
+
+function Yaknigi:onAnnotationsModified()
+    self:notesChanged()
+end
+
+function Yaknigi:onYaknigiNotesChanged()
+    self:notesChanged()
+end
+
 --- In a forked process, as the network may be slow or not there: finds out where Yandex
 -- has the book, and sends what is waiting if that does not overwrite other reading.
 function Yaknigi:exchange()
@@ -1812,12 +1918,15 @@ function Yaknigi:onSuspend()
     -- The phone may be next: do not leave it a position behind.
     self:saveReading()
     self.wake_try = nil
+    if self.notes_dirty then self:syncNotes() end
 end
 
 function Yaknigi:onResume()
     -- The phone may have been read while this one slept.
     self.wake_try = 1
     self:exchange()
+    -- Wi-Fi takes a while to come back.
+    UIManager:scheduleIn(NOTES_AFTER_WAKING_SECONDS, function() self:syncNotes() end)
     -- The time on the page is hours behind.
     if self.shell and self.ui.view then self.shell:onWake() end
 end
@@ -1827,6 +1936,8 @@ function Yaknigi:onCloseDocument()
     if self.shell then self.shell:stop() end
     -- KOReader closes the document before its last SaveSettings, so that one is too late.
     self:saveReading()
+    if self.notes_soon then UIManager:unschedule(self.notes_soon) end
+    if self.notes_dirty then self:syncNotes(true) end
     self.closed = true
     if self.prompt then
         UIManager:close(self.prompt)

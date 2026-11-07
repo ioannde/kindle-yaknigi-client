@@ -71,7 +71,7 @@ function Cfi.resolve(html, path)
                         c.names[name] = (c.names[name] or 0) + 1
                         if c.n == path[want] then
                             parts[#parts + 1] = name .. "[" .. c.names[name] .. "]"
-                            if want == #path then return table.concat(parts, "/") end
+                            if want == #path then return table.concat(parts, "/"), e + 1 end
                             if selfclosed then return nil end
                             want = want + 1
                             counts[want] = { n = 0, names = {} }
@@ -96,6 +96,87 @@ function Cfi.to_xpointer(cfi, fragment, html)
     local inner = path and Cfi.resolve(html, path)
     if inner and inner ~= "" then return base .. "/" .. inner end
     return base
+end
+
+--- Which text under an element a CFI's odd step means: its number among the element's pieces of
+-- text as crengine has them, and the text. pos is where the element's contents start.
+local function text_run(html, pos, odd)
+    local before = (odd - 1) / 2
+    local elements, depth, runs = 0, 0, 0
+    while true do
+        local s = html:find("<", pos, true)
+        if not s then return nil end
+        if depth == 0 then
+            local text = html:sub(pos, s - 1)
+            local blank = not text:find("[^%s]")
+            -- As in Cfi.locate: crengine drops whitespace except between two elements in a line.
+            if not blank or (elements > 0 and html:sub(s + 1, s + 1) ~= "/") then
+                runs = runs + 1
+                if elements == before and not blank then return runs, text end
+            end
+            if elements > before then return nil end
+        end
+        local e
+        if html:sub(s, s + 3) == "<!--" then
+            e = select(2, html:find("-->", s, true))
+        else
+            e = html:find(">", s, true)
+        end
+        if not e then return nil end
+        pos = e + 1
+        local tag = html:sub(s, e)
+        local first = tag:sub(2, 2)
+        if first == "/" then
+            if not VOID[(tag:match("^</([%w:_%-]+)") or ""):lower()] then
+                if depth == 0 then return nil end
+                depth = depth - 1
+            end
+        elseif first ~= "!" and first ~= "?" then
+            local name = tag:match("^<([%w:_%-]+)")
+            if name then
+                if depth == 0 then elements = elements + 1 end
+                if tag:sub(-2) ~= "/>" and not VOID[name:lower():gsub("^.*:", "")] then depth = depth + 1 end
+            end
+        end
+    end
+end
+
+--- The other way from Cfi.locate: the xpointer of a spot in a chapter, down to the letter.
+-- inner is the part of a CFI after the "!", such as /2/4/6/1:154. Also gives the text the spot is
+-- in. Nil if the chapter has no such place.
+function Cfi.to_point(html, fragment, inner)
+    local odd, offset = (type(inner) == "string" and inner or ""):match("/(%d+):(%d+)$")
+    odd, offset = tonumber(odd), tonumber(offset)
+    if not odd or odd % 2 == 0 or type(html) ~= "string" then return nil end
+    local path = Cfi.body_path("/6/2!" .. inner)
+    if not path then return nil end
+    local base = "/body/DocFragment[" .. fragment .. "]/body"
+    local where, start = "", nil
+    if #path == 0 then
+        start = select(2, html:find("<body[^>]*>"))
+        start = start and start + 1
+    else
+        where, start = Cfi.resolve(html, path)
+        if not where then return nil end
+        where = "/" .. where
+    end
+    if not start then return nil end
+    local run, text = text_run(html, start, odd)
+    if not run then return nil end
+    return base .. where .. "/text()" .. (run > 1 and "[" .. run .. "]" or "") .. "." .. offset, text
+end
+
+--- The two ends of a range such as /6/22!,/2/4/6/1:154,/2/4/6/1:157: the chapter's place in the
+-- spine, counted from zero, and where each end is in the chapter. Nil if it is not a range.
+function Cfi.range(cfi)
+    local head, common, first, last = (type(cfi) == "string" and cfi or ""):match("^(/[^!]*!)([^,]*),([^,]*),([^,]*)$")
+    if not head then return nil end
+    return Cfi.spine_index(head), common .. first, common .. last
+end
+
+--- A range from its two ends, as Yandex writes it.
+function Cfi.make_range(spine_index, start, finish)
+    return "/6/" .. (spine_index + 1) * 2 .. "!," .. start .. "," .. finish
 end
 
 --- The start of a position, without the range: /6/24!/2/4/2/64/1:560. Yandex stores

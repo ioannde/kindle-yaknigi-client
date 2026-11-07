@@ -981,6 +981,7 @@ local function test_lists()
 
     menu:onMenuSelect(serial)
     finished(menu, "Новый сериал")
+    wait("the episodes' covers", function() return menu.rows[1].cover and menu.rows[2].cover end, 20)
     if not (menu.rows[1].in_library and menu.rows[2].in_library) then fail("the episodes are not marked as added") end
     UIManager:forceRePaint()
     shot("74-serial-added")
@@ -1047,6 +1048,208 @@ local function test_lists()
     tap_widget(menu.tab_cells.settings)
     wait("the settings after the lists", is_named("YaknigiSettings"))
     UIManager:forceRePaint()
+end
+
+-- Highlights, notes and bookmarks at both ends. The server stands for the phone.
+local function test_notes()
+    local Cfi = require("yaknigi/cfi")
+    local Event = require("ui/event")
+    local function open_it()
+        tap_widget(top().tab_cells.library)
+        local menu = wait("the library", function() return top().item_table and top().view == "home" and top() end)
+        menu:onMenuSelect(find_item(menu, "Книга номер 6"))
+        wait("the book", function() return reader() and reader().document and top().name == "ReaderUI" end, 60)
+        wait("the plugin to know the book", function() return reader().yaknigi.store and reader().yaknigi.shell end)
+    end
+    open_it()
+    local ui = reader()
+    local plugin, doc, store = ui.yaknigi, ui.document, ui.yaknigi.store
+    local BOOK = store.id
+    local function server() return mock_get("/test/notes") end
+    local function here()
+        local out = {}
+        for _, item in ipairs(ui.annotation.annotations) do out[#out + 1] = item end
+        return out
+    end
+    local function settled()
+        wait("the comparison to end", function()
+            return not plugin.notes_soon and not plugin.notes_again
+                and not (plugin.notes_pid)
+        end, 40)
+    end
+    local function compare()
+        settled()
+        plugin:syncNotes()
+        settled()
+    end
+    local function modified(item, extra)
+        extra = extra or {}
+        extra[1] = item
+        ui:handleEvent(Event:new("AnnotationsModified", extra))
+    end
+    local function by_uuid(uuid)
+        for _, item in ipairs(here()) do
+            if item.yaknigi == uuid then return item end
+        end
+    end
+    local function at_server(uuid)
+        for _, note in ipairs(server().notes) do
+            if note.uuid == uuid then return note end
+        end
+    end
+
+    settled()
+    local number = fragment()
+    local path = store.paths[number]
+    wait("the chapter", function() return store:has(path) and not plugin:stubs()[number] end, 60)
+    local spine = store:spine_index_of_fragment(number)
+    local html = store:read(path)
+    -- A place in the chapter, as a phone would give it, is the same words in crengine.
+    local function matches(inner)
+        local first = Cfi.to_point(html, number, inner)
+        if not first then fail("no place for " .. inner) end
+        local shifted = inner:gsub(":(%d+)$", function(n) return ":" .. tonumber(n) + 12 end)
+        local words = doc:getTextFromXPointers(first, Cfi.to_point(html, number, shifted)) or ""
+        local there = mock_get("/test/text_at?cfi=" .. url_encode(Cfi.at(spine, inner))).text or "(nothing)"
+        if plain(there):sub(1, #plain(words)) ~= plain(words) or words == "" then
+            fail(("%s holds %q here and %q at the server"):format(inner, words, there:sub(1, 40)))
+        end
+    end
+    for _, inner in ipairs({ "/2/4/2/2/1:10", "/2/4/2/6/1:5", "/2/4/2/6/2/1:5", "/2/4/2/6/4/1:7", "/2/4/2/6/5:3",
+                             "/2/4/2/4/1:200" }) do
+        matches(inner)
+    end
+    local _, tail = Cfi.to_point(html, number, "/2/4/2/6/5:3")
+    local before_entity = select(2, tail:sub(1, tail:find("&amp;", 1, true) - 1):gsub("[^\128-\191]", ""))
+    matches("/2/4/2/6/5:" .. before_entity + 3)
+
+    local function place(a, b, paragraph)
+        local head = "/2/4/2/" .. (paragraph or 2) .. "/1:"
+        local first = Cfi.to_point(html, number, head .. a)
+        local last = Cfi.to_point(html, number, head .. b)
+        return first, last, doc:getTextFromXPointers(first, last), Cfi.make_range(spine, head .. a, head .. b)
+    end
+
+    -- A highlight made here reaches Yandex, with a place the phone can read.
+    local first, last, words, cfi = place(10, 40)
+    local mine = { page = first, pos0 = first, pos1 = last, text = words, drawer = "lighten", color = "gray" }
+    modified(mine, { nb_highlights_added = 1, index_modified = ui.annotation:addItem(mine) })
+    local sent = wait("the highlight at Yandex", function() return server().notes[1] end, 20)
+    if sent.cfi ~= cfi then fail("the place sent: " .. sent.cfi .. " and not " .. cfi) end
+    if sent.content ~= words or sent.color ~= 2 or sent.permanent_hidden then fail("what was sent of a highlight") end
+    wait("the highlight to be linked", function() return mine.yaknigi == sent.uuid end, 20)
+    settled()
+
+    -- A note written here. A highlight made private on the phone stays private.
+    mock_get("/test/note_edit?hidden=1&uuid=" .. sent.uuid)
+    mine.note = "Заметка с киндла"
+    modified(mine, { nb_highlights_added = -1, nb_notes_added = 1 })
+    wait("the note at Yandex", function() return at_server(sent.uuid).comment == "Заметка с киндла" end, 20)
+    if not at_server(sent.uuid).permanent_hidden then fail("a private highlight turned public") end
+    if at_server(sent.uuid).color ~= 2 then fail("the colour changed") end
+    settled()
+
+    -- A bookmark here.
+    ui.bookmark:onToggleBookmark()
+    local mark = wait("the bookmark at Yandex", function()
+        for _, note in ipairs(server().notes) do
+            if note.kind_here == "bookmark" then return note end
+        end
+    end, 20)
+    if not mark.cfi:find("^/6/" .. (spine + 1) * 2 .. "!,/") then fail("the bookmark's place: " .. mark.cfi) end
+    if mark.content == "" or mark.content:find("^%s") then fail("no words with the bookmark") end
+    wait("the bookmark to be linked", function() return by_uuid(mark.uuid) end, 20)
+    settled()
+
+    -- Written on the phone, and coming here.
+    local _, _, phone_words, phone_cfi = place(50, 90)
+    local function add(kind, what_cfi, content, comment)
+        return mock_get(("/test/note_add?kind=%s&book=%s&cfi=%s&content=%s%s"):format(kind, BOOK,
+            url_encode(what_cfi), url_encode(content or ""), comment and "&comment=" .. url_encode(comment) or ""))
+    end
+    local phone_quote = add("quote", phone_cfi, phone_words, "С телефона")
+    local phone_mark = add("bookmark", select(4, place(1, 1, 4)), "Н")
+    local elsewhere = add("quote", select(4, place(100, 120)), "совсем другие слова")
+    compare()
+    local got = by_uuid(phone_quote.uuid)
+    if not got then fail("the phone's highlight did not come") end
+    if got.note ~= "С телефона" or got.text ~= phone_words or not got.drawer then fail("what came of a highlight") end
+    if doc:getTextFromXPointers(got.pos0, got.pos1) ~= phone_words then fail("the highlight came to other words") end
+    if not by_uuid(phone_mark.uuid) then fail("the phone's bookmark did not come") end
+    if by_uuid(elsewhere.uuid) then fail("a note whose words are not at its place was put there") end
+    compare()
+    if not at_server(elsewhere.uuid) then fail("a note not placed here was deleted at Yandex") end
+    mock_get("/test/note_remove?uuid=" .. elsewhere.uuid)
+    UIManager:forceRePaint()
+    shot("80-notes-from-phone")
+
+    -- Nothing has changed: nothing is written.
+    local writes, made = server().writes, server().made
+    compare()
+    if server().writes ~= writes or server().made ~= made then fail("a comparison with no news wrote to Yandex") end
+
+    -- No list to be had: nothing happens at either end, and it goes through later.
+    mock_get("/test/fail_notes?n=2")
+    local count_here = #here()
+    plugin:syncNotes()
+    settled()
+    if #here() ~= count_here or not plugin.notes_dirty then fail("a failed comparison") end
+    mock_get("/test/fail_notes?n=0")
+
+    -- A comment changed on the phone.
+    mock_get("/test/note_edit?comment=" .. url_encode("Другой текст") .. "&uuid=" .. phone_quote.uuid)
+    compare()
+    if got.note ~= "Другой текст" then fail("the phone's comment did not come: " .. tostring(got.note)) end
+
+    -- Deleted on the phone.
+    mock_get("/test/note_remove?uuid=" .. phone_quote.uuid)
+    mock_get("/test/note_remove?uuid=" .. phone_mark.uuid)
+    compare()
+    if by_uuid(phone_quote.uuid) or by_uuid(phone_mark.uuid) then fail("what the phone deleted stays") end
+
+    -- Deleted here.
+    ui.bookmark:removeItem(by_uuid(sent.uuid))
+    wait("the highlight to go from Yandex", function() return not at_server(sent.uuid) end, 20)
+    settled()
+    ui.bookmark:onToggleBookmark()
+    wait("the bookmark to go from Yandex", function() return not at_server(mark.uuid) end, 20)
+    settled()
+    if #server().notes ~= 0 or #here() ~= 0 then fail("something is left: " .. #server().notes .. " and " .. #here()) end
+
+    -- The book closed at once: goes all the same, and is not sent twice the next time.
+    local a, b, late_words = place(120, 150)
+    local late = { page = a, pos0 = a, pos1 = b, text = late_words, drawer = "lighten", color = "gray", note = "Вдогонку" }
+    modified(late, { nb_notes_added = 1, index_modified = ui.annotation:addItem(late) })
+    ui:onHome()
+    local away = wait("the highlight sent on closing", function() return server().notes[1] end, 20)
+    wait("the library after the book", function() return top().item_table and top() end)
+    open_it()
+    ui = reader()
+    plugin, doc = ui.yaknigi, ui.document
+    wait("the note to know itself", function() return by_uuid(away.uuid) end, 30)
+    settled()
+    if #server().notes ~= 1 or #here() ~= 1 then fail("sent twice: " .. #server().notes .. " and " .. #here()) end
+
+    -- Linked and remembered after reopening: a comment changed on the phone still comes.
+    mock_get("/test/note_edit?comment=" .. url_encode("Снова") .. "&uuid=" .. away.uuid)
+    ui:onHome()
+    wait("the library again", function() return top().item_table and top() end)
+    open_it()
+    ui = reader()
+    plugin, doc = ui.yaknigi, ui.document
+    wait("the comment after reopening", function()
+        local item = by_uuid(away.uuid)
+        return item and item.note == "Снова"
+    end, 30)
+    settled()
+    ui.bookmark:removeItem(by_uuid(away.uuid))
+    wait("the last note to go", function() return #server().notes == 0 end, 20)
+    settled()
+    ui:onHome()
+    tap_widget(wait("the library in the end", function() return top().item_table and top() end).tab_cells.settings)
+    wait("the settings after the notes", is_named("YaknigiSettings"))
+    UIManager:forceRePaint()
+    say("notes go both ways")
 end
 
 local function test_books_and_memory(settings)
@@ -1824,6 +2027,7 @@ local function script()
     shot("55-settings-last-page")
     test_books_and_memory(settings)
     test_lists()
+    test_notes()
     settings = top()
     local f = io.open(OUT .. "/PASS", "w")
     f:write("ok\n")
@@ -1846,7 +2050,7 @@ function Driver:init()
         local ok, err = coroutine.resume(co)
         if not ok then fail(err) end
     end)
-    UIManager:scheduleIn(560, function() fail("the whole test timed out") end)
+    UIManager:scheduleIn(660, function() fail("the whole test timed out") end)
     logger.info("yaknigi test driver armed")
 end
 

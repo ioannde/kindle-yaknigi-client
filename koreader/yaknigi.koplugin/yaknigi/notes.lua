@@ -173,6 +173,8 @@ end
 
 function Notes:remove(item)
     self.ui.bookmark:removeItem(item)
+    -- A bookmark taken away here makes no event of its own.
+    self.ui:handleEvent(require("ui/event"):new("YaknigiNotesChanged"))
     logger.info("yaknigi: note removed")
     self:build()
     UIManager:setDirty(self, "ui")

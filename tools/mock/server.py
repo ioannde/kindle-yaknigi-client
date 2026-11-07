@@ -441,7 +441,62 @@ class Handler(BaseHTTPRequestHandler):
         self.server.added.append(book)
         self.reply_json(200, {"library_card": self.added_card(book)})
 
+    def note_change(self):
+        self.server.notes_changes += 1
+        return self.server.notes_changes
+
+    def create_note(self, book, list_name):
+        form = parse_qs(self.rfile.read(int(self.headers.get("Content-Length", 0))).decode(), keep_blank_values=True)
+        kind = list_name[:-1]
+        # What the phone sends, to the letter: that one name really has no closing bracket.
+        wanted = (["quote[content]", "quote[comment]", "quote[cfi]", "quote[color]", "quote[permanent_hidden",
+                   "quote[progress]"] if kind == "quote"
+                  else ["bookmark[cfi]", "bookmark[content]", "bookmark[progress]"])
+        if self.headers.get("Auth-Token") != "mock-token" or sorted(form) != sorted(wanted):
+            print("bad note:", sorted(form), flush=True)
+            self.reply(422, b"")
+            return
+        self.server.notes_made += 1
+        uuid = f"note{self.server.notes_made}"
+        note = {"state": "exists", "uuid": uuid, "changes_count": self.note_change(),
+                "cfi": form[f"{kind}[cfi]"][0], "content": form[f"{kind}[content]"][0],
+                "progress": int(form[f"{kind}[progress]"][0]), "kind_here": kind}
+        if kind == "quote":
+            note.update(book={"uuid": book}, comment=form["quote[comment]"][0] or None,
+                        color=int(form["quote[color]"][0]),
+                        permanent_hidden=form["quote[permanent_hidden"][0] == "true")
+        else:
+            note.update(book_uuid=book, book_init_uuid=book)
+        self.server.notes[uuid] = note
+        self.reply_json(200, {kind: note})
+
+    def notes_page(self, list_name, since):
+        if self.headers.get("Auth-Token") != "mock-token":
+            self.reply(401, b"")
+            return
+        if self.server.fail_notes > 0:
+            self.server.fail_notes -= 1
+            self.reply(500, b"")
+            return
+        kind = list_name[:-1]
+        entries = sorted((n for n in self.server.notes.values()
+                          if n["kind_here"] == kind and n["changes_count"] > since),
+                         key=lambda n: n["changes_count"])
+        # Short pages, so that all of them have to be asked for.
+        self.reply_json(200, {list_name: entries[:2]})
+
     def do_DELETE(self):
+        note = re.search(r"/(quotes|bookmarks)/([^/]+)$", self.path)
+        if note and self.headers.get("Auth-Token") == "mock-token":
+            found = self.server.notes.get(note.group(2))
+            if not found or found["state"] == "removed" or found["kind_here"] + "s" != note.group(1):
+                self.reply(404, b"")
+                return
+            self.server.notes[note.group(2)] = {"state": "removed", "uuid": note.group(2),
+                                                "changes_count": self.note_change(),
+                                                "kind_here": found["kind_here"]}
+            self.reply(204, b"")
+            return
         match = re.search(r"/profile/library_cards/([^/]+)$", self.path)
         if self.headers.get("Auth-Token") != "mock-token" or not match:
             self.reply(401, b"")
@@ -452,6 +507,23 @@ class Handler(BaseHTTPRequestHandler):
     def do_PUT(self):
         length = int(self.headers.get("Content-Length", 0))
         form = parse_qs(self.rfile.read(length).decode(), keep_blank_values=True)
+        quote = re.search(r"/quotes/([^/]+)$", self.path)
+        if quote and self.headers.get("Auth-Token") == "mock-token":
+            found = self.server.notes.get(quote.group(1))
+            wanted = ["quote[cfi]", "quote[color]", "quote[comment]", "quote[content]", "quote[permanent_hidden"]
+            if not found or found["state"] == "removed":
+                self.reply(404, b"")
+            elif sorted(form) != wanted:
+                print("bad quote:", sorted(form), flush=True)
+                self.reply(422, b"")
+            else:
+                found.update(cfi=form["quote[cfi]"][0], content=form["quote[content]"][0],
+                             comment=form["quote[comment]"][0] or None, color=int(form["quote[color]"][0]),
+                             permanent_hidden=form["quote[permanent_hidden"][0] == "true",
+                             changes_count=self.note_change())
+                self.server.notes_writes += 1
+                self.reply_json(200, {"quote": found})
+            return
         match = re.search(r"/profile/library_cards/([^/]+)$", self.path)
         if self.headers.get("Auth-Token") != "mock-token" or not match:
             self.reply(401, b"")
@@ -514,6 +586,10 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.endswith("/profile/library_cards"):
             self.add_book()
             return
+        note = re.search(r"/books/([^/]+)/(quotes|bookmarks)$", self.path)
+        if note:
+            self.create_note(note.group(1), note.group(2))
+            return
         form = parse_qs(self.rfile.read(int(self.headers.get("Content-Length", 0))).decode())
         verifier = form.get("code_verifier", [""])[0]
         digest = hashlib.sha256(verifier.encode()).digest()
@@ -530,6 +606,42 @@ class Handler(BaseHTTPRequestHandler):
         query = parse_qs(url.query)
         if url.path == "/test/fail_writes":
             self.server.fail_writes = int(query["n"][0])
+            self.reply(200, b"")
+        elif url.path.endswith("/quotes/incremental_sync"):
+            self.notes_page("quotes", int(query["changes_count"][0]))
+        elif url.path.endswith("/bookmarks/incremental_sync"):
+            self.notes_page("bookmarks", int(query["changes_count"][0]))
+        elif url.path == "/test/notes":
+            self.reply_json(200, {"notes": [n for n in self.server.notes.values() if n["state"] == "exists"],
+                                  "made": self.server.notes_made, "writes": self.server.notes_writes})
+        elif url.path == "/test/fail_notes":
+            self.server.fail_notes = int(query["n"][0])
+            self.reply(200, b"")
+        elif url.path == "/test/note_add":
+            # As if written on the phone.
+            self.server.notes_made += 1
+            uuid = f"phone{self.server.notes_made}"
+            note = {"state": "exists", "uuid": uuid, "changes_count": self.note_change(), "cfi": query["cfi"][0],
+                    "content": query.get("content", [""])[0], "progress": 1, "kind_here": query["kind"][0]}
+            if query["kind"][0] == "quote":
+                note.update(book={"uuid": query["book"][0]}, comment=query.get("comment", [None])[0], color=0,
+                            permanent_hidden=False)
+            else:
+                note.update(book_uuid=query["book"][0], book_init_uuid=query["book"][0])
+            self.server.notes[uuid] = note
+            self.reply_json(200, note)
+        elif url.path == "/test/note_edit":
+            note = self.server.notes[query["uuid"][0]]
+            if "comment" in query:
+                note["comment"] = query["comment"][0]
+            if "hidden" in query:
+                note["permanent_hidden"] = query["hidden"][0] == "1"
+            note["changes_count"] = self.note_change()
+            self.reply_json(200, note)
+        elif url.path == "/test/note_remove":
+            uuid = query["uuid"][0]
+            self.server.notes[uuid] = {"state": "removed", "uuid": uuid, "changes_count": self.note_change(),
+                                       "kind_here": self.server.notes[uuid]["kind_here"]}
             self.reply(200, b"")
         elif url.path == "/test/phone_read":
             # Someone reads on the phone: a position this device did not send.
@@ -674,6 +786,11 @@ if __name__ == "__main__":
     server.positions = {}
     server.card_updates = {}
     server.fail_writes = 0
+    server.notes = {}
+    server.notes_changes = 0
+    server.notes_made = 0
+    server.notes_writes = 0
+    server.fail_notes = 0
     server.added = []
     # Of the serial that is in the library, two episodes of three came with it so far.
     server.taken = ["ep1-1", "ep1-2"]

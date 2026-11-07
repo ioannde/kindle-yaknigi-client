@@ -7,6 +7,7 @@ local Http = require("yaknigi/http")
 local Shelves = require("yaknigi/shelves")
 local Catalogue = require("yaknigi/catalogue")
 local Prefs = require("yaknigi/prefs")
+local NoteSync = require("yaknigi/notesync")
 
 local failed, passed = 0, 0
 local function eq(got, want, name)
@@ -262,6 +263,173 @@ eq(Cfi.locate(page, F .. "/div/p[9]/text().1"), "/2/4/2/2/1:0", "no such element
 eq(Cfi.locate(page, "/body/nonsense"), nil, "not in a chapter")
 eq(Cfi.locate(nil, F), nil, "no chapter")
 eq(Cfi.locate("<html><head/><body><img/></body></html>", F .. "/img"), nil, "no text at all")
+
+-- from a CFI to a place in the text
+local NOTE_HTML = '<html><head><title>t</title></head><body><p>раз</p>\n<div><p>два</p><p>три <em>жирно</em> хвост <b>x</b>\nконец</p></div></body></html>'
+local to_point = function(inner) return (Cfi.to_point(NOTE_HTML, 3, inner)) end
+eq(to_point("/2/4/2/1:1"), "/body/DocFragment[3]/body/p[1]/text().1", "text in a first paragraph")
+eq(to_point("/2/4/4/4/1:2"), "/body/DocFragment[3]/body/div[1]/p[2]/text().2", "by number among its kind")
+eq(to_point("/2/4/4/4/3:1"), "/body/DocFragment[3]/body/div[1]/p[2]/text()[2].1", "text after an element")
+eq(to_point("/2/4/4/4/5:3"), "/body/DocFragment[3]/body/div[1]/p[2]/text()[3].3", "text after two")
+eq(to_point("/2/4/4/4/2/1:1"), "/body/DocFragment[3]/body/div[1]/p[2]/em[1]/text().1", "inside an element")
+eq(to_point("/2/4/4/4/9:0"), nil, "no such text")
+eq(to_point("/2/4/40/1:0"), nil, "no such element")
+eq(to_point("nonsense"), nil, "not a place")
+eq(select(2, Cfi.to_point(NOTE_HTML, 3, "/2/4/4/4/3:1")), " хвост ", "and what text it is")
+-- There and back: what Cfi.locate writes, Cfi.to_point reads.
+for _, inner in ipairs({ "/2/4/2/1:2", "/2/4/4/2/1:1", "/2/4/4/4/1:3", "/2/4/4/4/3:2", "/2/4/4/4/5:1", "/2/4/4/4/2/1:4" }) do
+    eq(Cfi.locate(NOTE_HTML, to_point(inner)), inner, "there and back: " .. inner)
+end
+local range_spine, range_start, range_end = Cfi.range("/6/22!,/2/4/6/1:154,/2/4/6/1:157")
+eq(range_spine, 10, "a range's chapter")
+eq(range_start, "/2/4/6/1:154", "a range's start")
+eq(range_end, "/2/4/6/1:157", "a range's end")
+eq(select(3, Cfi.range("/6/22!/2/4,/6/1:1,/8/1:2")), "/2/4/8/1:2", "a range with a common part")
+eq(Cfi.range("/6/22!/2/4/1:0"), nil, "a point is no range")
+eq(Cfi.make_range(10, "/2/4/6/1:154", "/2/4/6/1:157"), "/6/22!,/2/4/6/1:154,/2/4/6/1:157", "a range written")
+
+-- notes: what was agreed, what is here and what is at Yandex
+do
+    local function fake(quotes, bookmarks, broken)
+        local api = { calls = {}, quotes = quotes or {}, bookmarks = bookmarks or {} }
+        function api:notes(list)
+            if broken then return nil, "network" end
+            return self[list]
+        end
+        function api:create_note(kind, _, note)
+            self.calls[#self.calls + 1] = "create " .. kind .. " " .. note.cfi
+            if self.fail then return nil, "http" end
+            return { uuid = "new" .. #self.calls }
+        end
+        function api:update_quote(uuid, q)
+            self.calls[#self.calls + 1] = "update " .. uuid .. " " .. q.comment .. " " .. tostring(q.hidden) .. " " .. tostring(q.color)
+            if self.fail then return nil, "http" end
+            return { uuid = uuid }
+        end
+        function api:delete_note(kind, uuid)
+            self.calls[#self.calls + 1] = "delete " .. kind .. " " .. uuid
+            if self.fail then return nil, "http" end
+            return true
+        end
+        return api
+    end
+    local function quote(uuid, comment, extra)
+        local q = { state = "exists", uuid = uuid, book = { uuid = "b" }, cfi = "c-" .. uuid, content = "t", comment = comment, color = 0 }
+        for k, v in pairs(extra or {}) do q[k] = v end
+        return q
+    end
+    local function local_quote(key, uuid, comment, cfi)
+        return { key = key, uuid = uuid, kind = "quote", comment = comment or "", pos = key, cfi = cfi, content = "t" }
+    end
+    local function agreed(uuid, comment)
+        return { kind = "quote", comment = comment or "", cfi = "c-" .. uuid, pos = "p-" .. uuid }
+    end
+    local function run(api, notes, known) return NoteSync.run(api, "b", notes, known) end
+    local function calls(api) return table.concat(api.calls, "; ") end
+
+    local api = fake()
+    local out = run(api, { local_quote("k", nil, "", "c9") }, {})
+    eq(calls(api), "create quote c9", "a new highlight goes to Yandex")
+    eq(out.link.k, "new1", "and is linked to what it became")
+    eq(out.known.new1.cfi, "c9", "and agreed on")
+
+    api = fake(); api.fail = true
+    out = run(api, { local_quote("k", nil, "", "c9") }, {})
+    eq(out.link.k, nil, "if that failed, nothing is linked")
+    eq(out.known.new1, nil, "and it is tried again next time")
+
+    api = fake()
+    out = run(api, { local_quote("k", nil, "") }, {})
+    eq(calls(api), "", "a note in a chapter not here yet waits")
+
+    api = fake({ quote("q1", "с телефона") })
+    out = run(api, { local_quote("k", nil, "", "c-q1") }, {})
+    eq(calls(api), "", "sent as the book closed: not sent twice")
+    eq(out.link.k, "q1", "the one at Yandex is taken for it")
+    eq(out.set.k.comment, "с телефона", "with its comment")
+
+    api = fake({ quote("q1", "там") })
+    out = run(api, { local_quote("k", nil, "тут", "c-q1") }, {})
+    eq(calls(api), "update q1 тут false 0", "different comments in one place: this device's is sent")
+
+    api = fake({ quote("q1", "старый", { permanent_hidden = true, color = 3 }) })
+    out = run(api, { local_quote("p-q1", "q1", "новый") }, { q1 = agreed("q1", "старый") })
+    eq(calls(api), "update q1 новый true 3", "a comment changed here: privacy and colour stay as they are")
+    eq(out.known.q1.comment, "новый", "agreed on afterwards")
+
+    api = fake({ quote("q1", "старый") }); api.fail = true
+    out = run(api, { local_quote("p-q1", "q1", "новый") }, { q1 = agreed("q1", "старый") })
+    eq(out.known.q1.comment, "старый", "a change not sent is still seen as a change")
+
+    api = fake({ quote("q1", "новый") })
+    out = run(api, { local_quote("p-q1", "q1", "старый") }, { q1 = agreed("q1", "старый") })
+    eq(calls(api), "", "a comment changed on the phone: nothing to send")
+    eq(out.set["p-q1"].comment, "новый", "it comes here")
+    eq(out.set["p-q1"].was, "старый", "if nobody has written since")
+
+    api = fake({ quote("q1", "телефон") })
+    out = run(api, { local_quote("p-q1", "q1", "киндл") }, { q1 = agreed("q1", "старый") })
+    eq(calls(api), "update q1 киндл false 0", "changed on both sides: this device's stays")
+
+    api = fake({ quote("q1", "одно") })
+    out = run(api, { local_quote("p-q1", "q1", "одно") }, { q1 = agreed("q1", "старый") })
+    eq(calls(api), "", "changed to the same on both sides: nothing to send")
+    eq(out.known.q1.comment, "одно", "and agreed on")
+    eq(next(out.set), nil, "nothing to change here")
+
+    api = fake({ quote("q1", "") })
+    out = run(api, { local_quote("p-q1", "q1", "", "c-moved") }, { q1 = agreed("q1") })
+    eq(calls(api), "update q1  false 0", "a highlight moved here goes to Yandex")
+    eq(out.known.q1.cfi, "c-moved", "with its new place")
+
+    api = fake({ { state = "removed", uuid = "q1" } })
+    out = run(api, { local_quote("p-q1", "q1", "киндл") }, { q1 = agreed("q1") })
+    eq(out.drop[1], "p-q1", "deleted on the phone: goes from here")
+    eq(out.known.q1, nil, "and is forgotten")
+
+    api = fake({})
+    out = run(api, { local_quote("p-q1", "q1", "") }, { q1 = agreed("q1") })
+    eq(out.drop[1], nil, "not in the list but not said to be deleted: it stays")
+    eq(out.known.q1.cfi, "c-q1", "and is remembered")
+
+    api = fake({ quote("q1", ""), quote("q2", "") })
+    out = run(api, { local_quote("p-q2", "q2", "") }, { q1 = agreed("q1"), q2 = agreed("q2") })
+    eq(calls(api), "delete quote q1", "deleted here: goes from Yandex")
+    eq(out.known.q1, nil, "and is forgotten")
+    eq(#out.add, 0, "and does not come back")
+
+    api = fake({ quote("q1", "") }); api.fail = true
+    out = run(api, { }, { q1 = agreed("q1") })
+    eq(out.known.q1.cfi, "c-q1", "a deletion that failed is tried again")
+
+    api = fake({ quote("q1", "") })
+    out = run(api, {}, { q1 = agreed("q1") })
+    eq(calls(api), "delete quote q1", "the only note deleted here")
+
+    api = fake({ quote("q1", ""), quote("q2", ""), quote("q3", "") })
+    out = run(api, {}, { q1 = agreed("q1"), q2 = agreed("q2"), q3 = agreed("q3") })
+    eq(calls(api), "", "no notes here and many agreed on: lost, nothing is deleted at Yandex")
+    eq(#out.add, 3, "they come back")
+
+    api = fake({}, {}, true)
+    local none, why = run(api, {}, { q1 = agreed("q1") })
+    eq(none, nil, "no list: nothing is decided")
+    eq(why, "network", "and it says why")
+
+    api = fake({ quote("q1", "с телефона"), quote("other", "", { book = { uuid = "x" } }) },
+        { { state = "exists", uuid = "m1", book_uuid = "b", cfi = "c-m1", content = "Н" } })
+    out = run(api, {}, {})
+    eq(#out.add, 2, "what is new at Yandex comes here, of this book only")
+
+    api = fake({}, { { state = "exists", uuid = "m1", book_uuid = "b", cfi = "c-m1" } })
+    out = run(api, { { key = "pg", kind = "bookmark", comment = "", pos = "pg", cfi = "c-m1" } }, {})
+    eq(out.link.pg, "m1", "a bookmark on the same place is the same bookmark")
+
+    api = fake({ { state = "exists", uuid = "q1", book = { uuid = "b" }, cfi = "c", content = "t" } })
+    out = run(api, {}, {})
+    eq(out.add[1].comment, "", "no comment at all is an empty one")
+    eq(out.add[1].hidden, false, "public unless said otherwise")
+end
 
 -- what search finds besides books, and the lists
 eq(Catalogue.count(1, "книга", "книги", "книг"), "1 книга", "one")
