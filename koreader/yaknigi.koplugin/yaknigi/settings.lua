@@ -97,13 +97,16 @@ function Settings:entries()
     end, "Как часто экран полностью перерисовывается со вспышкой. Реже — меньше мигает, но заметнее следы прошлых страниц.")
 
     heading("Сон")
-    local sleep_note = "Обложка книги, открытой последней"
+    local sleep_note = "Обложка — книги, открытой последней. Лица русской литературы — каждый раз новый портрет. "
+        .. "Своя картинка — последний файл JPG или PNG из папки " .. Prefs.OWN_SLEEP_FOLDER
+        .. " в памяти Kindle, а пока её нет, обложка книги."
     if Device:isKindle() and not Device:supportsScreensaver() then
         sleep_note = "На Kindle с рекламой заставку показывает сама система"
     end
-    choice("sleep_screen", "Заставка", { "Обложка книги", "Текущая страница" },
-        index_of(Prefs.SLEEP_SCREENS, Prefs.sleep_screen()), function(i)
-            G_reader_settings:saveSetting("yaknigi_sleep_screen", Prefs.SLEEP_SCREENS[i])
+    local sleep_keys, sleep_labels = Prefs.sleep_screen_choices()
+    choice("sleep_screen", "Заставка", sleep_labels,
+        index_of(sleep_keys, Prefs.sleep_screen()) or 1, function(i)
+            G_reader_settings:saveSetting("yaknigi_sleep_screen", sleep_keys[i])
             Prefs.apply_sleep_screen()
         end, sleep_note)
     local minutes = {}

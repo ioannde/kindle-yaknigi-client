@@ -102,6 +102,12 @@ if APP_MODE then
 
     -- Nothing of the picture is to stay on the page: a flash to white, then what was underneath.
     local Screensaver = require("ui/screensaver")
+    -- A picture of one's own may have been copied since the app started.
+    local setup = Screensaver.setup
+    Screensaver.setup = function(...)
+        Prefs.apply_sleep_screen()
+        return setup(...)
+    end
     local close_widget = Screensaver.close_widget
     Screensaver.close_widget = function(this)
         local shown = this.screensaver_widget ~= nil

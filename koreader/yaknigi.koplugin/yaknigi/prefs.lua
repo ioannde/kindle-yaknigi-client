@@ -4,7 +4,15 @@ local Prefs = {}
 
 Prefs.PROGRESS = { "percent", "page", "page_of", "chapter", "book" }
 Prefs.SLEEP_MINUTES = { 5, 10, 15, 30, 60 }
-Prefs.SLEEP_SCREENS = { "cover", "page" }
+Prefs.SLEEP_SCREENS = {
+    { "cover", "Обложка книги" },
+    { "faces", "Лица русской литературы" },
+    { "own", "Своя картинка" },
+    { "page", "Текущая страница" },
+}
+-- The collection comes with the plugin; a picture of one's own is copied over USB.
+Prefs.FACES_DIR = (debug.getinfo(1, "S").source:match("^@(.*)/[^/]*$") or ".") .. "/faces"
+Prefs.OWN_SLEEP_FOLDER = "yaknigi-screensaver"
 -- How often the screen is flashed clean, in pages. -1 and 0 are KOReader's own values.
 Prefs.REFRESH = {
     { 1, "Каждую страницу" },
@@ -121,6 +129,39 @@ function Prefs.sleep_minutes()
     return math.floor((G_reader_settings:readSetting("auto_suspend_timeout_seconds") or 900) / 60 + 0.5)
 end
 
+--- The pictures of a folder as { path, time } lists, leaving out macOS's "._" files.
+local function pictures_in(dir)
+    local lfs = require("libs/libkoreader-lfs")
+    local found = {}
+    if lfs.attributes(dir, "mode") ~= "directory" then return found end
+    for name in lfs.dir(dir) do
+        local kind = name:lower():match("%.(%a+)$")
+        if name:sub(1, 2) ~= "._" and (kind == "jpg" or kind == "jpeg" or kind == "png") then
+            local path = dir .. "/" .. name
+            found[#found + 1] = { path = path, time = lfs.attributes(path, "modification") or 0 }
+        end
+    end
+    return found
+end
+
+--- Where a picture of one's own is put: the root of the memory seen over USB.
+function Prefs.own_sleep_dir()
+    if require("device"):isKindle() then return "/mnt/us/" .. Prefs.OWN_SLEEP_FOLDER end
+    return require("datastorage"):getDataDir() .. "/" .. Prefs.OWN_SLEEP_FOLDER
+end
+
+--- The ways of sleeping open to choose: keys and labels. The collection only if it is there.
+function Prefs.sleep_screen_choices()
+    local keys, labels = {}, {}
+    local has_faces = #pictures_in(Prefs.FACES_DIR) > 0
+    for _, item in ipairs(Prefs.SLEEP_SCREENS) do
+        if item[1] ~= "faces" or has_faces then
+            keys[#keys + 1], labels[#labels + 1] = item[1], item[2]
+        end
+    end
+    return keys, labels
+end
+
 --- Applies the sleep screen. cover: the picture of the book just opened, if there is one.
 -- KOReader's own screensaver does the showing; these are its settings.
 function Prefs.apply_sleep_screen(cover)
@@ -129,7 +170,25 @@ function Prefs.apply_sleep_screen(cover)
     cover = s:readSetting("yaknigi_last_cover")
     local file = cover and io.open(cover, "rb")
     if file then file:close() end
-    if Prefs.sleep_screen() == "cover" and file then
+    local kind = Prefs.sleep_screen()
+    local fills = false
+    local own
+    if kind == "own" then
+        local dir = Prefs.own_sleep_dir()
+        require("libs/libkoreader-lfs").mkdir(dir) -- to be found over USB; fails if it is there
+        for _, picture in ipairs(pictures_in(dir)) do
+            if not own or picture.time > own.time then own = picture end
+        end
+    end
+    if kind == "faces" and #pictures_in(Prefs.FACES_DIR) > 0 then
+        s:saveSetting("screensaver_type", "random_image") -- KOReader picks anew at each sleep
+        s:saveSetting("screensaver_dir", Prefs.FACES_DIR)
+        fills = true
+    elseif own then
+        s:saveSetting("screensaver_type", "document_cover")
+        s:saveSetting("screensaver_document_cover", own.path)
+        fills = true
+    elseif kind ~= "page" and file then
         s:saveSetting("screensaver_type", "document_cover")
         s:saveSetting("screensaver_document_cover", cover)
     else
@@ -138,7 +197,9 @@ function Prefs.apply_sleep_screen(cover)
     s:saveSetting("screensaver_show_message", false)
     -- The picture whole, on white: KOReader then flashes the screen white before showing it.
     s:saveSetting("screensaver_img_background", "white")
-    s:saveSetting("screensaver_stretch_images", false)
+    -- Pictures made for a screen fill it, though screens differ a little; a book's cover stays whole.
+    s:saveSetting("screensaver_stretch_images", fills)
+    s:saveSetting("screensaver_stretch_limit_percentage", 8)
     s:saveSetting("screensaver_delay", "disable") -- waking up takes it away at once
     s:flush()
 end
