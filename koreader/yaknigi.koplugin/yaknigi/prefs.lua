@@ -108,6 +108,11 @@ function Prefs.reading_clock()
     return G_reader_settings:nilOrTrue("yaknigi_reading_clock")
 end
 
+--- Whether a new highlight starts as private, in any book. Changing one highlight is separate.
+function Prefs.private_notes()
+    return G_reader_settings:nilOrTrue("yaknigi_private_notes")
+end
+
 function Prefs.sleep_screen()
     return G_reader_settings:readSetting("yaknigi_sleep_screen") or "cover"
 end

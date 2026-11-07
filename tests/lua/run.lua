@@ -298,6 +298,10 @@ eq(range_start, "/2/4/6/1:154", "a range's start")
 eq(range_end, "/2/4/6/1:157", "a range's end")
 eq(select(3, Cfi.range("/6/22!/2/4,/6/1:1,/8/1:2")), "/2/4/8/1:2", "a range with a common part")
 eq(Cfi.range("/6/22!/2/4/1:0"), nil, "a point is no range")
+eq(Cfi.locate("<html><head></head><body><p>Текст</p></body></html>", "/body/DocFragment[3].0"), "/2/4/2/1:0",
+   "a pointer at the chapter itself gives its first text")
+eq(Cfi.locate("<html><head></head><body><p>Текст</p></body></html>", "/body/DocFragment[3]/body.0"), "/2/4/2/1:0",
+   "as does one at its body")
 eq(Cfi.make_range(10, "/2/4/6/1:154", "/2/4/6/1:157"), "/6/22!,/2/4/6/1:154,/2/4/6/1:157", "a range written")
 
 -- notes: what was agreed, what is here and what is at Yandex
@@ -310,6 +314,7 @@ do
         end
         function api:create_note(kind, _, note)
             self.calls[#self.calls + 1] = "create " .. kind .. " " .. note.cfi
+            self.created = note
             if self.fail then return nil, "http" end
             return { uuid = "new" .. #self.calls }
         end
@@ -338,6 +343,65 @@ do
     end
     local function run(api, notes, known) return NoteSync.run(api, "b", notes, known) end
     local function calls(api) return table.concat(api.calls, "; ") end
+
+    -- privacy: the one who changed it is right, and nothing else is touched
+    do
+        local function hidden_quote(key, uuid, hidden)
+            local note = local_quote(key, uuid)
+            note.hidden = hidden
+            return note
+        end
+        local function hidden_base(uuid, hidden)
+            local base = agreed(uuid)
+            base.hidden = hidden
+            return base
+        end
+        local api = fake()
+        local new = hidden_quote("k", nil, true)
+        new.cfi = "c9"
+        local out = run(api, { new }, {})
+        eq(api.created.hidden, true, "a new highlight goes as it is here")
+        eq(out.known.new1.hidden, true, "and that is agreed on")
+
+        api = fake({ quote("q1", "", { permanent_hidden = true }) })
+        out = run(api, { hidden_quote("k", "q1", false) }, { q1 = hidden_base("q1", true) })
+        eq(calls(api):find("update q1  false", 1, true) ~= nil, true, "changed here: goes to Yandex")
+        eq(out.known.q1.hidden, false, "and is agreed on")
+        eq(next(out.hide), nil, "nothing to change here")
+
+        api = fake({ quote("q1", "", { permanent_hidden = true }) })
+        out = run(api, { hidden_quote("k", "q1", false) }, { q1 = hidden_base("q1", false) })
+        eq(calls(api), "", "changed at Yandex: nothing is written")
+        eq(out.hide.k.hidden, true, "it comes here")
+        eq(out.hide.k.was, false, "unless changed here since")
+        eq(out.known.q1.hidden, true, "and is agreed on")
+
+        api = fake({ quote("q1", "", { permanent_hidden = true }) })
+        out = run(api, { hidden_quote("k", "q1", nil) }, { q1 = agreed("q1") })
+        eq(calls(api), "", "not known here yet: nothing is written")
+        eq(out.hide.k.hidden, true, "Yandex's is taken")
+
+        api = fake({ quote("q1", "", { permanent_hidden = true }) })
+        out = run(api, { hidden_quote("k", "q1", true) }, { q1 = hidden_base("q1", true) })
+        eq(calls(api), "", "the same on both sides: nothing is written")
+        eq(next(out.hide), nil, "nor changed here")
+
+        api = fake({ quote("q1", "новый", { permanent_hidden = true }) })
+        out = run(api, { hidden_quote("k", "q1", false) }, { q1 = hidden_base("q1", false) })
+        eq(out.hide.k.hidden, true, "a comment coming does not stop the privacy")
+
+        api = fake({ quote("q1", "", { permanent_hidden = false }) })
+        api.fail = true
+        out = run(api, { hidden_quote("k", "q1", true) }, { q1 = hidden_base("q1", false) })
+        eq(out.known.q1.hidden, false, "not written: asked again next time")
+
+        api = fake({ quote("q1", "", { permanent_hidden = true, cfi = "c9" }) })
+        new = hidden_quote("k", nil, false)
+        new.cfi = "c9"
+        out = run(api, { new }, {})
+        eq(out.link.k, "q1", "the same place is the same highlight")
+        eq(out.hide.k.hidden, true, "and Yandex's privacy is taken")
+    end
 
     local api = fake()
     local out = run(api, { local_quote("k", nil, "", "c9") }, {})

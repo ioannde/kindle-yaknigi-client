@@ -442,7 +442,7 @@ function Api:create_note(kind, book, note)
         { "quote[comment]", note.comment or "" },
         { "quote[cfi]", note.cfi },
         { "quote[color]", 2 },
-        { "quote[permanent_hidden", "false" },
+        { "quote[permanent_hidden", note.hidden and "true" or "false" },
         { "quote[progress]", note.progress or 0 },
     }, kind)
 end

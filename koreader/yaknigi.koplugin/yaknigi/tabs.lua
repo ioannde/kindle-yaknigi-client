@@ -13,10 +13,10 @@ local Tabs = {}
 local HERE = debug.getinfo(1, "S").source:match("^@(.*)/[^/]*$") or "."
 
 local ALL = {
-    { id = "library", caption = "Библиотека", file = HERE .. "/icons/tab.library.svg" },
-    { id = "feed", caption = "Яндекс Книги", file = HERE .. "/icons/yandex-books.svg" },
-    { id = "search", caption = "Поиск", file = HERE .. "/icons/tab.search.svg" },
-    { id = "settings", caption = "Настройки", file = HERE .. "/icons/tab.settings.svg" },
+    { id = "library", caption = "Библиотека", icon = "tab.library" },
+    { id = "feed", caption = "Яндекс Книги", icon = "yandex-books" },
+    { id = "search", caption = "Поиск", icon = "tab.search" },
+    { id = "settings", caption = "Настройки", icon = "tab.settings" },
 }
 
 function Tabs.height()
@@ -33,8 +33,8 @@ function Tabs.bar(width, selected, on_select)
         local on = tab.id == selected
         local content = VerticalGroup:new{ align = "center",
             IconWidget:new{
-                icon = tab.icon,
-                file = tab.file,
+                -- The .idle drawings are in the colour of the idle captions, COLOR_DARK_GRAY.
+                file = HERE .. "/icons/" .. tab.icon .. (on and "" or ".idle") .. ".svg",
                 width = side,
                 height = side,
             },

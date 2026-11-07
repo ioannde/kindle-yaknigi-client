@@ -96,6 +96,11 @@ function Settings:entries()
         Prefs.set_refresh_rate(rates[i])
     end, "Как часто экран полностью перерисовывается со вспышкой. Реже — меньше мигает, но заметнее следы прошлых страниц.")
 
+    heading("Приватность")
+    switch("private_notes", "Новые выделения и заметки приватные", Prefs.private_notes(), function(on)
+        G_reader_settings:saveSetting("yaknigi_private_notes", on)
+    end)
+
     heading("Сон")
     local sleep_note = "Обложка книги, открытой последней"
     if Device:isKindle() and not Device:supportsScreensaver() then

@@ -1157,18 +1157,36 @@ local function test_notes()
     modified(mine, { nb_highlights_added = 1, index_modified = ui.annotation:addItem(mine) })
     local sent = wait("the highlight at Yandex", function() return server().notes[1] end, 20)
     if sent.cfi ~= cfi then fail("the place sent: " .. sent.cfi .. " and not " .. cfi) end
-    if sent.content ~= words or sent.color ~= 2 or sent.permanent_hidden then fail("what was sent of a highlight") end
+    if sent.content ~= words or sent.color ~= 2 then fail("what was sent of a highlight") end
+    if not sent.permanent_hidden then fail("a new highlight is not private by default") end
     wait("the highlight to be linked", function() return mine.yaknigi == sent.uuid end, 20)
     settled()
+    if mine.yaknigi_hidden ~= true then fail("the highlight does not know it is private") end
 
-    -- A note written here. A highlight made private on the phone stays private.
-    mock_get("/test/note_edit?hidden=1&uuid=" .. sent.uuid)
+    -- A note written here. A highlight made public on the phone stays public, and this device hears.
+    mock_get("/test/note_edit?hidden=0&uuid=" .. sent.uuid)
     mine.note = "Заметка с киндла"
     modified(mine, { nb_highlights_added = -1, nb_notes_added = 1 })
     wait("the note at Yandex", function() return at_server(sent.uuid).comment == "Заметка с киндла" end, 20)
-    if not at_server(sent.uuid).permanent_hidden then fail("a private highlight turned public") end
+    if at_server(sent.uuid).permanent_hidden then fail("a public highlight turned private") end
     if at_server(sent.uuid).color ~= 2 then fail("the colour changed") end
     settled()
+    if mine.yaknigi_hidden ~= false then fail("the phone's privacy did not come") end
+
+    -- A tap on it: its privacy changes, there too.
+    local function index_of(item)
+        for i, one in ipairs(ui.annotation.annotations) do
+            if one == item then return i end
+        end
+    end
+    ui.highlight:showChooseHighlightDialog({ index_of(mine) })
+    wait("the highlight's dialog", is_named("yaknigi_highlight"))
+    UIManager:forceRePaint()
+    shot("81-highlight-dialog")
+    tap_widget(top().buttontable:getButtonById("private"))
+    wait("the privacy at Yandex", function() return at_server(sent.uuid).permanent_hidden end, 20)
+    settled()
+    if mine.yaknigi_hidden ~= true then fail("the tap did not change the highlight") end
 
     -- A bookmark here.
     ui.bookmark:onToggleBookmark()
@@ -1191,6 +1209,12 @@ local function test_notes()
     local phone_quote = add("quote", phone_cfi, phone_words, "С телефона")
     local phone_mark = add("bookmark", select(4, place(1, 1, 4)), "Н")
     local elsewhere = add("quote", select(4, place(100, 120)), "совсем другие слова")
+    -- A private one, over several paragraphs, as the phone's was.
+    local across_first = Cfi.to_point(html, number, "/2/4/2/4/1:5")
+    local across_last = Cfi.to_point(html, number, "/2/4/2/10/1:20")
+    local across = add("quote", Cfi.make_range(spine, "/2/4/2/4/1:5", "/2/4/2/10/1:20"),
+        doc:getTextFromXPointers(across_first, across_last))
+    mock_get("/test/note_edit?hidden=1&uuid=" .. across.uuid)
     compare()
     local got = by_uuid(phone_quote.uuid)
     if not got then fail("the phone's highlight did not come") end
@@ -1198,11 +1222,42 @@ local function test_notes()
     if doc:getTextFromXPointers(got.pos0, got.pos1) ~= phone_words then fail("the highlight came to other words") end
     if not by_uuid(phone_mark.uuid) then fail("the phone's bookmark did not come") end
     if by_uuid(elsewhere.uuid) then fail("a note whose words are not at its place was put there") end
+    if got.yaknigi_hidden ~= false then fail("a public highlight from the phone came as private") end
+    local private_here = by_uuid(across.uuid)
+    if not private_here then fail("the private highlight over several paragraphs did not come") end
+    if private_here.yaknigi_hidden ~= true then fail("it came as public") end
+    if not at_server(across.uuid).permanent_hidden then fail("it was made public at Yandex") end
     compare()
     if not at_server(elsewhere.uuid) then fail("a note not placed here was deleted at Yandex") end
     mock_get("/test/note_remove?uuid=" .. elsewhere.uuid)
     UIManager:forceRePaint()
     shot("80-notes-from-phone")
+
+    -- The lock in the list changes that highlight alone.
+    UIManager:show(require("yaknigi/notes"):new{ ui = ui, shell = plugin.shell })
+    local list = wait("the list of notes", is_named("YaknigiNotes"))
+    settled()
+    UIManager:forceRePaint()
+    shot("82-notes-privacy")
+    local first_highlight
+    for _, item in ipairs(ui.annotation.annotations) do
+        if item.drawer then first_highlight = item; break end
+    end
+    local was, others = first_highlight.yaknigi_hidden, {}
+    for _, note in ipairs(server().notes) do others[note.uuid] = note.permanent_hidden end
+    tap_widget(list.locks[1])
+    wait("the lock's change at Yandex", function()
+        return at_server(first_highlight.yaknigi).permanent_hidden == not was
+    end, 20)
+    settled()
+    if first_highlight.yaknigi_hidden ~= not was then fail("the lock did not change the highlight") end
+    for _, note in ipairs(server().notes) do
+        if note.uuid ~= first_highlight.yaknigi and note.permanent_hidden ~= others[note.uuid] then
+            fail("the lock changed another note")
+        end
+    end
+    list:close()
+    wait("the book after the list", function() return top().name == "ReaderUI" end)
 
     -- Nothing has changed: nothing is written.
     local writes, made = server().writes, server().made
@@ -1225,6 +1280,7 @@ local function test_notes()
     -- Deleted on the phone.
     mock_get("/test/note_remove?uuid=" .. phone_quote.uuid)
     mock_get("/test/note_remove?uuid=" .. phone_mark.uuid)
+    mock_get("/test/note_remove?uuid=" .. across.uuid)
     compare()
     if by_uuid(phone_quote.uuid) or by_uuid(phone_mark.uuid) then fail("what the phone deleted stays") end
 
@@ -1240,9 +1296,13 @@ local function test_notes()
     -- The book closed at once: goes all the same, and is not sent twice the next time.
     local a, b, late_words = place(120, 150)
     local late = { page = a, pos0 = a, pos1 = b, text = late_words, drawer = "lighten", color = "gray", note = "Вдогонку" }
+    -- With the setting off, a new highlight is public.
+    G_reader_settings:saveSetting("yaknigi_private_notes", false)
     modified(late, { nb_notes_added = 1, index_modified = ui.annotation:addItem(late) })
     ui:onHome()
     local away = wait("the highlight sent on closing", function() return server().notes[1] end, 20)
+    if away.permanent_hidden then fail("with the setting off a new highlight went as private") end
+    G_reader_settings:delSetting("yaknigi_private_notes")
     wait("the library after the book", function() return top().item_table and top() end)
     open_it()
     ui = reader()

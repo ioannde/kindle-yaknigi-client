@@ -222,8 +222,10 @@ end
 -- their indexes among same-named siblings, the text node and the offset in it. The last
 -- two are nil when the pointer is at an element.
 local function parse_xpointer(xp)
-    local rest = type(xp) == "string" and xp:match("^/body/DocFragment[^/]*/body(.*)$")
+    -- At the very start of a chapter crengine may stop at /body/DocFragment[3].0.
+    local rest = type(xp) == "string" and xp:match("^/body/DocFragment[^/]*(.*)$")
     if not rest then return nil end
+    rest = rest:gsub("^/body", "")
     local target, text_index, offset = {}, nil, nil
     for seg in rest:gmatch("/([^/]+)") do
         if seg:match("^text%(%)") then

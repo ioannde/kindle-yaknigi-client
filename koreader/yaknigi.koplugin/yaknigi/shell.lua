@@ -154,6 +154,10 @@ function Shell:install()
     for _, id in ipairs(HIGHLIGHT_BUTTONS_REMOVED) do
         ui.highlight:removeFromHighlightDialog(id)
     end
+    -- A tap on a highlight: its privacy comes first, and all of KOReader's is a tap further.
+    ui.highlight.showHighlightNoteOrDialog = function(_, index)
+        require("yaknigi/notes").showHighlightDialog(ui, index)
+    end
     self:watchLinks()
     self:registerZone()
     -- Ours wherever it is asked for. KOReader's has its own menu, which is not needed here.

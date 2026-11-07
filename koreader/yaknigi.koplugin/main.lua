@@ -63,6 +63,8 @@ local COVER_POLL_SECONDS = 1
 local NOTES_AFTER_OPENING_SECONDS = 2
 local NOTES_AFTER_CHANGE_SECONDS = 3
 local NOTES_AFTER_WAKING_SECONDS = 10
+-- For a book left open: what was made on the phone meanwhile comes as the pages are turned.
+local NOTES_WHILE_READING_SECONDS = 180
 -- Wi-Fi takes a while to come back after sleep. Pauses between tries to reach Yandex.
 local WAKE_RETRY_SECONDS = { 5, 15, 30 }
 -- Which screen of the library was open, for coming back to it from a book.
@@ -1640,6 +1642,12 @@ function Yaknigi:poll()
 end
 
 function Yaknigi:onPageUpdate()
+    if self.shell and self.notes_compared_at and not self.notes_soon
+        and os.time() - self.notes_compared_at >= NOTES_WHILE_READING_SECONDS then
+        self.notes_compared_at = os.time()
+        -- After the page is on the screen.
+        UIManager:scheduleIn(1, function() self:syncNotes() end)
+    end
     local store = self.store
     local state = store and workers[store.id]
     if not state or not next(state.stubs or {}) then return end
@@ -1701,6 +1709,7 @@ function Yaknigi:notesContext()
         stubs = self:stubs(),
         position = function(xp) return self:positionOf(xp) end,
         progress = math.max(0, math.min(100, math.floor(self.shell:progress() * 100 + 0.5))),
+        default_hidden = Prefs.private_notes(),
     }
 end
 
@@ -1721,6 +1730,7 @@ function Yaknigi:syncNotes(closing)
     local book = store.id
     os.remove(path)
     self.notes_dirty = false
+    self.notes_compared_at = os.time()
     self.notes_pid = ffiutil.runInSubProcess(function()
         local api = Api.new(token)
         local ok, result, kind = pcall(NoteSync.run, api, book, notes, known)
@@ -1764,6 +1774,7 @@ end
 function Yaknigi:applyNotes(result)
     -- These changes came from Yandex, and are not news to send back to it.
     self.notes_applying = true
+    logger.info("yaknigi: notes compared, to add:", #(result.add or {}), "to drop:", #(result.drop or {}))
     local ok, changed = pcall(NotesLocal.apply, self:notesContext(), result)
     self.notes_applying = false
     if not ok then
@@ -1771,6 +1782,7 @@ function Yaknigi:applyNotes(result)
     elseif changed then
         UIManager:setDirty(self.ui, "ui")
         self.ui:saveSettings()
+        if self.notes_screen then self.notes_screen:refresh() end
     end
 end
 

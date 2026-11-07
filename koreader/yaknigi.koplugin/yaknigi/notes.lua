@@ -1,5 +1,6 @@
 -- Bookmarks and highlights of the open book: a plain list with a clear way back.
 local Blitbuffer = require("ffi/blitbuffer")
+local ButtonDialog = require("ui/widget/buttondialog")
 local CenterContainer = require("ui/widget/container/centercontainer")
 local ConfirmBox = require("ui/widget/confirmbox")
 local Device = require("device")
@@ -17,6 +18,10 @@ local logger = require("logger")
 local Screen = Device.screen
 
 local Kit = require("yaknigi/kit")
+local NotesLocal = require("yaknigi/notes_local")
+
+local HERE = debug.getinfo(1, "S").source:match("^@(.*)/[^/]*$") or "."
+local NOTE_SHOWN_LETTERS = 300
 
 local Notes = InputContainer:extend{
     name = "YaknigiNotes",
@@ -37,7 +42,7 @@ end
 
 function Notes:row(item, width, height)
     local side = Kit.px(56)
-    local text_w = width - side - Kit.px(8)
+    local text_w = width - 2 * side - Kit.px(8)
     local grey = Blitbuffer.COLOR_DARK_GRAY
     local face = Kit.face(17)
     local lines = VerticalGroup:new{ align = "left",
@@ -66,9 +71,18 @@ function Notes:row(item, width, height)
             Kit.fixed(lines, text_w),
         },
     }
+    -- A closed lock: only this reader sees it. Bookmarks are nobody's to see.
+    local lock
+    if item.drawer then
+        local private = NotesLocal.is_private(item)
+        lock = Kit.icon_button("lock", side, function() self:togglePrivate(item) end, {
+            file = HERE .. "/icons/" .. (private and "lock" or "lock.open") .. ".svg",
+        })
+    end
     local remove = Kit.icon_button("close", side, function() self:askRemove(item) end)
-    return HorizontalGroup:new{ align = "center", tap, HorizontalSpan:new{ width = Kit.px(8) }, remove },
-        tap, remove
+    return HorizontalGroup:new{ align = "center", tap, HorizontalSpan:new{ width = Kit.px(8) },
+        lock or HorizontalSpan:new{ width = side }, remove },
+        tap, remove, lock
 end
 
 function Notes:build()
@@ -93,7 +107,7 @@ function Notes:build()
     }
 
     local body = VerticalGroup:new{ align = "left" }
-    self.opens, self.removes = {}, {}
+    self.opens, self.removes, self.locks = {}, {}, {}
     if #items == 0 then
         body[1] = CenterContainer:new{
             dimen = Geom:new{ w = inner, h = H - header_h - footer_h - Kit.px(2) },
@@ -102,9 +116,10 @@ function Notes:build()
     end
     local first = (self.page - 1) * per_page + 1
     for i = first, math.min(#items, first + per_page - 1) do
-        local row, tap, remove = self:row(items[i], inner, row_h)
+        local row, tap, remove, lock = self:row(items[i], inner, row_h)
         self.opens[#self.opens + 1] = tap
         self.removes[#self.removes + 1] = remove
+        if lock then self.locks[#self.locks + 1] = lock end
         body[#body + 1] = row
         body[#body + 1] = Kit.line(inner)
     end
@@ -146,6 +161,27 @@ end
 function Notes:onShow()
     logger.info("yaknigi: notes open")
     UIManager:setDirty(self, "ui")
+    -- Whoever looks here wants what was made on the phone a minute ago.
+    self.ui.yaknigi.notes_screen = self
+    self.ui.yaknigi:syncNotes()
+end
+
+function Notes:onCloseWidget()
+    if self.ui.yaknigi and self.ui.yaknigi.notes_screen == self then self.ui.yaknigi.notes_screen = nil end
+end
+
+--- The list has changed under it, by a comparison with Yandex.
+function Notes:refresh()
+    self.ui.annotation:updatePageNumbers(true)
+    self:build()
+    UIManager:setDirty(self, "ui")
+end
+
+function Notes:togglePrivate(item)
+    NotesLocal.set_private(self.ui, item, not NotesLocal.is_private(item))
+    logger.info("yaknigi: a highlight's privacy changed")
+    self:build()
+    UIManager:setDirty(self, "ui")
 end
 
 function Notes:close()
@@ -178,6 +214,47 @@ function Notes:remove(item)
     logger.info("yaknigi: note removed")
     self:build()
     UIManager:setDirty(self, "ui")
+end
+
+--- What a tap on a highlight in the text brings up. KOReader's own panel is behind "Ещё".
+function Notes.showHighlightDialog(ui, index)
+    local item = ui.annotation.annotations[index]
+    local private = NotesLocal.is_private(item)
+    local title = private and "Приватная" or "Публичная"
+    if item.note and item.note ~= "" then
+        local shown = NotesLocal.letters(item.note, NOTE_SHOWN_LETTERS)
+        title = shown .. (#shown < #item.note and "…" or "") .. "\n\n" .. title
+    end
+    local dialog
+    local function acting(work)
+        return function()
+            UIManager:close(dialog)
+            work()
+        end
+    end
+    dialog = ButtonDialog:new{
+        name = "yaknigi_highlight",
+        title = title,
+        title_align = "left",
+        buttons = {
+            { {
+                id = "private",
+                text = private and "Сделать публичной" or "Сделать приватной",
+                callback = acting(function() NotesLocal.set_private(ui, item, not private) end),
+            } },
+            { {
+                id = "note",
+                text = item.note and "Изменить заметку" or "Добавить заметку",
+                callback = acting(function() ui.highlight:editNote(index) end),
+            } },
+            {
+                { id = "delete", text = "Удалить", callback = acting(function() ui.highlight:deleteHighlight(index) end) },
+                { id = "more", text = "Ещё", callback = acting(function() ui.highlight:showHighlightDialog(index) end) },
+            },
+        },
+        anchor = function() return ui.highlight:_getDialogAnchor(dialog, index) end,
+    }
+    UIManager:show(dialog)
 end
 
 return Notes

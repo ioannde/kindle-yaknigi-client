@@ -3,13 +3,15 @@
 -- The uuid of a note is kept on KOReader's own item, and what was agreed with Yandex in the same
 -- file. So if that file goes, both go, and no note here can look as if it had been deleted.
 --
--- ctx: { ui, store, stubs, position = function(xp) -> cfi of a point or nil, progress = number }
+-- ctx: { ui, store, stubs, position = function(xp) -> cfi of a point or nil, progress = number,
+-- default_hidden = whether a new highlight starts as private }
 local Event = require("ui/event")
 local T = require("ffi/util").template
 local _ = require("gettext")
 local logger = require("logger")
 
 local Cfi = require("yaknigi/cfi")
+local Prefs = require("yaknigi/prefs")
 
 local NotesLocal = {}
 
@@ -30,6 +32,8 @@ local function letters(text, count)
     return table.concat(out)
 end
 
+NotesLocal.letters = letters
+
 -- The same words may differ in spaces and soft hyphens between a phone and crengine.
 local function comparable(text)
     return letters((text or ""):gsub("\194\173", ""):gsub("%s+", ""), COMPARED_LETTERS)
@@ -37,6 +41,19 @@ end
 
 function NotesLocal.known(ui)
     return ui.doc_settings:readSetting(SETTING) or {}
+end
+
+--- Whether a highlight is private, as far as is known here. One not yet stamped goes out as the
+-- setting says; one from before this was kept here hears of it at the next comparison.
+function NotesLocal.is_private(item)
+    if item.yaknigi_hidden ~= nil then return item.yaknigi_hidden end
+    return not item.yaknigi and Prefs.private_notes()
+end
+
+--- Changes the privacy of this one highlight, here and, from the next comparison, at Yandex.
+function NotesLocal.set_private(ui, item, on)
+    item.yaknigi_hidden = on and true or false
+    ui:handleEvent(Event:new("YaknigiNotesChanged"))
 end
 
 local function range_of(ctx, item)
@@ -65,6 +82,10 @@ function NotesLocal.collect(ctx, known)
     for _, item in ipairs(ctx.ui.annotation.annotations or {}) do
         local key = key_of(item)
         local base = item.yaknigi and known[item.yaknigi]
+        -- Settled once, so that a change of the setting does not change a highlight already made.
+        if item.drawer and not item.yaknigi and item.yaknigi_hidden == nil then
+            item.yaknigi_hidden = ctx.default_hidden == true
+        end
         local note = {
             key = key,
             uuid = item.yaknigi,
@@ -72,6 +93,7 @@ function NotesLocal.collect(ctx, known)
             comment = item.drawer and item.note or "",
             pos = key,
             progress = ctx.progress,
+            hidden = item.yaknigi_hidden,
         }
         note.comment = note.comment or ""
         if not (base and base.pos == key) then
@@ -90,13 +112,19 @@ end
 -- A note from Yandex as KOReader's item, or nil if its chapter is not here or holds other words.
 local function make_item(ctx, note)
     local doc = ctx.ui.document
+    local function not_placed(why)
+        logger.info("yaknigi: a note not placed:", note.kind, note.uuid, why)
+        return nil
+    end
     local spine, start, finish = Cfi.range(note.cfi)
     local fragment = spine and ctx.store:fragment_of_spine_index(spine)
     local path = fragment and ctx.store.paths[fragment]
-    if not path or ctx.stubs[fragment] or not ctx.store:has(path) then return nil end
+    if not path then return not_placed("no such chapter") end
+    if ctx.stubs[fragment] or not ctx.store:has(path) then return not_placed("its chapter is not here yet") end
     local html = ctx.store:read(path)
     local first = Cfi.to_point(html, fragment, start)
-    if not first or not doc:isXPointerInDocument(first) then return nil end
+    if not first then return not_placed("its start is not in the chapter") end
+    if not doc:isXPointerInDocument(first) then return not_placed("crengine has no " .. first) end
     local chapter = ctx.ui.toc:getTocTitleByPage(first)
     if chapter == "" then chapter = nil end
     if note.kind == "bookmark" then
@@ -104,7 +132,8 @@ local function make_item(ctx, note)
                  yaknigi = note.uuid }
     end
     local last = Cfi.to_point(html, fragment, finish)
-    if not last or not doc:isXPointerInDocument(last) then return nil end
+    if not last then return not_placed("its end is not in the chapter") end
+    if not doc:isXPointerInDocument(last) then return not_placed("crengine has no " .. last) end
     if comparable(doc:getTextFromXPointers(first, last)) ~= comparable(note.content) then
         logger.warn("yaknigi: a note's place holds other words:", note.uuid)
         return nil
@@ -118,6 +147,7 @@ local function make_item(ctx, note)
         color = highlight.saved_color,
         chapter = chapter,
         yaknigi = note.uuid,
+        yaknigi_hidden = note.hidden,
     }
 end
 
@@ -167,6 +197,14 @@ function NotesLocal.apply(ctx, result)
             end)
         end
     end
+    for key, change in pairs(result.hide or {}) do
+        local item = by_key[key]
+        -- Not over a change made here while the comparison was going on: that goes out next.
+        if item and item.yaknigi_hidden == change.was then
+            item.yaknigi_hidden = change.hidden == true
+            changed = true
+        end
+    end
     for _, key in ipairs(result.drop or {}) do
         local item = by_key[key]
         if item then guarded("remove", function() ui.bookmark:removeItem(item) end) end
@@ -178,7 +216,8 @@ function NotesLocal.apply(ctx, result)
             guarded("add", function()
                 local index = ui.annotation:addItem(item)
                 ui:handleEvent(added_event(item, index))
-                known[note.uuid] = { kind = note.kind, comment = note.comment, cfi = note.cfi, pos = key_of(item) }
+                known[note.uuid] = { kind = note.kind, comment = note.comment, cfi = note.cfi, pos = key_of(item),
+                                     hidden = item.yaknigi_hidden }
             end)
         end
     end
