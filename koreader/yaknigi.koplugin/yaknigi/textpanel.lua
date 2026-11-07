@@ -200,7 +200,8 @@ local function choices(items, key)
     return labels, selected
 end
 
---- The second page: how the text is set, how pages are turned, and KOReader's own settings.
+--- The second page: how the text is set, how pages are turned, how the screen stands, and
+--- KOReader's own settings.
 function TextPanel:buildMore(rows, inner)
     local ui = self.ui
     local label_w = math.floor(inner * 0.27)
@@ -237,6 +238,18 @@ function TextPanel:buildMore(rows, inner)
         rows[#rows + 1] = Kit.text("Панели открываются нажатием в верхней части экрана", 13,
             { color = Blitbuffer.COLOR_DARK_GRAY, max_width = inner })
     end
+    rows[#rows + 1] = Kit.gap(Kit.px(8))
+
+    local turned = Screen:getRotationMode() % 2 == 1 and 2 or 1
+    labels = choices(TextStyle.ROTATIONS)
+    cells, row = segments(labels, turned, inner - label_w, function(i)
+        if i == turned then return end
+        -- The whole page is set anew for the new shape, and this panel was built for the old one.
+        self:close()
+        UIManager:nextTick(function() TextStyle.set_rotation(ui, TextStyle.ROTATIONS[i].key) end)
+    end)
+    self.rotation_cells = cells
+    setting("Экран", row)
     rows[#rows + 1] = Kit.gap(Kit.px(12))
 
     local third = math.floor(inner / 3)

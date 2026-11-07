@@ -1,5 +1,6 @@
--- The "Прочитано" ribbon across the top right corner of a cover. KOReader turns pictures only
--- by right angles, so the ribbon is drawn once for each width of cover and then laid over.
+-- The mark of a read book in the top right corner of a cover: a ribbon saying "Прочитано", or
+-- a corner with a tick where the word would hide the cover. KOReader turns pictures only by
+-- right angles, so the mark is drawn once for each width of cover and then laid over.
 local Blitbuffer = require("ffi/blitbuffer")
 local Geom = require("ui/geometry")
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
@@ -12,6 +13,7 @@ local LABEL = "Прочитано"
 local BAND = 0x22 -- gray of the ribbon
 local SMALLEST, BIGGEST = 8, 12 -- sizes of its words
 local MOST_OF_WIDTH = 0.8 -- on a smaller cover the ribbon would hide the cover
+local CORNER_OF_WIDTH = 0.42
 
 local ROOT2 = math.sqrt(2)
 local masks = {}
@@ -44,7 +46,39 @@ local function ink_of(size)
     end
 end
 
-local function build(cover_w)
+local function distance_to_segment(px, py, ax, ay, bx, by)
+    local dx, dy = bx - ax, by - ay
+    local t = clamp(((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy))
+    local x, y = ax + t * dx - px, ay + t * dy - py
+    return math.sqrt(x * x + y * y)
+end
+
+--- A dark corner with a tick, for covers too small for the word.
+local function build_corner(cover_w)
+    local side = math.ceil(cover_w * CORNER_OF_WIDTH)
+    local radius = Kit.cover_radius()
+    local half_stroke = math.max(1, side * 0.055)
+    local ax, ay, bx, by, cx, cy = side * 0.5, side * 0.24, side * 0.64, side * 0.38, side * 0.86, side * 0.14
+    local mask = Blitbuffer.new(side, side, Blitbuffer.TYPE_BBRGB32)
+    for y = 0, side - 1 do
+        for x = 0, side - 1 do
+            local px, py = x + 0.5, y + 0.5
+            local alpha = clamp((px - py) / ROOT2 + 0.5)
+            -- The picture under it has a rounded corner, and this must not stick out of it.
+            if px > side - radius and py < radius then
+                local ox, oy = px - (side - radius), py - radius
+                alpha = alpha * clamp(radius - math.sqrt(ox * ox + oy * oy) + 0.5)
+            end
+            local tick = math.min(distance_to_segment(px, py, ax, ay, bx, by),
+                distance_to_segment(px, py, bx, by, cx, cy))
+            local gray = math.floor(BAND + (255 - BAND) * clamp(half_stroke - tick + 0.5) + 0.5)
+            mask:setPixel(x, y, Blitbuffer.ColorRGB32(gray, gray, gray, math.floor(alpha * 255 + 0.5)))
+        end
+    end
+    return mask
+end
+
+local function build_ribbon(cover_w)
     local size = math.floor(cover_w / Kit.px(11))
     size = math.max(SMALLEST, math.min(BIGGEST, size))
     local text_w, text_h, ink = ink_of(size)
@@ -52,7 +86,7 @@ local function build(cover_w)
     local near = math.max((text_w + text_h) / 2, cover_w * 0.2)
     local far = near + text_h
     local side = math.ceil(far * ROOT2) + 1
-    if side > cover_w * MOST_OF_WIDTH then return false end
+    if side > cover_w * MOST_OF_WIDTH then return nil end
 
     local mask = Blitbuffer.new(side, side, Blitbuffer.TYPE_BBRGB32)
     local middle, along_middle = (near + far) / 2, side / ROOT2
@@ -74,10 +108,9 @@ local function build(cover_w)
     return mask
 end
 
---- The ribbon for a cover of this width, or nil if the cover is too small to carry it.
 local function mask_for(cover_w)
-    if masks[cover_w] == nil then masks[cover_w] = build(cover_w) end
-    return masks[cover_w] or nil
+    if not masks[cover_w] then masks[cover_w] = build_ribbon(cover_w) or build_corner(cover_w) end
+    return masks[cover_w]
 end
 
 local Tagged = WidgetContainer:extend{ name = "YaknigiReadTag", mask = nil }
@@ -92,11 +125,9 @@ function Tagged:paintTo(bb, x, y)
     bb:alphablitFrom(self.mask, x + size.w - side, y, 0, 0, side, side)
 end
 
---- The cover with the ribbon over it, or as it is when it is too small for one.
+--- The cover with the mark over it.
 function ReadMark.over(cover, width)
-    local mask = mask_for(width)
-    if not mask then return cover end
-    return Tagged:new{ mask = mask, cover }
+    return Tagged:new{ mask = mask_for(width), cover }
 end
 
 return ReadMark

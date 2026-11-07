@@ -215,6 +215,52 @@ local function test_position_upload()
     moment()
     if position().writes ~= sent.writes then fail("an unread book was sent again") end
 
+    -- The screen turned: for books, the open one and the next, never for the library.
+    local TextStyle = require("yaknigi/textstyle")
+    local function landscape() return Screen:getWidth() > Screen:getHeight() end
+    open(menu, "Книга номер 0")
+    tap_at(math.floor(Screen:getWidth() / 2), math.floor(Screen:getHeight() * 0.1))
+    wait("the panels", is_named("YaknigiChrome"))
+    tap_widget(top().text_button)
+    wait("the text panel", is_named("YaknigiTextPanel"))
+    UIManager:forceRePaint()
+    tap_widget(top().advanced)
+    UIManager:forceRePaint()
+    shot("15d-panel-screen")
+    tap_widget(top().rotation_cells[2])
+    wait("the book turned", landscape)
+    wait("the book without the panel", is_named("ReaderUI"))
+    UIManager:forceRePaint()
+    if G_reader_settings:readSetting("copt_rotation_mode") ~= 1 then fail("the turn was not saved") end
+    shot("15e-book-landscape")
+    tap_at(math.floor(Screen:getWidth() / 2), math.floor(Screen:getHeight() * 0.1))
+    wait("the panels on their side", is_named("YaknigiChrome"))
+    UIManager:forceRePaint()
+    shot("15f-chrome-landscape")
+    tap_widget(top().text_button)
+    wait("the text panel on its side", is_named("YaknigiTextPanel"))
+    UIManager:forceRePaint()
+    shot("15g-panel-landscape")
+    tap_widget(top().advanced)
+    UIManager:forceRePaint()
+    shot("15h-panel-more-landscape")
+    top():close()
+    wait("the book again", is_named("ReaderUI"))
+    UIManager:forceRePaint()
+    reader():onHome()
+    menu = library_with(21)
+    if landscape() then fail("the library came on its side") end
+    UIManager:forceRePaint()
+    shot("15i-library-after-landscape")
+    open(menu, "Книга номер 0")
+    if not landscape() then fail("the next opening was upright") end
+    TextStyle.set_rotation(reader(), TextStyle.ROTATIONS[1].key)
+    if landscape() then fail("the book did not stand up again") end
+    reader():onHome()
+    menu = library_with(21)
+    wait("the position after turning", function() return not waiting() end)
+    moment()
+
     -- Reading goes up as soon as the book is left.
     open(menu, "Книга номер 0")
     doc = reader().document
@@ -2139,7 +2185,8 @@ local function test_finished(plugin)
     if tonumber(cached().progress) ~= tonumber(progress) then fail("the mark changed what was read") end
     if select(2, Session.read_card(dir)) ~= "finished" then fail("the book's own note of the state") end
 
-    -- The ribbon on the covers of read books, at the sizes they are shown in.
+    -- The mark on the covers of read books, at the sizes they are shown in: from the dock's
+    -- and the list's, with a corner, to the shelves' and the book card's, with the ribbon.
     local Library = require("yaknigi/library")
     local lfs = require("libs/libkoreader-lfs")
     local picture
@@ -2149,16 +2196,15 @@ local function test_finished(plugin)
     local read = { title = "Книга", cover = picture, card = { state = "finished" } }
     local px = Screen:scaleBySize(1)
     local tags = require("ui/widget/horizontalgroup"):new{ align = "top" }
-    for _, side in ipairs { 56, 73, 100, 126 } do
+    for _, side in ipairs { 40, 56, 73, 100, 126 } do
         local box = Library.cover_box(read, side * px, side * px * 3 / 2)
-        if box.name ~= "YaknigiReadTag" then fail("no ribbon on a cover of " .. side) end
+        if box.name ~= "YaknigiReadTag" then fail("no mark on a cover of " .. side) end
         tags[#tags + 1] = box
         tags[#tags + 1] = require("ui/widget/horizontalspan"):new{ width = 10 * px }
     end
     if Library.cover_box({ title = "Книга", cover = picture, card = { state = "reading" } }, 100 * px, 150 * px).name == "YaknigiReadTag" then
-        fail("a ribbon on a book not read")
+        fail("a mark on a book not read")
     end
-    if Library.cover_box(read, 40 * px, 60 * px).name == "YaknigiReadTag" then fail("a ribbon on the smallest cover") end
     local tag_sheet = require("ui/widget/container/framecontainer"):new{
         background = require("ffi/blitbuffer").COLOR_WHITE, bordersize = 0, padding = 10 * px, tags,
     }

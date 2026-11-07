@@ -1857,7 +1857,7 @@ function Yaknigi:applyTextDefaults(path)
     local doc_settings = DocSettings:open(path)
     local font = G_reader_settings:readSetting("cre_font")
     if font then doc_settings:saveSetting("font_face", font) end
-    for _, name in ipairs { "font_size", "line_spacing", "h_page_margins", "t_page_margin" } do
+    for _, name in ipairs { "font_size", "line_spacing", "h_page_margins", "t_page_margin", "rotation_mode" } do
         local value = G_reader_settings:readSetting("copt_" .. name)
         if value ~= nil then doc_settings:saveSetting("copt_" .. name, value) end
     end

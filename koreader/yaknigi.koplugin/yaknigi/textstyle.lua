@@ -1,4 +1,4 @@
--- Alignment, hyphenation and where a tap turns the page: KOReader's settings, in the app's
+-- Alignment, hyphenation, page turns and the turn of the screen: KOReader's settings, in the app's
 -- own words. Takes effect at once in an open book, and in the next one from what is saved.
 local TextStyle = {}
 
@@ -17,6 +17,13 @@ TextStyle.ALIGN = {
 TextStyle.TAP_MODES = {
     { key = "default", label = "Слева и справа" },
     { key = "top_bottom", label = "Сверху и снизу" },
+}
+
+-- KOReader's numbers for the screen upright and turned clockwise. Only books are turned: its
+-- file manager puts the screen upright again, so the library is always the same.
+TextStyle.ROTATIONS = {
+    { key = 0, label = "Вертикально" },
+    { key = 1, label = "Горизонтально" },
 }
 
 --- A copy of the tweaks with this alignment and no other.
@@ -93,6 +100,12 @@ function TextStyle.set_tap_mode(ui, mode)
         -- Registering anew takes a zone out of what ours come before.
         if ui.yaknigi and ui.yaknigi.shell then ui.yaknigi.shell:registerZone() end
     end
+end
+
+--- For this book at once, and for every other book from the moment it is opened.
+function TextStyle.set_rotation(ui, mode)
+    G_reader_settings:saveSetting("copt_rotation_mode", mode)
+    if ui and ui.view then ui.view:onSetRotationMode(mode) end
 end
 
 return TextStyle
