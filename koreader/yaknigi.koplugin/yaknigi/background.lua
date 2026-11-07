@@ -8,6 +8,7 @@ local ffi = require("ffi")
 local ffiutil = require("ffi/util")
 local logger = require("logger")
 local Api = require("yaknigi/api")
+local Serial = require("yaknigi/serial")
 local Store = require("yaknigi/store")
 
 pcall(ffi.cdef, "int nice(int); int getppid(void);")
@@ -45,7 +46,7 @@ function Background.fetch_all(store, api, around)
             if not failed[p] then path = p; break end
         end
         if not path then break end
-        local data, kind = api:content(store.manifest.document_uuid, path)
+        local data, kind = store:fetch(api, path)
         if data then
             store:write(path, data)
             failures = 0
@@ -92,7 +93,7 @@ end
 
 --- Saves a whole book for reading without the network, with nobody reading it: the first
 -- opening lays it out. Writes { kind } to result. Returns the pid, or nil.
-function Background.save(root, id, token, result)
+function Background.save(root, id, token, result, card)
     return ffiutil.runInSubProcess(function()
         pcall(function() ffi.C.nice(10) end)
         local function finish(kind)
@@ -106,7 +107,12 @@ function Background.save(root, id, token, result)
         local store = Store.open(root, id)
         if not store then finish("http") end
         local api = Api.new(token)
-        if not store.manifest then
+        if Serial.is_serial(card) then
+            if Serial.stale(store.manifest, card) then
+                local ok, kind = Serial.load(store, api, card)
+                if not ok and not store.manifest then finish(kind or "network") end
+            end
+        elseif not store.manifest then
             local manifest, kind = api:manifest(id)
             if not manifest then finish(kind or "network") end
             if not store:set_manifest(manifest) then finish("disk") end

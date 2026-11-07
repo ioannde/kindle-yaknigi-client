@@ -90,7 +90,7 @@ SEARCH = ("query Search($query: SearchParamsInput!) { search(query: $query) { pa
 FOUND = 60
 FOUND_PAGE = 25
 SEARCH_TYPES = ["TEXTBOOK", "SERIAL", "SERIES", "AUTHOR"]
-SERIALS = {"serial-1": ("Сериал", 3), "serial-2": ("Новый сериал", 2)}
+SERIALS = {"serial-1": ("Сериал", 4), "serial-2": ("Новый сериал", 2)}
 
 
 def cover_png(n):
@@ -264,9 +264,22 @@ class Handler(BaseHTTPRequestHandler):
             card["state"] = update["state"] or card["state"]
         if i == 3:
             card["book"].update(self.serial_book("serial-1"))
-            card["current_episode_position"] = 1
-            card["current_episode_uuid"] = "ep1-1"
+            self.serial_place(card, "ep1-2")
         return card
+
+    def serial_place(self, card, episode=None):
+        """A serial's card says which episode is being read, and the place in that episode."""
+        update = self.server.card_updates.get(card["uuid"]) or {}
+        episode = update.get("current_episode_uuid") or episode
+        card["cfi"] = None
+        if not episode:
+            return
+        card["current_episode_uuid"] = episode
+        card["current_episode_position"] = int(episode.split("-")[1])
+        position = self.server.positions.get(episode)
+        if position:
+            spine, start = position["start"].split("!")
+            card["cfi"] = f'{spine}!,{start},{position["end"].split("!")[1]}'
 
     def cover(self, n):
         return f"http://127.0.0.1:{self.server.server_address[1]}/cover/{n}.png"
@@ -282,7 +295,7 @@ class Handler(BaseHTTPRequestHandler):
         serial, number = re.fullmatch(r"ep(\d)-(\d)", uuid).groups()
         taken = uuid in self.server.taken
         return {"uuid": uuid, "title": f"Эпизод {number}", "source_type": "serial_episode",
-                "parent_uuid": f"serial-{serial}", "position": int(number), "can_be_read": True,
+                "parent_uuid": f"serial-{serial}", "position": int(number), "can_be_read": uuid != "ep1-3",
                 "authors": "Автор сериала", "authors_objects": [{"name": "Автор сериала", "uuid": "author-1"}],
                 "cover": {"small": self.cover(150 + int(number)), "large": self.cover(150 + int(number))},
                 "in_library": taken, "library_card": {"uuid": f"c-{uuid}"} if taken else None}
@@ -297,6 +310,8 @@ class Handler(BaseHTTPRequestHandler):
         if position:
             spine, start = position["start"].split("!")
             card["cfi"] = f'{spine}!,{start},{position["end"].split("!")[1]}'
+        if uuid in SERIALS:
+            self.serial_place(card)
         return card
 
     def rest_book(self, i):
@@ -576,7 +591,8 @@ class Handler(BaseHTTPRequestHandler):
                     and p["consumptionType"] == "CONSUMPTION"
                     and re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}\+00:00", p["readAt"])
                     and re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-8[0-9a-f]{3}-[0-9a-f]{12}", p["sessionId"])
-                    and p["documentUuid"] == "d1" and "!/" in p["cfi"]["start"] and "!/" in p["cfi"]["end"]
+                    and p["documentUuid"] == (f'd-{p["episodeUuid"]}' if p.get("episodeUuid") else "d1")
+                    and "!/" in p["cfi"]["start"] and "!/" in p["cfi"]["end"]
                     )
             if not good:
                 print("bad ProgressUpdated:", p, flush=True)
@@ -770,6 +786,17 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(200, cover_png(int(url.path.split("/")[-1].split(".")[0])))
         elif "serial" in url.path:
             self.reply(404, b"")
+        elif re.search(r"/books/ep\d-\d/metadata/v4$", url.path):
+            episode = url.path.split("/")[-3]
+            # What the list of episodes says of ep1-3 keeps it from being asked for; this one
+            # is refused only when asked for.
+            if episode == "ep1-3":
+                print("a closed episode was asked for", flush=True)
+                self.reply(500, b"")
+            elif episode == "ep1-4":
+                self.reply(403, b"")
+            else:
+                self.reply_json(200, {"document_uuid": f"d-{episode}", "opf": encrypted(OPF), "container": encrypted(CONTAINER)})
         elif url.path.endswith("/metadata/v4"):
             if f"/{COVER_PAGE_BOOK}/" in url.path:
                 self.reply_json(200, {"document_uuid": "d1", "opf": encrypted(COVER_PAGE_OPF),
@@ -783,6 +810,10 @@ class Handler(BaseHTTPRequestHandler):
             self.reply_json(200, {"secret": base64.b64encode(KEY).decode()})
         elif url.path.endswith("/content"):
             path = query["path"][0]
+            if "/d-ep" in url.path:
+                # An episode's document has the episode's own paths, not those of the whole serial.
+                self.reply(404 if "ep" in path else 200, chapter(path).encode())
+                return
             # This route knows a book by its document, not its uuid: these names are that book's.
             if path.endswith("title.xhtml"):
                 self.reply(200, COVER_PAGE.encode())
@@ -816,6 +847,8 @@ if __name__ == "__main__":
     server.added = []
     # Of the serial that is in the library, two episodes of three came with it so far.
     server.taken = ["ep1-1", "ep1-2"]
+    # The phone has got to the second chapter of the second episode.
+    server.positions["ep1-2"] = {"start": "/6/4!/4/2:0", "end": "/6/4!/4/2:0", "writes": 0}
     server.serial_progress = None
     server.removed = []
     server.fail_search = 0

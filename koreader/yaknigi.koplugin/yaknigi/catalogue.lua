@@ -232,20 +232,6 @@ function Catalogue.bookshelf(shelf)
         count and Catalogue.count(count, "книга", "книги", "книг") or nil)
 end
 
---- An episode of a serial: read as a book, but added together with the whole serial.
-function Catalogue.episode(episode)
-    local item = Catalogue.rest_book(episode)
-    if not item then return nil end
-    item.kind = "episode"
-    item.serial = episode.parent_uuid
-    item.mandatory = nil
-    if episode.position then item.kind_text = "Эпизод " .. tostring(episode.position) end
-    item.card.book.source_type = "serial_episode"
-    item.card.book.parent_uuid = episode.parent_uuid
-    item.card.book.position = episode.position
-    return item
-end
-
 function Catalogue.rest_series(series)
     if type(series) ~= "table" or type(series.uuid) ~= "string" then return nil end
     return list_item("series", series.uuid, type(series.title) == "string" and series.title or "?",
@@ -273,7 +259,6 @@ function Catalogue.from_page(kind, page)
     end
     for _, part in ipairs(page.parts or {}) do put(Catalogue.part(part, read_at)) end
     for _, shelf in ipairs(page.bookshelves or {}) do put(Catalogue.bookshelf(shelf)) end
-    for _, episode in ipairs(page.episodes or {}) do put(Catalogue.episode(episode)) end
     return items
 end
 

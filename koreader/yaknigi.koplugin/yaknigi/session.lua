@@ -35,7 +35,7 @@ function Session.find_first_text(store, api)
     for i = 1, math.min(FRONT_PAGES_AT_MOST, #store.paths) do
         local p = store.paths[i]
         if not store:has(p) then
-            local data, kind, detail = api:content(store.manifest.document_uuid, p)
+            local data, kind, detail = store:fetch(api, p)
             if not data then return nil, kind, detail end
             local ok, err = store:write(p, data)
             if not ok then return nil, "disk", err end
@@ -83,14 +83,12 @@ function Session.prepare(root, api, card, local_fragment)
 
     -- Stylesheets, this chapter and the next must be there before the first page.
     local wanted = {}
-    for _, p in ipairs(store:missing(target)) do
-        if p:lower():match("%.css$") then wanted[#wanted + 1] = p end
-    end
+    for _, p in ipairs(store:styles_of(store.paths[target])) do wanted[#wanted + 1] = p end
     wanted[#wanted + 1] = store.paths[target]
     wanted[#wanted + 1] = store.paths[target + 1]
     for _, p in ipairs(wanted) do
         if not store:has(p) then
-            local data, kind, detail = api:content(store.manifest.document_uuid, p)
+            local data, kind, detail = store:fetch(api, p)
             -- The next chapter and styles are a nicety; only this chapter is required.
             if data then
                 local ok, err = store:write(p, data)
@@ -110,7 +108,7 @@ function Session.prepare(root, api, card, local_fragment)
     end
     for _, p in ipairs(pictures) do
         if not store:has(p) then
-            local data, kind, detail = api:content(store.manifest.document_uuid, p)
+            local data, kind, detail = store:fetch(api, p)
             if data then
                 local ok, err = store:write(p, data)
                 if not ok then return nil, "disk", err end

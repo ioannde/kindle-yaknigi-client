@@ -562,12 +562,6 @@ eq(shelves[1].kind, "bookshelf", "a shelf leads to a list")
 eq(shelves[1].kind_text, "21 книга", "how long it is")
 eq(shelves[1].authors, "Кто", "whose it is")
 eq(Catalogue.part({ resource_type = "book", position_label = "2", resource = { uuid = "b" } }).kind_text, "Книга 2", "a part")
-local listed = Catalogue.episode({ uuid = "e1", title = "Э", parent_uuid = "x1", position = 4, in_library = true })
-eq(listed.kind, "episode", "an episode")
-eq(listed.serial, "x1", "of what")
-eq(listed.mandatory, nil, "an episode is not marked as a book is")
-eq(listed.kind_text, "Эпизод 4", "which")
-eq(listed.card.book.parent_uuid, "x1", "the card knows its serial")
 local of_author = Catalogue.from_page("author", {
     series = { { uuid = "s1", title = "Книги", kinds = { "books" }, parts_count = 2 }, { uuid = "s2", title = "Аудио", kinds = { "audio" } } },
     books = { { uuid = "b1", title = "Книга" } },
@@ -731,6 +725,104 @@ eq(Storage.size_text(math.floor(3.4 * 1024 * 1024)), "3,4 МБ", "a decimal comm
 eq(Storage.size_text(12 * 1024 * 1024), "12 МБ", "megabytes")
 eq(Storage.size_text(5 * 1024 * 1024), "5 МБ", "no empty decimal")
 eq(Storage.size_text(math.floor(1.4 * 1024 * 1024 * 1024)), "1,4 ГБ", "gigabytes")
+
+-- A serial as one book.
+local Serial = require("yaknigi/serial")
+local CONTAINER_X = '<container><rootfiles><rootfile full-path="OEBPS/c.opf"/></rootfiles></container>'
+local function episode_opf(first)
+    return '<package><metadata><meta name="cover" content="pic"/></metadata><manifest>'
+        .. '<item id="pic" href="i/cover.png" media-type="image/png"/>'
+        .. '<item id="st" href="s.css" media-type="text/css"/>'
+        .. '<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>'
+        .. '<item id="a" href="a.html"/><item id="b" href="b &amp; c.xhtml" media-type="application/xhtml+xml"/>'
+        .. '</manifest><spine toc="ncx"><itemref idref="pic"/><itemref idref="a"/><itemref idref="b"/></spine></package>'
+end
+local NCX_X = '<ncx><navMap><navPoint id="n1" playOrder="1"><navLabel><text>Раз</text></navLabel><content src="a.html"/></navPoint>'
+    .. '<navPoint id="n2" playOrder="2"><navLabel><text>Два</text></navLabel><content src="b.xhtml#x"/></navPoint></navMap></ncx>'
+local merged = Serial.merge("ser", "Сериал & Ко", {
+    { uuid = "e1", title = "Первый", document = "d1", container = CONTAINER_X, opf = episode_opf(), ncx = NCX_X, card = "c1" },
+    { uuid = "e2", title = "", position = 2, locked = true },
+    { uuid = "e3", document = "d3", position = 3, container = CONTAINER_X, opf = episode_opf() },
+})
+local long = Opf.parse(merged.opf)
+eq(merged.total, 3, "three episodes")
+eq(merged.document_uuid, "d1", "a document for the whole")
+eq(long.title, "Сериал & Ко", "the title is escaped")
+eq(#long.fragments, 7, "every itemref stays, as positions count them")
+eq(long.fragments[1], false, "a picture in the spine is no chapter")
+eq(long.spine[1], "e1/a.html", "a chapter under its episode")
+eq(long.spine[2], "e1/b & c.xhtml", "a name with an ampersand")
+eq(long.spine[3], "e2/locked.xhtml", "a closed episode has its page")
+eq(long.fragments[4], 3, "and it counts")
+eq(long.spine[4], "e3/a.html", "the next episode goes on")
+eq(long.cover, "e1/i/cover.png", "the first cover is the cover")
+eq(long.ncx, "toc.ncx", "contents of its own")
+eq(merged.episodes[2].first, 3, "where the second begins")
+eq(merged.episodes[3].first, 4, "where the third begins")
+eq(merged.ncx:find('<content src="e1/a.html"/></navPoint>', 1, true) ~= nil, true, "an inner entry goes under the episode")
+eq(merged.ncx:find('id="e1_n2"', 1, true) ~= nil, true, "inner entries have ids of their own")
+eq(merged.ncx:find("playOrder", 1, true), nil, "no order left to contradict")
+eq(merged.ncx:find(">Эпизод 2<", 1, true) ~= nil, true, "an episode without a title")
+eq(merged.ncx:find(">Эпизод 3<", 1, true) ~= nil, true, "and by its position")
+local part, inner = Serial.file_of(merged, "OEBPS/e3/s.css")
+eq(part.uuid, "e3", "whose file")
+eq(inner, "OEBPS/s.css", "and its path in the episode")
+eq(Serial.file_of(merged, "OEBPS/content.opf"), nil, "not of an episode")
+eq(Serial.part_of("OEBPS/e3/i/x.png"), "e3", "the directory of an episode")
+eq(Serial.to_merged(merged, "e3", "/6/4!/4/2:0"), "/6/12!/4/2:0", "from an episode into the book")
+eq(Serial.to_merged(merged, "e1", "/6/2!,/2/4,/2/6"), "/6/2!,/2/4,/2/6", "the first episode stays as it is")
+eq(Serial.to_merged(merged, "e3", "/6/40!/4"), "/6/10!/4", "a place beyond the episode goes to its start")
+eq(Serial.to_merged(merged, "nobody", "/6/4!/4"), nil, "not an episode of this")
+eq(Serial.to_merged(merged, "e3", nil), nil, "no place")
+local there, here_at = Serial.to_episode(merged, "/6/12!/4/2:0")
+eq(there.uuid, "e3", "from the book into an episode")
+eq(here_at, "/6/4!/4/2:0", "with the place in it")
+eq(Serial.to_episode(merged, "/6/100!/4"), nil, "beyond the book")
+local wire = Serial.position(merged, "/6/2!/4/2:0", "/6/4!/4/2:0")
+eq(wire.book, "e1", "the episode to tell of")
+eq(wire.document, "d1", "its document")
+eq(wire.card, "c1", "its card")
+eq(wire.finish, "/6/4!/4/2:0", "the page's end in the same episode")
+eq(Serial.position(merged, "/6/6!/4/2:0", "/6/8!/4/2:0").book, "e1", "the last chapter of the episode")
+eq(Serial.position(merged, "/6/6!/4/2:0", "/6/8!/4/2:0").finish, "/6/6!/4/2:0", "a page ending in the next one ends where it starts")
+eq(Serial.position(merged, "/6/8!/4/2:0", "/6/10!/4/2:0"), nil, "a closed episode is no place to send")
+eq(Serial.is_serial({ book = { source_type = "serial" } }), true, "a serial's card")
+eq(Serial.is_serial({ book = {} }), false, "a book's")
+eq(Serial.is_serial(nil), false, "nothing")
+local serial_card = { uuid = "c", cfi = "/6/4!/4", current_episode_uuid = "e3", book = { source_type = "serial" } }
+eq(Serial.view_with(merged, serial_card).cfi, "/6/12!/4", "a card seen in the long book")
+eq(serial_card.cfi, "/6/4!/4", "the card stays as Yandex has it")
+eq(Serial.view_with(nil, serial_card).cfi, nil, "nowhere until the episodes are known")
+eq(Serial.stale(nil, serial_card), true, "nothing known")
+eq(Serial.stale(merged, { book = { episodes_count = 3 } }), true, "something is closed: it may have opened")
+local open_only = Serial.merge("s", "t", { { uuid = "e1", document = "d", container = CONTAINER_X, opf = episode_opf() } })
+eq(Serial.stale(open_only, { book = { episodes_count = 1 } }), false, "all is known")
+eq(Serial.stale(open_only, { book = { episodes_count = 2 } }), true, "a new episode")
+eq(Serial.shifted(open_only, merged), false, "new episodes after the old move nothing")
+eq(Serial.shifted(merged, open_only), true, "episodes gone do")
+eq(Serial.shifted(nil, merged), false, "nothing to move")
+-- Notes: Yandex by episode, the comparison in the long book.
+local calls = {}
+local notes_api = Serial.notes_api({
+    notes = function() return {
+        { uuid = "q1", state = "exists", book = { uuid = "e3" }, cfi = "/6/4!/4,/2,/4" },
+        { uuid = "q2", state = "exists", book_uuid = "other", cfi = "/6/4!/4" },
+        { uuid = "q3", state = "removed" },
+    } end,
+    create_note = function(_, kind, book, note) calls[#calls + 1] = book .. " " .. note.cfi; return { uuid = "new" } end,
+    update_quote = function(_, uuid, quote) calls[#calls + 1] = uuid .. " " .. quote.cfi; return true end,
+    delete_note = function(_, kind, uuid) calls[#calls + 1] = kind .. " " .. uuid; return true end,
+}, merged, "ser")
+local entries = notes_api:notes("quotes")
+eq(#entries, 2, "another book's note is not this one's, and what was removed is said")
+eq(entries[1].book_uuid, "ser", "an episode's note is the serial's")
+eq(entries[1].cfi, "/6/12!/4,/2,/4", "in the long book")
+eq(entries[2].uuid, "q3", "what was removed")
+eq(notes_api:create_note("quote", "ser", { cfi = "/6/12!/4" }).uuid, "new", "a note goes")
+eq(calls[1], "e3 /6/4!/4", "to its episode")
+eq(notes_api:create_note("quote", "ser", { cfi = "/6/8!/4" }), nil, "not in what is closed")
+eq(notes_api:update_quote("q1", { cfi = "/6/12!/4" }), true, "an edit goes")
+eq(calls[2], "q1 /6/4!/4", "with the place in the episode")
 
 print(("%d passed, %d failed"):format(passed, failed))
 os.exit(failed == 0 and 0 or 1)

@@ -174,8 +174,7 @@ function Library:rowButton(item, height)
         file, action = "lock", function() self:onMenuSelect(item) end
     elseif item.adding or status == "saving" then
         file, action = "wait", function() end
-    elseif item.kind == "author" or item.kind == "series" or item.kind == "bookshelf"
-        or (item.kind == "serial" and item.found and (item.in_library or self:inLibrary(item))) then
+    elseif item.kind == "author" or item.kind == "series" or item.kind == "bookshelf" then
         name, action = "chevron.right", function() self:onMenuSelect(item) end
     elseif not item.found then
         file, action = "dots", menu
@@ -287,7 +286,7 @@ function Library:dock(item, width)
     end
     self.dock_item = item
     self.dock_widget = Kit.Tappable:new{
-        callback = function() self:onMenuSelect(item, true) end,
+        callback = function() self:onMenuSelect(item) end,
         VerticalGroup:new{ align = "left",
             bar,
             LeftContainer:new{

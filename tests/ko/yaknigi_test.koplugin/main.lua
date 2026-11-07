@@ -1047,41 +1047,78 @@ local function test_lists()
     wait("the word about it to go", function() return top() == menu end)
     if #menu.item_table ~= cards_before + 1 then fail("episodes stand in the library by themselves") end
 
+    -- A serial is one book, as on the phone: its episodes end to end.
+    local function all_here()
+        return reader() and reader().yaknigi and top().name == "ReaderUI"
+            and reader().yaknigi.store and reader().yaknigi.store:is_whole()
+            and not next(reader().yaknigi:stubs() or {})
+    end
+    local function toc_titles()
+        local titles = {}
+        for _, entry in ipairs(reader().document:getToc()) do titles[#titles + 1] = entry.title end
+        return table.concat(titles, "|")
+    end
     menu:onMenuSelect(serial)
-    finished(menu, "Новый сериал")
-    wait("the episodes' covers", function() return menu.rows[1].cover and menu.rows[2].cover end, 20)
-    if not (menu.rows[1].in_library and menu.rows[2].in_library) then fail("the episodes are not marked as added") end
+    wait("the serial", function() return here("serial-2") end, 60)
+    wait("all of the serial", all_here, 60)
+    local store = reader().yaknigi.store
+    local serial_dir = store.dir
+    if #store.paths ~= 6 then fail("the chapters of the serial: " .. #store.paths) end
+    if toc_titles() ~= "Эпизод 1|Эпизод 2" then fail("the contents of the serial: " .. toc_titles()) end
     UIManager:forceRePaint()
-    shot("74-serial-added")
+    shot("74-serial")
 
-    -- An episode reads as a book, tells of the serial, and leads to the next.
-    menu:onMenuSelect(menu.rows[1])
-    wait("the episode", function() return here("ep2-1") end)
-    reader().rolling:onGotoXPointer("/body/DocFragment[3]")
-    reader():handleEvent(require("ui/event"):new("EndOfBook"))
-    wait("the question about the next episode", function() return top().ok_callback end)
-    if not top().text:find("Эпизод 2", 1, true) then fail("what is offered next: " .. top().text) end
-    UIManager:forceRePaint()
-    shot("75-next-episode")
-    answer(top(), true)
-    wait("the next episode", function() return here("ep2-2") end, 60)
+    -- At Yandex a place is in an episode: the second chapter of the second, here the fifth.
+    reader().rolling:onGotoXPointer("/body/DocFragment[5]")
+    reader().yaknigi:sendPosition()
     wait("the place to reach the serial", function()
         local update = mock_get("/test/serial").updates["c-serial-2"]
-        return update and update.current_episode_uuid
+        return update and update.current_episode_uuid == "ep2-2"
     end, 60)
     local told = mock_get("/test/serial")
-    if not told.progress or told.progress.uuid ~= "serial-2" or not told.progress.episode:find("^ep2") then
+    if not told.progress or told.progress.uuid ~= "serial-2" or told.progress.episode ~= "ep2-2" then
         fail("the serial's progress was not sent as a serial's")
     end
-    if not told.updates["c-ep2-1"] then fail("the episode's own card was not told") end
+    if not told.updates["c-serial-2"].sent_cfi:find("^/6/4!") then
+        fail("the place on the serial's card: " .. told.updates["c-serial-2"].sent_cfi)
+    end
+    if not told.updates["c-ep2-2"] then fail("the episode's own card was not told") end
+    local sent = mock_get("/test/position?book=ep2-2")
+    if not tostring(sent.start):find("^/6/4!") then fail("the place sent: " .. tostring(sent.start)) end
+
+    -- That same place coming back from Yandex is not news of reading elsewhere.
+    os.remove(serial_dir .. "/checked")
+    reader().yaknigi:exchange()
+    wait("the answer about the place", function()
+        local f = io.open(serial_dir .. "/checked", "rb")
+        if f then f:close() end
+        return f ~= nil
+    end, 30)
+    local news = io.open(serial_dir .. "/news", "rb")
+    if news then news:close(); fail("what was sent came back as news") end
     reader():onHome()
-    wait("the library after the episode", function() return top().item_table and top() end)
+    wait("the library after the serial", function() return top().item_table and top() end)
     menu = to_library()
 
-    -- What is being read of a serial opens as it is, from the place where it goes on.
-    local serial_1 = find_item(menu, "Сериал")
-    menu:onMenuSelect(serial_1, true)
-    wait("the current episode", function() return here("ep1-1") end, 60)
+    -- Read on the phone: second chapter of the second episode. Two episodes are closed, one by
+    -- the list and one by the answer, and neither costs the others or the account.
+    menu:onMenuSelect(find_item(menu, "Сериал"))
+    wait("the serial read elsewhere", function() return here("serial-1") end, 60)
+    wait("the place from the phone", function() return fragment() == 5 end, 30)
+    wait("all of that serial", all_here, 60)
+    store = reader().yaknigi.store
+    if toc_titles() ~= "Эпизод 1|Эпизод 2|Эпизод 3|Эпизод 4" then fail("the contents with what is closed: " .. toc_titles()) end
+    for _, closed in ipairs { 7, 8 } do
+        if not store.paths[closed]:find("locked", 1, true) or not store:read(store.paths[closed]):find("недоступен", 1, true) then
+            fail("a closed episode's page: " .. store.paths[closed])
+        end
+    end
+    reader().rolling:onGotoXPointer("/body/DocFragment[7]")
+    UIManager:forceRePaint()
+    shot("75-serial-closed")
+    reader().yaknigi:sendPosition()
+    local waiting = io.open(store.dir .. "/to_send", "rb")
+    if waiting then waiting:close(); fail("a place in a closed episode was to be sent") end
     reader():onHome()
     wait("the library once more", function() return top().item_table and top() end)
     menu = to_library()
@@ -1104,7 +1141,25 @@ local function test_lists()
     tap_widget(menu.row_buttons[row])
     wait("the serial's menu", is_named("YaknigiBookMenu"))
     local sheet = top()
-    if sheet.rows.save or sheet.rows.remove_device then fail("a serial is saved episode by episode") end
+    if not sheet.rows.remove_device then fail("a serial with all of it here is not saved") end
+    -- Taken off the device and saved again, with no book at all to start from.
+    tap_widget(sheet.rows.remove_device)
+    wait("the menu to go", function() return top() == menu end)
+    os.remove(serial_dir .. "/manifest.json")
+    menu.on_book_menu(row)
+    wait("the serial's menu again", is_named("YaknigiBookMenu"))
+    if not top().rows.save then fail("a serial cannot be saved") end
+    tap_widget(top().rows.save)
+    wait("the menu to go again", function() return top() == menu end)
+    wait("the serial to be saved", function()
+        for _, item in ipairs(menu.item_table) do
+            if item.title == "Новый сериал" and item.whole then row = item; return true end
+        end
+    end, 60)
+    menu.on_book_menu(row)
+    wait("the serial's menu once more", is_named("YaknigiBookMenu"))
+    sheet = top()
+    if not sheet.rows.remove_device then fail("a saved serial is not known as saved") end
     if not sheet.rows.remove_library then fail("a serial cannot be removed") end
     tap_widget(sheet.rows.remove_library)
     wait("the question", function() return top().ok_callback end)
@@ -1767,16 +1822,6 @@ local function script()
     UIManager:forceRePaint()
     if top() ~= menu or menu.view ~= "home" then fail("a second tap in the corner did something") end
     shot("03c-library-covers")
-
-    -- A serial shows its episodes.
-    menu:onMenuSelect(find_item(menu, "Сериал"))
-    wait("the episodes", function() return menu.view == "collection" and menu.collection.finished and #menu.rows == 3 end)
-    if not menu.rows[1].in_library or menu.rows[3].in_library then fail("which episodes are in the library") end
-    if menu.rows[1].kind_text ~= "Эпизод 1" then fail("the name of an episode: " .. tostring(menu.rows[1].kind_text)) end
-    UIManager:forceRePaint()
-    shot("04-serial")
-    menu:goBack()
-    if menu.view ~= "home" then fail("the way back from a serial: " .. menu.view) end
 
     -- First open: goes to the position from Yandex without the whole book.
     local seconds = open(menu, "Книга номер 0")

@@ -7,6 +7,7 @@ local lfs = require("libs/libkoreader-lfs")
 local logger = require("logger")
 
 local Cfi = require("yaknigi/cfi")
+local Serial = require("yaknigi/serial")
 local Session = require("yaknigi/session")
 
 local Sync = {}
@@ -78,6 +79,7 @@ function Sync.exchange(api, dir, card_uuid)
     end
     local f = io.open(dir .. "/checked", "wb")
     if f then f:close() end
+    card = Serial.view(dir, card)
     if Session.server_moved({ dir = dir }, card, true) then
         Session.note_news(dir, card)
         return nil, "moved"
@@ -97,12 +99,16 @@ function Sync.send_waiting(api, books, cards)
         local card = by_book[id]
         local dir = books .. "/" .. id
         if card and read_waiting(dir) then
-            if Session.server_moved({ dir = dir }, card, true) then
-                Session.note_news(dir, card)
+            local here = Serial.view(dir, card)
+            if Session.server_moved({ dir = dir }, here, true) then
+                Session.note_news(dir, here)
             else
                 local position, kind = Sync.send(api, dir)
                 if position then
-                    card.cfi = Cfi.point_range(position.start)
+                    -- As Yandex would say it: a serial's card counts within the episode.
+                    local wire = position.wire
+                    card.cfi = Cfi.point_range(wire and wire.start or position.start)
+                    if wire then card.current_episode_uuid = wire.book end
                     card.progress = position.progress
                 elseif kind == "network" or kind == "auth" then
                     logger.info("yaknigi: positions not sent:", kind)

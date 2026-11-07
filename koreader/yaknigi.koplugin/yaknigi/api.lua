@@ -89,12 +89,14 @@ local ROOT_SHOWCASES = "query RootShowcases($rootShowcaseParamsInput: RootShowca
 -- ProgressUpdated moves the position that other devices see; the library card holds the
 -- percentage and the time of reading, and ignores the position it is sent.
 function Api:send_position(p)
+    -- A serial is read as one book, but at Yandex the position is in an episode: wire.
+    local where = p.wire or p
     local progress = {
-        cfi = { start = p.start, ["end"] = p.finish },
+        cfi = { start = where.start, ["end"] = where.finish },
         consumptionType = "CONSUMPTION",
-        documentUuid = p.document,
+        documentUuid = where.document,
         uuid = p.serial or p.book,
-        episodeUuid = p.serial and p.book or nil,
+        episodeUuid = p.serial and where.book or nil,
         readAt = p.read_at,
         sessionId = p.session,
         timespent = p.timespent,
@@ -115,9 +117,14 @@ function Api:send_position(p)
 
     local form = {
         "lc[progress]=" .. p.progress,
-        "lc[cfi]=" .. encode(p.range),
+        "lc[cfi]=" .. encode(where.range),
     }
     if p.state then form[#form + 1] = "lc[state]=" .. encode(p.state) end
+    if p.wire then
+        form[#form + 1] = "lc[public]=true"
+        form[#form + 1] = "lc[is_in_child_library]=false"
+        form[#form + 1] = "lc[current_episode_uuid]=" .. encode(where.book)
+    end
     local function put(card, fields)
         local encoded = {}
         for i, field in ipairs(fields) do
@@ -128,7 +135,11 @@ function Api:send_position(p)
     end
     status, body = put(p.card, form)
     if status ~= 200 then return status_error(status, body) end
-    -- A serial has a card of its own, which says which episode is being read.
+    -- The episode's own card, for its progress on the phone. The position has gone already.
+    if p.wire and where.card then
+        put(where.card, { "lc[progress]=" .. where.progress, "lc[cfi]=" .. encode(where.range) })
+    end
+    -- What was set aside before a serial was one book: it has its card and the episode's.
     if p.serial_card then
         status, body = put(p.serial_card, {
             "lc[state]=reading",
@@ -392,11 +403,16 @@ function Api:manifest(book_uuid)
     if type(meta.opf) ~= "table" or type(meta.document_uuid) ~= "string" then
         return nil, "http", "manifest without opf"
     end
-    local secret
-    secret, kind, detail = self:get_json(API_BASE .. "/metadata_secret")
-    if not secret then return nil, kind, detail end
-    local key = find_key(secret)
-    if not key then return nil, "http", "no key" end
+    -- One for all books; a serial asks for a manifest per episode.
+    local key = self.metadata_key
+    if not key then
+        local secret
+        secret, kind, detail = self:get_json(API_BASE .. "/metadata_secret")
+        if not secret then return nil, kind, detail end
+        key = find_key(secret)
+        if not key then return nil, "http", "no key" end
+        self.metadata_key = key
+    end
 
     local out = { document_uuid = meta.document_uuid }
     for _, name in ipairs { "container", "opf", "ncx" } do

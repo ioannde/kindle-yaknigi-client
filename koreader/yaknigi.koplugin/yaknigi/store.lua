@@ -5,6 +5,7 @@
 -- the reading position and highlights, stays valid when the file is rebuilt with more
 -- chapters in it.
 local Opf = require("yaknigi/opf")
+local Serial = require("yaknigi/serial")
 local Zip = require("yaknigi/zip")
 local ffi = require("ffi")
 local json = require("rapidjson")
@@ -68,7 +69,7 @@ function Store:use_manifest(manifest)
     self.opf_path = opf_path
     local prefix = Opf.dirname(opf_path)
     self.book = Opf.parse(manifest.opf)
-    self.paths, self.resources = {}, {}
+    self.paths, self.resources, self.style_files = {}, {}, {}
     for i, href in ipairs(self.book.spine) do
         self.paths[i] = normalize(prefix .. href)
     end
@@ -78,6 +79,12 @@ function Store:use_manifest(manifest)
         local p = normalize(prefix .. item.href)
         if not is_chapter[p] and item.href ~= self.book.ncx then
             self.resources[#self.resources + 1] = p
+            if p:lower():match("%.css$") then
+                -- In a serial every episode has its own, and there can be hundreds.
+                local group = manifest.episodes and Serial.part_of(p) or ""
+                self.style_files[group] = self.style_files[group] or {}
+                table.insert(self.style_files[group], p)
+            end
         end
     end
     self.cover = self.book.cover and normalize(prefix .. self.book.cover) or nil
@@ -151,9 +158,26 @@ function Store:pictures_of(chapter)
     return out
 end
 
+--- The stylesheets a chapter may use.
+function Store:styles_of(path)
+    local group = self.manifest.episodes and path and Serial.part_of(path) or ""
+    return self.style_files[group] or {}
+end
+
+--- Gets a file of the book from Yandex. In a serial each file is of its episode's document.
+function Store:fetch(api, path)
+    local manifest = self.manifest
+    if manifest.episodes then
+        local part, inner = Serial.file_of(manifest, path)
+        if part and part.locked then return Serial.locked_page(part.title) end
+        if part then return api:content(part.document, inner) end
+    end
+    return api:content(manifest.document_uuid, path)
+end
+
 --- Paths of everything still to fetch, chapters nearest to `around` first and
--- forward before backward, then resources. Stylesheets go first of all, since they
--- change how every chapter looks, and the cover after them: it is the first page of many
+-- forward before backward, then resources. Stylesheets go before what they style, since they
+-- change how it looks, and the cover after the first of them: it is the first page of many
 -- a book, and what shows while the device sleeps.
 function Store:missing(around)
     local out, seen = {}, {}
@@ -163,20 +187,21 @@ function Store:missing(around)
             out[#out + 1] = p
         end
     end
-    for _, p in ipairs(self.resources) do
-        if p:lower():match("%.css$") then add(p) end
+    local function add_chapter(p)
+        if not p then return end
+        for _, style in ipairs(self:styles_of(p)) do add(style) end
+        add(p)
     end
-    add(self.cover)
     local n = #self.paths
     local c = math.max(1, math.min(around or 1, n))
-    add(self.paths[c])
+    for _, style in ipairs(self:styles_of(self.paths[c])) do add(style) end
+    add(self.cover)
+    add_chapter(self.paths[c])
     for d = 1, n do
-        add(self.paths[c + d])
-        add(self.paths[c - d])
+        add_chapter(self.paths[c + d])
+        add_chapter(self.paths[c - d])
     end
-    for _, p in ipairs(self.resources) do
-        if not p:lower():match("%.css$") then add(p) end
-    end
+    for _, p in ipairs(self.resources) do add(p) end
     return out
 end
 
