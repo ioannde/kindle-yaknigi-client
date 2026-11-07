@@ -23,6 +23,7 @@ local Screen = Device.screen
 local Catalogue = require("yaknigi/catalogue")
 local Feed = require("yaknigi/feed")
 local Kit = require("yaknigi/kit")
+local ReadMark = require("yaknigi/readmark")
 local SearchBox = require("yaknigi/searchbox")
 local Shelves = require("yaknigi/shelves")
 local Status = require("yaknigi/status")
@@ -113,7 +114,7 @@ local function fill_factor(file, w, h)
     return factor
 end
 
-local function cover_box(item, w, h)
+local function plain_cover(item, w, h)
     if item.cover then
         local ok, image = pcall(function()
             local widget = ImageWidget:new{
@@ -145,6 +146,12 @@ local function cover_box(item, w, h)
             Kit.text(letter, 26, { color = Blitbuffer.COLOR_DARK_GRAY }),
         },
     }
+end
+
+local function cover_box(item, w, h)
+    local cover = plain_cover(item, w, h)
+    if item.card and item.card.state == "finished" then return ReadMark.over(cover, w) end
+    return cover
 end
 
 local function title_box(text, width, size, lines)

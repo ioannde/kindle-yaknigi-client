@@ -2139,6 +2139,35 @@ local function test_finished(plugin)
     if tonumber(cached().progress) ~= tonumber(progress) then fail("the mark changed what was read") end
     if select(2, Session.read_card(dir)) ~= "finished" then fail("the book's own note of the state") end
 
+    -- The ribbon on the covers of read books, at the sizes they are shown in.
+    local Library = require("yaknigi/library")
+    local lfs = require("libs/libkoreader-lfs")
+    local picture
+    for name in lfs.dir(root .. "/covers") do
+        if name:sub(1, 1) ~= "." and not picture then picture = root .. "/covers/" .. name end
+    end
+    local read = { title = "Книга", cover = picture, card = { state = "finished" } }
+    local px = Screen:scaleBySize(1)
+    local tags = require("ui/widget/horizontalgroup"):new{ align = "top" }
+    for _, side in ipairs { 56, 73, 100, 126 } do
+        local box = Library.cover_box(read, side * px, side * px * 3 / 2)
+        if box.name ~= "YaknigiReadTag" then fail("no ribbon on a cover of " .. side) end
+        tags[#tags + 1] = box
+        tags[#tags + 1] = require("ui/widget/horizontalspan"):new{ width = 10 * px }
+    end
+    if Library.cover_box({ title = "Книга", cover = picture, card = { state = "reading" } }, 100 * px, 150 * px).name == "YaknigiReadTag" then
+        fail("a ribbon on a book not read")
+    end
+    if Library.cover_box(read, 40 * px, 60 * px).name == "YaknigiReadTag" then fail("a ribbon on the smallest cover") end
+    local tag_sheet = require("ui/widget/container/framecontainer"):new{
+        background = require("ffi/blitbuffer").COLOR_WHITE, bordersize = 0, padding = 10 * px, tags,
+    }
+    UIManager:show(tag_sheet)
+    UIManager:forceRePaint()
+    shot("70a-read-ribbons")
+    UIManager:close(tag_sheet)
+    UIManager:forceRePaint()
+
     -- Yandex answers yes and does nothing.
     mock_get("/test/ignore_state?on=1")
     sheet = menu()
