@@ -67,17 +67,25 @@ function Login:init()
     local center = function(widget)
         return CenterContainer:new{ dimen = Geom:new{ w = inner, h = widget:getSize().h }, widget }
     end
+    local title = center(Kit.text("Вход в Яндекс", 26, { bold = true }))
+    local steps = VerticalGroup:new{ align = "left" }
+    for i, text in ipairs(STEPS) do
+        steps[#steps + 1] = step(i, text, inner)
+        steps[#steps + 1] = Kit.gap(Kit.px(12))
+    end
+    local gap = Kit.px(24)
+    local taken = title:getSize().h + steps:getSize().h + 2 * gap + Kit.px(12)
+        + self.enter_button:getSize().h + self.later_button:getSize().h + 2 * gap
+    -- The code takes what the words leave, so nothing is cut off on a small screen.
+    local side = math.min(math.floor(math.min(W, H) * 0.52), H - taken)
+
     local group = VerticalGroup:new{ align = "left" }
     local function add(widget) group[#group + 1] = widget end
-    add(center(Kit.text("Вход в Яндекс", 26, { bold = true })))
-    add(Kit.gap(Kit.px(24)))
-    local side = math.floor(math.min(W, H) * 0.52)
+    add(title)
+    add(Kit.gap(gap))
     add(center(QRWidget:new{ text = self.url, width = side, height = side }))
-    add(Kit.gap(Kit.px(24)))
-    for i, text in ipairs(STEPS) do
-        add(step(i, text, inner))
-        add(Kit.gap(Kit.px(12)))
-    end
+    add(Kit.gap(gap))
+    add(steps)
     add(Kit.gap(Kit.px(12)))
     add(self.enter_button)
     add(self.later_button)
