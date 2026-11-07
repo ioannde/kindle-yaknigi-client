@@ -1145,10 +1145,9 @@ local function test_lists()
     shot("72-series")
     local closed_view = menu.view
     tap_widget(menu.row_buttons[menu.rows[4]])
-    wait("the word that it is closed", function() return top() ~= menu end)
-    UIManager:forceRePaint()
+    wait("the word that it is closed", is_named("YaknigiNoAccess"))
     shot("72-series-closed")
-    if top().name == "YaknigiNoAccess" then tap_widget(top().close_button) end
+    tap_widget(top().close_button)
     wait("the word to go", function() return top() == menu end)
     if menu.view ~= closed_view then fail("an unavailable book opened something") end
     menu:goBack()
