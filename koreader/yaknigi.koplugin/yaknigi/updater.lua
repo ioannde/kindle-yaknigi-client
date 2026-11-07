@@ -124,53 +124,53 @@ local function unpack_archive(dir, archive, manifest)
     os.execute("rm -rf " .. shell_quote(staging) .. " && mkdir -p " .. shell_quote(staging))
     -- Run as root on a FAT-like volume: owners cannot be set there, and tar must not mind.
     local flags = "--no-same-owner --no-same-permissions -xf " .. shell_quote(archive) .. " -C " .. shell_quote(staging)
-    local status = os.execute("./tar " .. flags .. " 2>/dev/null || tar " .. flags)
-    if status ~= 0 and status ~= true then return false end
-    -- The archive has to be the version that was asked for, and whole enough to start.
+    -- Its exit status says nothing in a forked process, where children may be reaped for us.
+    -- What was unpacked is what counts: the version that was asked for, whole enough to start.
+    os.execute("./tar " .. flags .. " 2>/dev/null || tar " .. flags)
     local plugin = staging .. "/yaknigi.koplugin"
-    if read_line(plugin .. "/yaknigi/VERSION") ~= manifest.version then return false end
-    if not loadfile(plugin .. "/main.lua") or not loadfile(plugin .. "/_meta.lua") then return false end
+    if read_line(plugin .. "/yaknigi/VERSION") ~= manifest.version then return false, "unpack" end
+    if not loadfile(plugin .. "/main.lua") or not loadfile(plugin .. "/_meta.lua") then return false, "load" end
     os.execute("rm -rf " .. shell_quote(dir .. "/pending"))
-    if not os.rename(staging, dir .. "/pending") then return false end
+    if not os.rename(staging, dir .. "/pending") then return false, "rename" end
     local f = io.open(dir .. "/pending/ready", "wb")
-    if not f then return false end
+    if not f then return false, "ready" end
     f:write(manifest.version)
     f:close()
     return true
 end
 
 --- The whole of it, for the forked process. Returns kind ("none", "manual", "ready", "network"
--- or "broken") and the version concerned.
+-- or "broken"), the version concerned, and what broke.
 function Updater.run(dir)
     local json = require("rapidjson")
     local sha2 = require("ffi/sha2")
     local Net = require("yaknigi/net")
     os.execute("mkdir -p " .. shell_quote(dir))
     local http = Http.new(Net.connect)
-    local function finish(kind, version)
+    local function finish(kind, version, why)
         http:close()
-        return kind, version
+        return kind, version, why
     end
     local body, err = Updater.get(http, Updater.RELEASES .. "/manifest.json")
     -- No release is out, which is not a failure of anything.
     if not body then return finish(err == "not_found" and "none" or "network") end
     local ok, manifest = pcall(json.decode, body)
-    if not ok or not Updater.valid_manifest(manifest) then return finish("broken") end
+    if not ok or not Updater.valid_manifest(manifest) then return finish("broken", nil, "manifest") end
     local decision = Updater.decide(manifest, Updater.version(), Updater.base(), read_line(dir .. "/bad"))
     if decision ~= "download" then return finish(decision, manifest.version) end
     if Updater.pending(dir) == manifest.version then return finish("ready", manifest.version) end
 
     body = Updater.get(http, Updater.RELEASES .. "/" .. Updater.ARCHIVE)
     if not body then return finish("network") end
-    if sha2.sha256(body):lower() ~= manifest.sha256:lower() then return finish("broken") end
+    if sha2.sha256(body):lower() ~= manifest.sha256:lower() then return finish("broken", manifest.version, "digest") end
     local archive = dir .. "/" .. Updater.ARCHIVE
     local f = io.open(archive, "wb")
-    if not f then return finish("broken") end
+    if not f then return finish("broken", manifest.version, "write") end
     f:write(body)
     f:close()
-    local unpacked = unpack_archive(dir, archive, manifest)
+    local unpacked, why = unpack_archive(dir, archive, manifest)
     os.remove(archive)
-    return finish(unpacked and "ready" or "broken", manifest.version)
+    return finish(unpacked and "ready" or "broken", manifest.version, why)
 end
 
 --- Puts what waits in place. The caller then restarts.

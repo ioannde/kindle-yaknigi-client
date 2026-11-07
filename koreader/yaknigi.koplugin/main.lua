@@ -571,8 +571,12 @@ function Yaknigi:checkUpdates(tell)
     os.remove(UPDATE_RESULT)
     local pid = ffiutil.runInSubProcess(function()
         pcall(function() require("ffi").C.nice(10) end)
-        local ok, kind, version = pcall(Updater.run, UPDATE_DIR)
-        write_json(UPDATE_RESULT, { kind = ok and kind or "broken", version = version })
+        local ok, kind, version, why = pcall(Updater.run, UPDATE_DIR)
+        write_json(UPDATE_RESULT, {
+            kind = ok and kind or "broken",
+            version = ok and version or nil,
+            why = ok and why or tostring(kind),
+        })
         os.exit(0)
     end)
     if pid then
@@ -591,6 +595,7 @@ function Yaknigi:pollUpdate(pid, tell)
         updating = false
         local result = read_json(UPDATE_RESULT) or { kind = "broken" }
         os.remove(UPDATE_RESULT)
+        logger.info("Yaknigi update:", result.kind, result.version, result.why)
         -- Without the network nothing was learned, and the next visit to the library may try again.
         if result.kind ~= "network" then
             AppState:saveSetting("update_checked", os.time())
