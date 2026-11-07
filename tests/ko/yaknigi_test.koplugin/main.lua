@@ -828,9 +828,9 @@ local function test_reading_screen()
 
     -- The sleep screen: the cover of the open book, or the page as it is.
     tap_widget(settings.rows.sleep_screen)
-    -- No collection in this package: the cover, one's own picture, the page.
-    if #settings.options ~= 3 then fail("sleep screens without the collection: " .. #settings.options) end
-    tap_widget(settings.options[3])
+    -- The cover, the collection, one's own picture, the page.
+    if #settings.options ~= 4 then fail("the sleep screens: " .. #settings.options) end
+    tap_widget(settings.options[4])
     if G_reader_settings:readSetting("screensaver_type") ~= "disable" then fail("sleep screen stays on the cover") end
     tap_widget(settings.rows.sleep_screen)
     tap_widget(settings.options[1])
@@ -874,23 +874,36 @@ local function test_reading_screen()
     Prefs.apply_sleep_screen()
     if G_reader_settings:readSetting("screensaver_document_cover") ~= cover then fail("the cover is not back") end
 
-    -- The collection is offered when it is in the package, and a picture comes from it at random.
-    os.execute("mkdir -p '" .. Prefs.FACES_DIR .. "'")
-    copy_cover(Prefs.FACES_DIR .. "/face.jpg", 1000)
+    -- The collection comes with the package, and each sleep picks from it at random.
     settings:changed()
     tap_widget(settings.rows.sleep_screen)
-    if #settings.options ~= 4 then fail("the collection is not offered: " .. #settings.options) end
     shot("20f-sleep-screens")
     tap_widget(settings.options[2])
     if G_reader_settings:readSetting("yaknigi_sleep_screen") ~= "faces" then fail("the collection not chosen") end
-    Screensaver:setup("suspend")
-    if Screensaver.image_file ~= Prefs.FACES_DIR .. "/face.jpg" then
-        fail("the collection's picture: " .. tostring(Screensaver.image_file))
+    local portraits, kinds = 0, {}
+    for name in lfs.dir(Prefs.FACES_DIR) do
+        if name:find("%.jpg$") then portraits = portraits + 1 end
     end
-    Screensaver:cleanup()
+    if portraits ~= 10 then fail("the portraits in the package: " .. portraits) end
+    for _ = 1, 40 do
+        Screensaver:setup("suspend")
+        local file = tostring(Screensaver.image_file)
+        if file:sub(1, #Prefs.FACES_DIR + 1) ~= Prefs.FACES_DIR .. "/" then fail("the collection's picture: " .. file) end
+        kinds[file] = true
+        Screensaver:cleanup()
+    end
+    local picked = 0
+    for _ in pairs(kinds) do picked = picked + 1 end
+    if picked < 3 then fail("the same portraits at each sleep: " .. picked) end
     if not G_reader_settings:isTrue("screensaver_stretch_images") then fail("the collection does not fill the screen") end
-    os.remove(Prefs.FACES_DIR .. "/face.jpg")
-    os.remove(Prefs.FACES_DIR)
+    -- As it is seen: a portrait, the whole screen of it.
+    Screensaver:setup("suspend")
+    Screensaver:show()
+    UIManager:forceRePaint()
+    shot("20g-sleep-portrait")
+    Screensaver:close_widget()
+    Screensaver:cleanup()
+    UIManager:forceRePaint()
     G_reader_settings:saveSetting("yaknigi_sleep_screen", "cover")
     Prefs.apply_sleep_screen()
     settings:changed()
