@@ -37,6 +37,7 @@ local NoteSync = require("yaknigi/notesync")
 local NotesLocal = require("yaknigi/notes_local")
 local Prefs = require("yaknigi/prefs")
 local Settings = require("yaknigi/settings")
+local Shade = require("yaknigi/shade")
 local BookMenu = require("yaknigi/bookmenu")
 local Storage = require("yaknigi/storage")
 local Shelves = require("yaknigi/shelves")
@@ -2426,10 +2427,51 @@ function Yaknigi:onSetDimensions()
     end
 end
 
+-- The panel from the top -------------------------------------------------------
+
+--- What the panel offers beside the radios and the theme. Sync only with Yandex, signed in.
+function Yaknigi:shadeActions()
+    return {
+        sync = saved_token() and function() self:syncNow() end or nil,
+        settings = function() self:openSettings() end,
+    }
+end
+
+--- The book's place and notes both ways; in the library, the list of books.
+function Yaknigi:syncNow()
+    UIManager:show(Notification:new{ text = "Синхронизация с Яндекс Книгами" })
+    if self.ui.document then
+        NetworkMgr:runWhenOnline(function()
+            self:saveReading()
+            self:exchange()
+            self:syncNotes()
+        end)
+    else
+        self:refreshLibrary(true)
+    end
+end
+
+function Yaknigi:openSettings()
+    local top = Shade.topmost()
+    if top and top.name == "YaknigiSettings" then return end
+    if not self.ui.document then
+        self:showSettings()
+        return
+    end
+    local ui = self.ui
+    UIManager:show(Settings:new{ ui = ui, on_close_app = function()
+        ui:onClose()
+        UIManager:quit()
+    end })
+end
+
 -- Plugin ----------------------------------------------------------------------
 
 function Yaknigi:init()
     if self.ui.menu then self.ui.menu:registerToMainMenu(self) end
+    -- The panel's sync and settings belong to the screen made last: the book or the library.
+    Shade.owner = self
+    Shade.install()
     -- Every return from a book makes a new file manager, which brings the library back.
     if APP_MODE and not self.ui.document then
         -- It stands under the library and is never to be seen, not even for a moment.

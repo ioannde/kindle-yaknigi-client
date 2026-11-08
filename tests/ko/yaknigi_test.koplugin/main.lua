@@ -2382,6 +2382,81 @@ local function test_updates(plugin)
     UIManager:close(settings)
 end
 
+-- The panel from the top: a swipe down anywhere, the radios, the theme, sync and settings.
+local function test_shade(where)
+    local NetworkMgr = require("ui/network/manager")
+    -- Under a toast (the sync's word) the panel is not the topmost widget.
+    local function shown()
+        for _, window in ipairs(UIManager._window_stack) do
+            if window.widget.name == "YaknigiShade" then return window.widget end
+        end
+    end
+    local below = top()
+    local page = below.page
+    local W, H = Screen:getWidth(), Screen:getHeight()
+    local function pull()
+        gesture("swipe", math.floor(W / 2), math.floor(H * 0.3), { end_pos = { math.floor(W / 2), math.floor(H * 0.7) } })
+        UIManager:forceRePaint()
+    end
+    pull()
+    -- What stood under it is not touched: a list is not turned back.
+    local shade = wait("the panel in the " .. where, shown, 5)
+    if page and below.page ~= page then fail("the swipe down turned the " .. where) end
+    for _, id in ipairs({ "airplane", "wifi", "dark", "sync", "settings" }) do
+        if not shade.tiles[id] then fail("no " .. id .. " on the panel in the " .. where) end
+    end
+    if shade.area.h >= H then fail("the panel covers the screen") end
+    shot("60-shade-" .. where)
+    -- A second swipe down does not bring a second panel.
+    pull()
+    local count = 0
+    for _, window in ipairs(UIManager._window_stack) do
+        if window.widget.name == "YaknigiShade" then count = count + 1 end
+    end
+    if count ~= 1 then fail("panels in the " .. where .. ": " .. count) end
+
+    -- The radios, with KOReader's Wi-Fi as an emulator cannot have it.
+    local saved = { NetworkMgr.isWifiOn, NetworkMgr.toggleWifiOn, NetworkMgr.toggleWifiOff }
+    local wifi = true
+    NetworkMgr.isWifiOn = function() return wifi end
+    NetworkMgr.toggleWifiOn = function(_, done) wifi = true; if done then done() end end
+    NetworkMgr.toggleWifiOff = function(_, done) wifi = false; if done then done() end end
+    tap_widget(shade.tiles.airplane)
+    if not shade.tiles.airplane.on or shade.tiles.wifi.on or wifi then fail("airplane mode did not turn on") end
+    shot("61-shade-airplane-" .. where)
+    tap_widget(shade.tiles.airplane)
+    if shade.tiles.airplane.on or not shade.tiles.wifi.on or not wifi then fail("airplane mode did not turn off") end
+    tap_widget(shade.tiles.wifi)
+    if shade.tiles.wifi.on or shade.tiles.airplane.on then fail("Wi-Fi off is airplane mode") end
+    tap_widget(shade.tiles.wifi)
+    if not shade.tiles.wifi.on then fail("Wi-Fi did not turn back on") end
+    NetworkMgr.isWifiOn, NetworkMgr.toggleWifiOn, NetworkMgr.toggleWifiOff = saved[1], saved[2], saved[3]
+
+    -- The theme, and back.
+    tap_widget(shade.tiles.dark)
+    if not G_reader_settings:isTrue("night_mode") or not shade.tiles.dark.on then fail("no dark theme from the panel") end
+    shot("62-shade-dark-" .. where)
+    tap_widget(shade.tiles.dark)
+    if G_reader_settings:isTrue("night_mode") then fail("the dark theme stays") end
+
+    -- A swipe up puts it away, with what was under it as it was.
+    gesture("swipe", math.floor(W / 2), math.floor(H * 0.7), { end_pos = { math.floor(W / 2), math.floor(H * 0.3) } })
+    wait("the panel gone in the " .. where, function() return top() == below end, 5)
+
+    -- Sync goes; the settings open over what was there.
+    pull()
+    shade = wait("the panel again in the " .. where, shown, 5)
+    tap_widget(shade.tiles.sync)
+    wait("the panel gone for sync", function() return not shown() end, 5)
+    pull()
+    shade = wait("the panel for settings", shown, 5)
+    tap_widget(shade.tiles.settings)
+    local settings = wait("the settings from the panel", is_named("YaknigiSettings"), 5)
+    shot("63-shade-settings-" .. where)
+    UIManager:close(settings)
+    wait("back from the settings", function() return top() == below end, 5)
+end
+
 local function script()
     local plugin = require("apps/filemanager/filemanager").instance.yaknigi
     if not plugin then fail("plugin is not loaded") end
@@ -2512,6 +2587,7 @@ local function script()
     shot("03g-library-not-found")
     tap_widget(menu.clear_button)
     if menu.query or #menu.rows == 0 then fail("the search was not cleared") end
+    test_shade("library")
 
     tap_widget(menu.next_button)
     if menu.page ~= 2 then fail("the arrow did not turn the library") end
@@ -2564,6 +2640,7 @@ local function script()
     if n ~= 31 then fail("position lost in the swap: " .. tostring(xp)) end
     shot("06-reader-whole")
     test_reading_screen()
+    test_shade("reader")
     n, xp = fragment()
     if n ~= 31 then fail("left the chapter in the panels: " .. tostring(xp)) end
 

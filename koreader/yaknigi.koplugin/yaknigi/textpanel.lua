@@ -62,17 +62,6 @@ local function nearest(values, value)
     return best
 end
 
---- A drag asks for the same value many times over, and each change goes to the hardware.
-local function only_changes(set)
-    local last
-    return function(value)
-        if value ~= last then
-            last = value
-            set(value)
-        end
-    end
-end
-
 function TextPanel:init()
     local full = Geom:new{ x = 0, y = 0, w = Screen:getWidth(), h = Screen:getHeight() }
     self.ges_events = {
@@ -81,15 +70,6 @@ function TextPanel:init()
     }
     self.fonts = font_list()
     self:build()
-end
-
---- A slider between the two drawings of what it changes.
-local function slider_row(slider, left, left_side, right, right_side, box)
-    local function icon(name, side)
-        return CenterContainer:new{ dimen = Geom:new{ w = box, h = slider:getSize().h },
-            Kit.icon(name, side) }
-    end
-    return HorizontalGroup:new{ align = "center", icon(left, left_side), slider, icon(right, right_side) }
 end
 
 --- The name of a font, in that font if it can be had.
@@ -291,32 +271,9 @@ function TextPanel:buildMain(rows, inner)
     local ui = self.ui
     local config = ui.document.configurable
 
-    local powerd = Device:hasFrontlight() and Device:getPowerDevice()
-    if powerd then
-        local box = Kit.px(44)
-        local slider_w = inner - 2 * box
-        local set_light = only_changes(function(v) powerd:setIntensity(v) end)
-        self.light = Kit.Slider:new{
-            width = slider_w,
-            ratio = powerd:frontlightIntensity() / powerd.fl_max,
-            show_dirty = self,
-            on_drag = function(r) set_light(math.floor(r * powerd.fl_max + 0.5)) end,
-            on_commit = function(r) set_light(math.floor(r * powerd.fl_max + 0.5)); self:rebuild() end,
-        }
-        rows[#rows + 1] = slider_row(self.light, "sun", Kit.px(24), "sun", Kit.px(36), box)
-        if Device:hasNaturalLight() then
-            local set_warmth = only_changes(function(v) powerd:setWarmth(v) end)
-            self.warmth = Kit.Slider:new{
-                width = slider_w,
-                ratio = powerd:frontlightWarmth() / 100,
-                show_dirty = self,
-                on_drag = function(r) set_warmth(math.floor(r * 100 + 0.5)) end,
-                on_commit = function(r) set_warmth(math.floor(r * 100 + 0.5)); self:rebuild() end,
-            }
-            rows[#rows + 1] = slider_row(self.warmth, "cold", Kit.px(30), "warm", Kit.px(30), box)
-        end
-        rows[#rows + 1] = Kit.gap(Kit.px(12))
-    end
+    local has_light
+    has_light, self.light, self.warmth = Kit.light_rows(rows, inner, self, function() self:rebuild() end)
+    if has_light then rows[#rows + 1] = Kit.gap(Kit.px(12)) end
 
     -- Two columns: the font and the spacing on the left, the size and the margins on the right.
     local between = Kit.px(16)

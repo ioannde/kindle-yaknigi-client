@@ -530,7 +530,7 @@ end
 
 function Settings:onSwipe(_, ges)
     if ges.direction == "west" or ges.direction == "north" then self:turn(1)
-    elseif ges.direction == "east" or ges.direction == "south" then self:turn(-1) end
+    elseif ges.direction == "east" then self:turn(-1) end
     return true
 end
 

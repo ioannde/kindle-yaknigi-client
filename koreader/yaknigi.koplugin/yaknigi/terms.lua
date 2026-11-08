@@ -18,6 +18,8 @@ local FILE = (debug.getinfo(1, "S").source:match("^@(.*)/[^/]*$") or ".") .. "/.
 
 local Terms = InputContainer:extend{
     name = "YaknigiTerms",
+    -- A swipe down scrolls the text back; and before the terms are accepted there is nothing to sync.
+    no_shade = true,
     covers_fullscreen = true,
     on_accept = nil, -- with these two it asks; without them it is only to read
     on_decline = nil,

@@ -150,8 +150,7 @@ end
 
 function Notes:onSwipe(_, ges)
     if ges.direction == "west" then self:turn(1)
-    elseif ges.direction == "east" then self:turn(-1)
-    elseif ges.direction == "south" then self:close() end
+    elseif ges.direction == "east" then self:turn(-1) end
     return true
 end
 

@@ -460,4 +460,52 @@ Slider.onMultiswipeSlider = Slider.onPanReleaseSlider
 
 Kit.Slider = Slider
 
+--- A drag asks for the same value many times over, and each change goes to the hardware.
+function Kit.only_changes(set)
+    local last
+    return function(value)
+        if value ~= last then
+            last = value
+            set(value)
+        end
+    end
+end
+
+--- A slider between the two drawings of what it changes, each in a box of the given side.
+function Kit.slider_row(slider, left, left_side, right, right_side, box)
+    local function icon(name, side)
+        return CenterContainer:new{ dimen = Geom:new{ w = box, h = slider:getSize().h }, Kit.icon(name, side) }
+    end
+    return HorizontalGroup:new{ align = "center", icon(left, left_side), slider, icon(right, right_side) }
+end
+
+--- The light's two sliders, when the device has them: brightness, then warmth.
+-- show_dirty: what to repaint while dragged; after(): when a drag ends.
+function Kit.light_rows(rows, width, show_dirty, after)
+    local powerd = Device:hasFrontlight() and Device:getPowerDevice()
+    if not powerd then return false end
+    local box = Kit.px(44)
+    local slider_w = width - 2 * box
+    local function slider(ratio, set, scale)
+        local apply = Kit.only_changes(set)
+        local function value(r) return math.floor(r * scale + 0.5) end
+        return Slider:new{
+            width = slider_w,
+            ratio = ratio,
+            show_dirty = show_dirty,
+            on_drag = function(r) apply(value(r)) end,
+            on_commit = function(r) apply(value(r)); if after then after() end end,
+        }
+    end
+    local light = slider(powerd:frontlightIntensity() / powerd.fl_max,
+        function(v) powerd:setIntensity(v) end, powerd.fl_max)
+    rows[#rows + 1] = Kit.slider_row(light, "sun", Kit.px(24), "sun", Kit.px(36), box)
+    local warmth
+    if Device:hasNaturalLight() then
+        warmth = slider(powerd:frontlightWarmth() / 100, function(v) powerd:setWarmth(v) end, 100)
+        rows[#rows + 1] = Kit.slider_row(warmth, "cold", Kit.px(30), "warm", Kit.px(30), box)
+    end
+    return true, light, warmth
+end
+
 return Kit

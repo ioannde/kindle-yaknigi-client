@@ -1,6 +1,7 @@
 -- Made by tools/icons/import_figma.py from the drawings, not to be edited by hand.
 -- How much empty room each icon has around what is drawn, as a share of its side.
 return {
+    ["airplane"] = { left = 0.0958, right = 0.0958, top = 0.0708, bottom = 0.0708 },
     ["book"] = { left = 0.1625, right = 0.1625, top = 0.0792, bottom = 0.0792 },
     ["check"] = { left = 0.1208, right = 0.1208, top = 0.2250, bottom = 0.2042 },
     ["chevron.left"] = { left = 0.2979, right = 0.2979, top = 0.1417, bottom = 0.1417 },
@@ -14,6 +15,7 @@ return {
     ["lock"] = { left = 0.1625, right = 0.1625, top = 0.0792, bottom = 0.0792 },
     ["lock.open"] = { left = 0.1625, right = 0.1625, top = 0.0800, bottom = 0.0792 },
     ["menu"] = { left = 0.1000, right = 0.1000, top = 0.2250, bottom = 0.2250 },
+    ["moon"] = { left = 0.0777, right = 0.0792, top = 0.0792, bottom = 0.0777 },
     ["panel.notes"] = { left = 0.2042, right = 0.2042, top = 0.0792, bottom = 0.0792 },
     ["panel.toc"] = { left = 0.1000, right = 0.0792, top = 0.2042, bottom = 0.2042 },
     ["pencil"] = { left = 0.1208, right = 0.1417, top = 0.1417, bottom = 0.1208 },
@@ -29,5 +31,6 @@ return {
     ["trash"] = { left = 0.1000, right = 0.1000, top = 0.1000, bottom = 0.0792 },
     ["wait"] = { left = 0.2042, right = 0.2042, top = 0.0792, bottom = 0.0792 },
     ["warm"] = { left = 0.1833, right = 0.1833, top = 0.0792, bottom = 0.1000 },
+    ["wifi"] = { left = 0.1004, right = 0.1004, top = 0.2667, bottom = 0.1250 },
     ["yandex-books"] = { left = 0.0792, right = 0.0792, top = 0.0792, bottom = 0.0792 },
 }
