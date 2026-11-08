@@ -72,7 +72,7 @@ function Shade:build()
           tap = function() self:toggleDark() end },
     }
     if actions.sync then
-        tiles[#tiles + 1] = { id = "sync", icon = "reload", text = "Синхронизация",
+        tiles[#tiles + 1] = { id = "sync", icon = "reload", text = "Синхр.",
             tap = function() self:after(actions.sync) end }
     end
     if actions.settings then
@@ -87,7 +87,7 @@ function Shade:build()
         local group = VerticalGroup:new{ align = "center",
             disc(tile.icon, tile.on, side),
             Kit.gap(Kit.px(6)),
-            Kit.text(tile.text, 13, { max_width = cell }),
+            Kit.text(tile.text, 14, { max_width = cell }),
         }
         local button = Kit.button(group, cell, group:getSize().h + Kit.px(12), tile.tap)
         button.on = tile.on
