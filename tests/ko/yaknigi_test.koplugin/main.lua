@@ -2394,10 +2394,19 @@ local function test_shade(where)
     local below = top()
     local page = below.page
     local W, H = Screen:getWidth(), Screen:getHeight()
-    local function pull()
-        gesture("swipe", math.floor(W / 2), math.floor(H * 0.3), { end_pos = { math.floor(W / 2), math.floor(H * 0.7) } })
+    -- A swipe as the detector gives it: with the direction.
+    local function swipe(direction, from_y, to_y)
+        UIManager:forceRePaint()
+        local x = math.floor(W / 2)
+        UIManager:sendEvent(Event:new("Gesture", {
+            ges = "swipe", direction = direction, distance = math.abs(to_y - from_y),
+            pos = Geom:new{ x = x, y = from_y, w = 0, h = 0 },
+            end_pos = Geom:new{ x = x, y = to_y, w = 0, h = 0 },
+            time = require("ui/time").now(),
+        }))
         UIManager:forceRePaint()
     end
+    local function pull() swipe("south", math.floor(H * 0.3), math.floor(H * 0.7)) end
     pull()
     -- What stood under it is not touched: a list is not turned back.
     local shade = wait("the panel in the " .. where, shown, 5)
@@ -2440,7 +2449,7 @@ local function test_shade(where)
     if G_reader_settings:isTrue("night_mode") then fail("the dark theme stays") end
 
     -- A swipe up puts it away, with what was under it as it was.
-    gesture("swipe", math.floor(W / 2), math.floor(H * 0.7), { end_pos = { math.floor(W / 2), math.floor(H * 0.3) } })
+    swipe("north", math.floor(H * 0.7), math.floor(H * 0.3))
     wait("the panel gone in the " .. where, function() return top() == below end, 5)
 
     -- Sync goes; the settings open over what was there.
