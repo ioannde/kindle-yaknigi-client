@@ -139,7 +139,7 @@ function Shade:toggle(what)
     end
     -- KOReader does not always call back (an emulator has no radios to wait for): the panel
     -- looks again a little later all the same.
-    UIManager:unschedule(self.look_again)
+    if self.look_again then UIManager:unschedule(self.look_again) end
     self.look_again = done
     UIManager:scheduleIn(3, done)
     if what == "airplane" then
