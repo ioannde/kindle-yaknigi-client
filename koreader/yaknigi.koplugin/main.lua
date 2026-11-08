@@ -2470,8 +2470,11 @@ end
 function Yaknigi:init()
     if self.ui.menu then self.ui.menu:registerToMainMenu(self) end
     -- The panel's sync and settings belong to the screen made last: the book or the library.
-    Shade.owner = self
-    Shade.install()
+    -- Only in the app: in someone's own KOReader a swipe down is theirs.
+    if APP_MODE then
+        Shade.owner = self
+        Shade.install()
+    end
     -- Every return from a book makes a new file manager, which brings the library back.
     if APP_MODE and not self.ui.document then
         -- It stands under the library and is never to be seen, not even for a moment.
