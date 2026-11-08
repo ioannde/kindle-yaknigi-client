@@ -1,5 +1,5 @@
--- The way out, from the top of the settings: leave the app, put the device to sleep, or turn
--- it off. Neither of the last two is KOReader's on a Kindle: it has no way to power off there.
+-- The way out, from the top of the settings: leave the app (in someone's own KOReader, the
+-- library), put the device to sleep, or turn it off. Neither of the last two is KOReader's on a Kindle: it has no way to power off there.
 local ButtonDialog = require("ui/widget/buttondialog")
 local Device = require("device")
 local Event = require("ui/event")
@@ -34,8 +34,9 @@ function Power.off()
     UIManager:quit()
 end
 
---- all: also what this device has no use for. Returns the dialog.
-function Power.show(on_close_app, all)
+--- all: also what this device has no use for. app: the app, not someone's own KOReader, which
+-- has a way out of its own and turns the device off itself. Returns the dialog.
+function Power.show(on_close_app, all, app)
     local dialog
     local function item(id, text, action)
         return { {
@@ -48,11 +49,11 @@ function Power.show(on_close_app, all)
             end,
         } }
     end
-    local buttons = { item("exit", "Выйти из приложения", on_close_app) }
+    local buttons = { item("exit", app and "Выйти из приложения" or "Вернуться в KOReader", on_close_app) }
     if all or Device:canSuspend() then
         buttons[#buttons + 1] = item("sleep", "Сон", function() UIManager:suspend() end)
     end
-    if all or Device:isKindle() then
+    if all or app and Device:isKindle() then
         buttons[#buttons + 1] = item("off", "Выключить устройство", function() Power.off() end)
     end
     dialog = ButtonDialog:new{ buttons = buttons }

@@ -42,6 +42,16 @@ function Updater.enabled()
     return Updater.version():match("^%d+%.%d+%.%d+$") ~= nil and os.getenv("YAKNIGI_DIR") ~= nil
 end
 
+--- A release put into someone's own KOReader: it can only say that a new one is out.
+function Updater.notify_only()
+    return Updater.version():match("^%d+%.%d+%.%d+$") ~= nil and os.getenv("YAKNIGI_DIR") == nil
+end
+
+--- Whether new versions are looked for at all.
+function Updater.checks()
+    return Updater.enabled() or Updater.notify_only()
+end
+
 --- Whether version a is later than version b.
 function Updater.newer(a, b)
     local x, y = {}, {}

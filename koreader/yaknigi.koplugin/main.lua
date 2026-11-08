@@ -444,7 +444,7 @@ function Yaknigi:showSettings()
         storage = self:storageActions(),
         updates = {
             version = Updater.version(),
-            enabled = Updater.enabled(),
+            enabled = Updater.checks(),
             check = function() self:checkUpdates(true) end,
         },
         on_close_app = function()
@@ -580,7 +580,7 @@ end
 
 --- Asks once a day, on starting, with the network already up: never turns the Wi-Fi on for this.
 function Yaknigi:autoUpdate()
-    if not Updater.enabled() or updating then return end
+    if not Updater.checks() or updating then return end
     if not AppState:nilOrTrue("check_updates") or not NetworkMgr:isOnline() then return end
     if Updater.due(AppState:readSetting("update_checked"), os.time()) then
         self:checkUpdates(false)
@@ -610,7 +610,9 @@ function Yaknigi:updateChecked(result, tell)
     end
     local version = type(manifest) == "table" and manifest.version or nil
     local skipped = version and not tell and AppState:readSetting("update_skipped") == version
-    if kind == "available" and not skipped then
+    if Updater.notify_only() and (kind == "available" or kind == "manual") then
+        if not skipped then self:tellNewPlugin(version) end
+    elseif kind == "available" and not skipped then
         self:offerUpdate(manifest)
     elseif kind == "manual" and not skipped then
         -- Said once, unless asked: there is nothing to do about it from here.
@@ -625,6 +627,22 @@ function Yaknigi:updateChecked(result, tell)
     elseif tell and kind ~= "available" then
         UIManager:show(InfoMessage:new{ text = "Не удалось проверить обновления. Попробуйте позже." })
     end
+end
+
+--- In someone's own KOReader nothing is downloaded: the plugin's folder is theirs to replace.
+function Yaknigi:tellNewPlugin(version)
+    UIManager:show(ConfirmBox:new{
+        name = "YaknigiUpdateOffer",
+        text = "Вышла новая версия " .. version .. ", у вас " .. Updater.version() .. ". "
+            .. "Скачайте yaknigi.koplugin.zip на странице релизов проекта на GitHub и замените им "
+            .. "папку yaknigi.koplugin в папке plugins KOReader.",
+        ok_text = "Понятно", -- asked again at the next daily check
+        cancel_text = "Пропустить",
+        cancel_callback = function()
+            AppState:saveSetting("update_skipped", version)
+            AppState:flush()
+        end,
+    })
 end
 
 function Yaknigi:offerUpdate(manifest)
@@ -1933,13 +1951,16 @@ function Yaknigi:onReaderReady()
     self.reading_session = Sync.new_session()
     self.queued_at = os.time()
     self:keepChapter()
+    -- In someone's own KOReader the reading screen stays theirs: the shell only counts the
+    -- progress that goes to Yandex.
+    self.shell = Shell.new(self.ui, self)
     if APP_MODE then
-        self.shell = Shell.new(self.ui, self)
         self.shell:install()
+        self.shell_installed = true
         self:chooseSleepCover(store)
-        -- Not in the way of the first page.
-        UIManager:scheduleIn(NOTES_AFTER_OPENING_SECONDS, function() self:syncNotes() end)
     end
+    -- Not in the way of the first page.
+    UIManager:scheduleIn(NOTES_AFTER_OPENING_SECONDS, function() self:syncNotes() end)
     local state = workers[store.id] or {}
     workers[store.id] = state
     self:jumpIfWaiting(state)
@@ -2399,7 +2420,7 @@ function Yaknigi:onResume()
     -- Wi-Fi takes a while to come back.
     UIManager:scheduleIn(NOTES_AFTER_WAKING_SECONDS, function() self:syncNotes() end)
     -- The time on the page is hours behind.
-    if self.shell and self.ui.view then self.shell:onWake() end
+    if self.shell_installed and self.ui.view then self.shell:onWake() end
 end
 
 function Yaknigi:onCloseDocument()
@@ -2422,7 +2443,7 @@ end
 
 function Yaknigi:onSetDimensions()
     -- The screen was rotated; KOReader has laid out its zones for the new shape.
-    if self.shell then
+    if self.shell_installed then
         UIManager:nextTick(function() self.shell:registerZone() end)
     end
 end

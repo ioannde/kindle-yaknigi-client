@@ -98,7 +98,7 @@ function TextStyle.set_tap_mode(ui, mode)
     if ui and ui.document and ui.view then
         ui.view:setupTouchZones()
         -- Registering anew takes a zone out of what ours come before.
-        if ui.yaknigi and ui.yaknigi.shell then ui.yaknigi.shell:registerZone() end
+        if ui.yaknigi and ui.yaknigi.shell_installed then ui.yaknigi.shell:registerZone() end
     end
 end
 

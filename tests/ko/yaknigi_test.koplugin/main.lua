@@ -3076,12 +3076,137 @@ local function script()
     tap_widget(settings.power_dialog.buttontable:getButtonById("exit"))
 end
 
+--- In someone's own KOReader: the library is asked for from the menu, the reading screen stays
+-- KOReader's, the place still goes to Yandex, and a new version is only told about.
+local function plugin_script()
+    local FileManager = require("apps/filemanager/filemanager")
+    local function plugin() return FileManager.instance and FileManager.instance.yaknigi end
+    if not plugin() then fail("plugin is not loaded") end
+    local function no_shade()
+        for _, window in ipairs(UIManager._window_stack) do
+            if window.widget.name == "YaknigiShade" then fail("the panel from the top in someone's KOReader") end
+        end
+    end
+    local function swipe_down()
+        local W, H = Screen:getWidth(), Screen:getHeight()
+        UIManager:forceRePaint()
+        UIManager:sendEvent(Event:new("Gesture", {
+            ges = "swipe", direction = "south", distance = math.floor(H * 0.4),
+            pos = Geom:new{ x = math.floor(W / 2), y = math.floor(H * 0.3), w = 0, h = 0 },
+            end_pos = Geom:new{ x = math.floor(W / 2), y = math.floor(H * 0.7), w = 0, h = 0 },
+            time = require("ui/time").now(),
+        }))
+        UIManager:forceRePaint()
+    end
+
+    -- KOReader's own file browser is what starts, and nothing of ours is over it.
+    local t0 = socket.gettime()
+    wait("a moment", function() return socket.gettime() - t0 > 2 end)
+    if top() ~= FileManager.instance then fail("something over the file browser: " .. tostring(top().name)) end
+    shot("p00-file-browser")
+    local items = {}
+    plugin():addToMainMenu(items)
+    if not items.yaknigi then fail("no menu entry") end
+    items.yaknigi.sub_item_table[1].callback()
+
+    local terms = wait("the terms", function() return top().name == "YaknigiTerms" and top() end)
+    tap_widget(terms.accept_button)
+    local login = wait("the sign-in screen", function()
+        local w = top()
+        return w.name == "YaknigiLogin" and w.url:find("code_challenge=", 1, true) and w
+    end)
+    require("socket.http").request(os.getenv("YB_OAUTH_BASE") .. "/challenge?c=" .. login.url:match("code_challenge=([^&]+)"))
+    tap_widget(login.enter_button)
+    local dialog = wait("the code dialog", function()
+        for _, window in ipairs(UIManager._window_stack) do
+            if window.widget.getInputText then return window.widget end
+        end
+    end)
+    dialog:setInputText("abc123")
+    for _, b in ipairs(dialog.buttons[1]) do
+        if b.text == "Войти" then b.callback() end
+    end
+    local menu = library_with(21)
+    shot("p01-library")
+    swipe_down()
+    no_shade()
+
+    -- KOReader's reading screen, and the place read sent all the same.
+    local function position() return mock_get("/test/position?book=book0") end
+    local before = position().writes
+    open(menu, "Книга номер 0")
+    local ui = reader()
+    if not ui.yaknigi or ui.yaknigi.shell_installed then fail("the reading screen was taken over") end
+    swipe_down()
+    no_shade()
+    for _ = 1, 3 do ui:handleEvent(Event:new("GotoViewRel", 1)) end
+    UIManager:forceRePaint()
+    shot("p02-reader")
+    ui:onHome()
+    wait("the file browser after the book", function() return FileManager.instance and top() == FileManager.instance end)
+    wait("the place sent", function() return position().writes ~= before end, 20)
+    say("the place goes to Yandex from KOReader's own reader")
+
+    -- Only KOReader's own settings for the screen and sleep: none of ours.
+    plugin():showLibrary()
+    library_with(21)
+    plugin():showSettings()
+    local settings = wait("the settings", function() return top().name == "YaknigiSettings" and top() end)
+    UIManager:forceRePaint()
+    for _, key in ipairs({ "clock", "refresh", "sleep_screen", "sleep_time" }) do
+        if settings.rows[key] then fail("an app's row in someone's KOReader: " .. key) end
+    end
+    for _ = 2, settings.pages or 1 do
+        tap_widget(settings.pager_next)
+        UIManager:forceRePaint()
+    end
+    if not settings.rows.check_updates then fail("no switch for looking for new versions") end
+    shot("p03-settings")
+
+    -- A new version is told about; nothing is fetched.
+    local Updater = require("yaknigi/updater")
+    if Updater.enabled() or not Updater.notify_only() then fail("the plugin would install updates itself") end
+    require("socket.http").request(os.getenv("YB_OAUTH_BASE") .. "/test/update?mode=good")
+    plugin():checkUpdates(true)
+    local told = wait("the news of a version", function()
+        return top().name == "YaknigiUpdateOffer" and top()
+    end)
+    if not tostring(told.text):find("yaknigi.koplugin.zip", 1, true) then fail("the news says not where to get it") end
+    shot("p04-new-version")
+    told.cancel_callback()
+    UIManager:close(told)
+    if require("yaknigi/appstate"):readSetting("update_skipped") ~= "9.9.9" and
+        not require("yaknigi/appstate"):readSetting("update_skipped") then
+        fail("«skip» was not kept")
+    end
+    if Updater.pending(require("datastorage"):getDataDir() .. "/yaknigi/update") then
+        fail("an update was fetched in someone's KOReader")
+    end
+
+    -- The way out leads back to the file browser, and KOReader goes on.
+    settings = wait("the settings again", function() return top().name == "YaknigiSettings" and top() end)
+    tap_widget(settings.power)
+    UIManager:forceRePaint()
+    local buttons = settings.power_dialog.buttontable
+    if buttons:getButtonById("off") then fail("turning the device off from someone's KOReader") end
+    if buttons:getButtonById("exit").text ~= "Вернуться в KOReader" then fail("the way out is not named for KOReader") end
+    tap_widget(buttons:getButtonById("exit"))
+    wait("the file browser at the end", function() return FileManager.instance and top() == FileManager.instance end)
+    shot("p05-back")
+    local f = io.open(OUT .. "/PASS", "w")
+    f:write("ok\n")
+    f:close()
+    say("PASS")
+    UIManager:quit()
+end
+
 function Driver:init()
     if started or not OUT then return end
     started = true
     UIManager:scheduleIn(1, function()
         local co = coroutine.create(function()
-            local ok, err = xpcall(script, debug.traceback)
+            local run = os.getenv("YAKNIGI_APP") == "1" and script or plugin_script
+            local ok, err = xpcall(run, debug.traceback)
             if not ok then fail(err) end
         end)
         local ok, err = coroutine.resume(co)
