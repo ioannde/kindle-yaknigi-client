@@ -42,6 +42,9 @@ return {
         ["SSH"] = true, ["archiveviewer"] = true, ["autoturn"] = true, ["batterystat"] = true,
         ["bookshortcuts"] = true, ["calibre"] = true, ["cloudstorage"] = true, ["coverbrowser"] = true,
         ["coverimage"] = true, ["docsettingtweak"] = true, ["exporter"] = true, ["gestures"] = true,
+        -- On the Paperwhite 12 it takes the Kindle's own buttons for a keyboard plugged in,
+        -- and then no input field shows the on-screen keyboard.
+        ["externalkeyboard"] = true,
         ["hello"] = true, ["hotkeys"] = true, ["httpinspector"] = true, ["japanese"] = true,
         ["kosync"] = true, ["movetoarchive"] = true, ["newsdownloader"] = true, ["opds"] = true,
         ["perceptionexpander"] = true, ["profiles"] = true, ["qrclipboard"] = true, ["readtimer"] = true,
