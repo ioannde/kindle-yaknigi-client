@@ -1844,6 +1844,15 @@ function Yaknigi:loadAndOpen(card, store)
     self:showBook(result, xpointer, target, stubs, text_start)
 end
 
+--- Goes to a place from Yandex. A letter crengine does not find, as its text came out other
+-- than counted, gives way to the start of its paragraph.
+local function go_to(ui, xpointer)
+    if not ui.document:isXPointerInDocument(xpointer) then
+        xpointer = (xpointer:gsub("/text%(%)[^/]*$", ""))
+    end
+    ui.rolling:onGotoXPointer(xpointer)
+end
+
 function Yaknigi:showBook(store, xpointer, target, stubs, text_start)
     if self.library then
         UIManager:close(self.library)
@@ -1859,9 +1868,9 @@ function Yaknigi:showBook(store, xpointer, target, stubs, text_start)
     local ReaderUI = require("apps/reader/readerui")
     install_opening_message(ReaderUI)
     ReaderUI:showReader(store.epub, nil, false, nil, function(ui)
-        if xpointer then ui.rolling:onGotoXPointer(xpointer) end
-        -- Only reading moves the position. Sending this one back would be a step behind
-        -- the phone, as what comes from Yandex lands at the start of its paragraph.
+        if xpointer then go_to(ui, xpointer) end
+        -- Only reading moves the position. Sending this one back would put the start of the
+        -- Kindle's page, a little before the phone's, in place of the phone's.
         if ui.yaknigi then
             ui.yaknigi.base_xp = ui.document:getXPointer()
             ui.yaknigi:exchange()
@@ -2385,7 +2394,7 @@ function Yaknigi:jumpIfWaiting(state)
     local target = store:fragment_of_spine_index(Cfi.spine_index(cfi))
     if (state.stubs or {})[target] or not store:has(store.paths[target]) then return end
     state.jump_cfi = nil
-    self.ui.rolling:onGotoXPointer(Cfi.to_xpointer(cfi, target, store:read(store.paths[target])))
+    go_to(self.ui, Cfi.to_xpointer(cfi, target, store:read(store.paths[target])))
     self.base_xp = self.ui.document:getXPointer()
 end
 

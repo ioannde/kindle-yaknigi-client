@@ -161,6 +161,11 @@ eq(Cfi.resolve(chapter, {}), "", "empty path")
 eq(Cfi.to_xpointer("/6/8!,/2/4/2/1:0,/x", 4, chapter), "/body/DocFragment[4]/body/div[1]", "xpointer")
 eq(Cfi.to_xpointer("/6/8!,/2/4/9/1:0,/x", 4, chapter), "/body/DocFragment[4]/body", "text step at body")
 eq(Cfi.to_xpointer("nope", 4, chapter), "/body/DocFragment[4]/body", "fallback")
+eq(Cfi.to_xpointer("/6/8!,/2/4/2/4/1:2,/2/4/2/4/1:3", 4, chapter), "/body/DocFragment[4]/body/div[1]/p[1]/text().2",
+   "down to the letter where the page starts")
+eq(Cfi.to_xpointer("/6/8!/2/4/2/8/1:3", 4, chapter), "/body/DocFragment[4]/body/div[1]/p[2]/text().3",
+   "a start without a range")
+eq(Cfi.to_xpointer("/6/8!,/2/4/2/4/1:2,/x", 4, nil), "/body/DocFragment[4]/body", "no chapter text")
 
 -- http
 local function fake_sock(script, log)
