@@ -91,7 +91,7 @@ function FilePicker:row(height, icon, texts, right, callback, right_room)
     return widget, VerticalGroup:new{ align = "left", widget, row_line(W) }
 end
 
-function FilePicker:rows()
+function FilePicker:listRows()
     local W, pad = self.dimen.w, Kit.px(16)
     local text_x = pad + Kit.px(28) + Kit.px(14)
     local list = {}
@@ -206,7 +206,7 @@ function FilePicker:build()
         Kit.line(W),
     }
     local header_h = header:getSize().h
-    local rows = self:rows()
+    local rows = self:listRows()
     local room = self.dimen.h - header_h
     local pages = paginate(rows, room)
     if #pages > 1 then pages = paginate(rows, room - Kit.px(PAGER_H)) end
