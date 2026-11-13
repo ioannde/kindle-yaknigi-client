@@ -77,7 +77,7 @@ jobs:
           plugin=$ext/koreader/plugins/yaknigi.koplugin
           printf 'return "%s"\n' "$YANDEX_CLIENT_ID" > "$plugin/yaknigi/client_id.lua"
           # What an update cannot bring. Another of these means installing by hand.
-          launcher=$(cat kual/yaknigi-ko/run.sh kual/yaknigi-ko/apply-update.sh scriptlet/yaknigi.sh koreader/settings.reader.lua | sha256sum | cut -c1-8)
+          launcher=$(cat kual/yaknigi-ko/run.sh kual/yaknigi-ko/seed.lua kual/yaknigi-ko/apply-update.sh scriptlet/yaknigi.sh koreader/settings.reader.lua | sha256sum | cut -c1-8)
           base="$KO_VERSION-$launcher"
           echo "$base" > "$plugin/yaknigi/BASE"
           mkdir -p update
