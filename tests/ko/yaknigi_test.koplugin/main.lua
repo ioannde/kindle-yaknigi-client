@@ -982,6 +982,23 @@ local function test_reading_screen()
     if not G_reader_settings:isTrue("yaknigi_reading_clock") then fail("the clock did not come back") end
     shot("20b-settings-switched")
 
+    -- The fonts: each in itself, and one turned off leaves the text panel's list.
+    local Fonts = require("yaknigi/fonts")
+    tap_widget(settings_row(settings, "fonts"))
+    if not (settings.choice and settings.choice.fonts_screen) then fail("the fonts did not open") end
+    local first_font = settings.font_list[1]
+    if not first_font or #settings.font_list < 2 then fail("fonts: " .. #settings.font_list) end
+    tap_widget(settings.font_rows[first_font])
+    for _, name in ipairs(Fonts.shown()) do
+        if name == first_font then fail("a font turned off is still in the list") end
+    end
+    UIManager:forceRePaint()
+    shot("20f-settings-fonts")
+    tap_widget(settings.font_rows[first_font])
+    if Fonts.shown()[1] ~= first_font then fail("the font did not come back") end
+    tap_widget(settings.back)
+    if settings.choice then fail("back does not leave the fonts") end
+
     -- A row with choices opens them, a choice comes back to the list.
     tap_widget(settings_row(settings, "refresh"))
     if not settings.choice then fail("the choices of the refresh did not open") end

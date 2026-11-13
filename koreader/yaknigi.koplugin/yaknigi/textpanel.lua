@@ -5,7 +5,6 @@ local Blitbuffer = require("ffi/blitbuffer")
 local CenterContainer = require("ui/widget/container/centercontainer")
 local Device = require("device")
 local Event = require("ui/event")
-local Font = require("ui/font")
 local FrameContainer = require("ui/widget/container/framecontainer")
 local Geom = require("ui/geometry")
 local GestureRange = require("ui/gesturerange")
@@ -16,9 +15,9 @@ local LineWidget = require("ui/widget/linewidget")
 local OverlapGroup = require("ui/widget/overlapgroup")
 local UIManager = require("ui/uimanager")
 local VerticalGroup = require("ui/widget/verticalgroup")
-local cre = require("document/credocument"):engineInit()
 local Screen = Device.screen
 
+local Fonts = require("yaknigi/fonts")
 local Kit = require("yaknigi/kit")
 local TextStyle = require("yaknigi/textstyle")
 
@@ -31,27 +30,6 @@ local TextPanel = InputContainer:extend{
 
 TextPanel.LINE_SPACING = { 100, 115, 130 }
 TextPanel.MARGINS = { 10, 20, 35 }
-
-local PREFERRED_FONTS = { "Noto Serif", "FreeSerif", "Noto Sans", "FreeSans" }
--- Bundled for other scripts and for the interface, not for reading a book.
-local NOT_FOR_BOOKS = { "CJK", "Arabic", "Bengali", "Devanagari", "Naskh", "Symbol", "Dingbats", "Mono", "Nerd", "Nimbus" }
-
-local function font_list()
-    local present, seen, list = {}, {}, {}
-    for _, name in ipairs(cre.getFontFaces()) do present[name] = true end
-    for _, name in ipairs(PREFERRED_FONTS) do
-        if present[name] then list[#list + 1] = name; seen[name] = true end
-    end
-    -- Whatever the user added to the device's font folder.
-    for _, name in ipairs(cre.getFontFaces()) do
-        local skip = seen[name]
-        for _, word in ipairs(NOT_FOR_BOOKS) do
-            if name:find(word, 1, true) then skip = true end
-        end
-        if not skip then list[#list + 1] = name end
-    end
-    return list
-end
 
 local function nearest(values, value)
     local best, distance = 1, math.huge
@@ -68,19 +46,13 @@ function TextPanel:init()
         TapOutside = { GestureRange:new{ ges = "tap", range = full } },
         SwipeFont = { GestureRange:new{ ges = "swipe", range = full } },
     }
-    self.fonts = font_list()
+    self.fonts = Fonts.shown()
     self:build()
 end
 
 --- The name of a font, in that font if it can be had.
 local function font_name_widget(name, size, width)
-    local filename, index = cre.getFontFaceFilenameAndFaceIndex(name)
-    local face
-    if filename then
-        local ok, got = pcall(Font.getFace, Font, filename, size, index)
-        face = ok and got or nil
-    end
-    return Kit.text(name, size, { face = face, max_width = width })
+    return Kit.text(name, size, { face = Fonts.face(name, size), max_width = width })
 end
 
 local function mark_color(on)

@@ -11,6 +11,7 @@ local NoteSync = require("yaknigi/notesync")
 local Updater = require("yaknigi/updater")
 local Access = require("yaknigi/access")
 local TextStyle = require("yaknigi/textstyle")
+local Fonts = require("yaknigi/fonts")
 
 local failed, passed = 0, 0
 local function eq(got, want, name)
@@ -20,6 +21,14 @@ local function eq(got, want, name)
         failed = failed + 1
         print(("FAIL %s: got %s, want %s"):format(name, tostring(got), tostring(want)))
     end
+end
+
+-- fonts
+do
+    local list = Fonts.order({ "Literata", "Noto Sans CJK SC", "FreeSans", "Noto Serif", "DejaVu Sans Mono", "Literata" })
+    eq(table.concat(list, ","), "Noto Serif,FreeSans,Literata", "usual fonts first, none for other scripts, once each")
+    eq(table.concat(Fonts.visible(list, { FreeSans = true }), ","), "Noto Serif,Literata", "a font turned off")
+    eq(#Fonts.visible(list, { ["Noto Serif"] = true, FreeSans = true, Literata = true }), 3, "all off shows all")
 end
 
 -- shelves
