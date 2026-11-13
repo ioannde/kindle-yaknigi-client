@@ -401,12 +401,13 @@ function Settings:fontRows()
     local W = self.dimen.w
     local pad = Kit.px(16)
     local rows = {}
-    local where = Device:isKindle() and "в папку fonts в корне" or "в папку шрифтов KOReader"
+    local device, where = "Kindle", "в папку fonts в корне"
+    if not Device:isKindle() then device, where = "устройство", "в папку шрифтов KOReader" end
     local note = FrameContainer:new{
         bordersize = 0, padding = 0, padding_left = pad, padding_right = pad, padding_top = Kit.px(12),
         padding_bottom = Kit.px(4),
         TextBoxWidget:new{
-            text = "Чтобы добавить шрифт, подключите Kindle к компьютеру и скопируйте файлы .ttf или .otf "
+            text = "Чтобы добавить шрифт, подключите " .. device .. " к компьютеру и скопируйте файлы .ttf или .otf "
                 .. where .. ". Затем перезапустите приложение.",
             face = Kit.face(15),
             fgcolor = Blitbuffer.COLOR_DARK_GRAY,
