@@ -50,6 +50,7 @@ local AppState = require("yaknigi/appstate")
 local Terms = require("yaknigi/terms")
 local TextStyle = require("yaknigi/textstyle")
 local Updater = require("yaknigi/updater")
+local Upload = require("yaknigi/upload")
 
 local ROOT = DataStorage:getDataDir() .. "/yaknigi"
 local BOOKS = ROOT .. "/books"
@@ -64,6 +65,7 @@ local ADD_RESULT = ROOT .. "/add.result"
 local SAVE_RESULT = ROOT .. "/save.result"
 local REMOVE_RESULT = ROOT .. "/remove.result"
 local STORAGE_RESULT = ROOT .. "/storage.result"
+local UPLOAD_RESULT = ROOT .. "/upload.result"
 local UPDATE_DIR = ROOT .. "/update"
 local UPDATE_RESULT = ROOT .. "/update.result"
 os.execute("mkdir -p '" .. BOOKS .. "' '" .. COVERS .. "'")
@@ -90,6 +92,7 @@ local add_requests = 0
 local remove_requests = 0
 local save_requests = 0
 local storage_requests = 0
+local upload_requests = 0
 -- A check or a download is under way.
 local updating = false
 -- The books being saved on the device, by book id.
@@ -499,6 +502,7 @@ function Yaknigi:showLibrary(quiet)
         on_book_menu = function(item) self:showBookMenu(item) end,
         on_bookshelves = function() self:openList("bookshelves", nil, "Полки") end,
         on_new_shelf = function() self:newShelf() end,
+        on_upload = function() self:chooseUpload(1) end,
         on_shelf_menu = function(state) self:showShelfMenu(state) end,
         on_add = function(item) self:addFound(item) end,
         on_save = function(item) self:saveFound(item) end,
@@ -1454,6 +1458,110 @@ local function in_background(work, done)
         done(result.value)
     end
     UIManager:scheduleIn(0.2, wait)
+end
+
+-- Books of one's own ----------------------------------------------------------
+
+-- How many files the sheet offers at once, and when to look whether Yandex has read one through.
+local FILES_AT_ONCE = 6
+local AFTER_UPLOAD_SECONDS = { 20, 90 }
+-- Files being sent, by path.
+local uploading = {}
+
+--- Where one's own books are: on a Kindle, what it shows as Documents.
+local function books_folder()
+    local Device = require("device")
+    if Device:isKindle() then return "/mnt/us/documents" end
+    return G_reader_settings:readSetting("home_dir") or Device.home_dir or DataStorage:getDataDir()
+end
+
+local function upload_error(kind)
+    if kind == "too_big" then return "Файл слишком большой: больше 100 МБ." end
+    if kind == "unreadable" then return "Не получилось прочитать файл." end
+    if kind == "rejected" then return "Яндекс Книги не приняли этот файл." end
+    if kind == "denied" then return "Яндекс Книги не разрешили загрузить книгу." end
+    return error_text(kind)
+end
+
+--- The EPUB and FB2 files on the device, a few at a time, to choose one to send.
+function Yaknigi:chooseUpload(first)
+    local files = Upload.find(books_folder(), { ROOT })
+    if #files == 0 then
+        local where = require("device"):isKindle() and "в папку documents" or "в папку с книгами"
+        message("Здесь нет файлов EPUB и FB2. Скопируйте книгу " .. where .. ", и её можно будет загрузить.", 5)
+        return
+    end
+    local entries = {}
+    local last = math.min(#files, first + FILES_AT_ONCE - 1)
+    for i = first, last do
+        local path = files[i].path
+        entries[#entries + 1] = { key = "file:" .. path, text = Upload.file_name(path), icon = "book",
+            disabled = uploading[path] ~= nil, action = function() self:uploadFile(path) end }
+    end
+    if last < #files then
+        entries[#entries + 1] = { key = "more", text = "Ещё файлы", icon = "chevron.right",
+            action = function() self:chooseUpload(last + 1) end }
+    end
+    UIManager:show(BookMenu:new{ title = "Загрузить в Яндекс Книги", authors = "EPUB и FB2 с устройства",
+        entries = entries })
+end
+
+--- Sends a file of one's own to Yandex Books; it comes into the library once read through there.
+function Yaknigi:uploadFile(path)
+    if uploading[path] then return end
+    if not saved_token() then
+        message("Сначала войдите в Яндекс Книги.", 3)
+        return
+    end
+    local title = quoted(Upload.title(path))
+    NetworkMgr:runWhenOnline(function()
+        if uploading[path] then return end
+        uploading[path] = true
+        upload_requests = upload_requests + 1
+        local result_path = UPLOAD_RESULT .. upload_requests
+        local token = saved_token()
+        local pid = ffiutil.runInSubProcess(function()
+            local api = Api.new(token)
+            local ok, done, kind = pcall(Upload.send, api, path)
+            api:close()
+            if not ok then done, kind = nil, "http" end
+            write_json(result_path, { done = done, kind = kind })
+            os.exit(0)
+        end)
+        if not pid then
+            uploading[path] = nil
+            message(error_text("http"), 3)
+            return
+        end
+        toast("Загружаю " .. title)
+        local function wait()
+            if not ffiutil.isSubProcessDone(pid) then
+                UIManager:scheduleIn(0.5, wait)
+                return
+            end
+            uploading[path] = nil
+            local result = read_json(result_path) or {}
+            os.remove(result_path)
+            if result.done == "had" then
+                toast(title .. " уже есть в Яндекс Книгах")
+            elseif result.done == "sent" then
+                message(title .. " загружена в Яндекс Книги. В библиотеке она появится, когда Яндекс её обработает.", 4)
+            elseif result.kind == "auth" then
+                save_token(nil)
+                self:showLibrary()
+                return
+            else
+                message(upload_error(result.kind or "network"), 4)
+                return
+            end
+            for _, seconds in ipairs(AFTER_UPLOAD_SECONDS) do
+                UIManager:scheduleIn(seconds, function()
+                    if shown_library then self:refreshLibrary(false) end
+                end)
+            end
+        end
+        UIManager:scheduleIn(0.5, wait)
+    end)
 end
 
 -- Shelves ---------------------------------------------------------------------
@@ -2499,6 +2607,20 @@ end
 
 function Yaknigi:init()
     if self.ui.menu then self.ui.menu:registerToMainMenu(self) end
+    -- In KOReader's own file manager: a book held down can go to Yandex Books.
+    if not self.ui.document and self.ui.addFileDialogButtons then
+        self.ui:addFileDialogButtons("yaknigi_upload", function(file, is_file)
+            if not is_file or not Upload.kind(file) or not saved_token() then return nil end
+            return { {
+                text = "Загрузить в Яндекс Книги",
+                callback = function()
+                    local dialog = UIManager:getTopmostVisibleWidget()
+                    if dialog then UIManager:close(dialog) end
+                    self:uploadFile(file)
+                end,
+            } }
+        end)
+    end
     -- The panel's sync and settings belong to the screen made last: the book or the library.
     -- Only in the app: in someone's own KOReader a swipe down is theirs.
     if APP_MODE then

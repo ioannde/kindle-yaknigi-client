@@ -3095,6 +3095,75 @@ end
 
 --- In someone's own KOReader: the library is asked for from the menu, the reading screen stays
 -- KOReader's, the place still goes to Yandex, and a new version is only told about.
+-- A book of one's own goes to Yandex Books, from the library's plus or from the file browser.
+local function test_own_books(plugin, menu)
+    local lfs = require("libs/libkoreader-lfs")
+    local books = require("datastorage"):getDataDir() .. "/test-books"
+    lfs.mkdir(books)
+    lfs.mkdir(books .. "/deep")
+    local function put(path, data)
+        local f = io.open(path, "wb")
+        f:write(data)
+        f:close()
+    end
+    local book = books .. "/deep/Своя книга.epub"
+    put(book, "PK\3\4" .. ("своя книга "):rep(500))
+    put(books .. "/notes.pdf", "%PDF-1.4")
+    local home = G_reader_settings:readSetting("home_dir")
+    G_reader_settings:saveSetting("home_dir", books)
+    local function uploads() return mock_get("/test/uploads").uploads end
+    local function sheet_with(key)
+        return wait("the files to send", function()
+            local w = top()
+            return w.name == "YaknigiBookMenu" and w.rows[key] and w
+        end)
+    end
+    local function shown(needle)
+        for _, window in ipairs(UIManager._window_stack) do
+            local text = window.widget.text
+            if type(text) == "string" and text:find(needle, 1, true) then return window.widget end
+        end
+    end
+
+    if not menu.upload_button then fail("no plus in the library") end
+    tap_widget(menu.upload_button)
+    local sheet = sheet_with("file:" .. book)
+    if sheet.rows["file:" .. books .. "/notes.pdf"] then fail("a pdf offered to Yandex") end
+    shot("p01a-own-books")
+    tap_widget(sheet.rows["file:" .. book])
+    local sent = wait("the book sent", function()
+        local list = uploads()
+        return list[#list] and list[#list].name and list[#list]
+    end)
+    if sent.name ~= "Своя книга.epub" or sent.type ~= "application/epub+zip" or sent.public ~= "false"
+        or sent.start ~= "504b0304" or sent.size ~= lfs.attributes(book, "size") then
+        fail("the book as sent: " .. require("rapidjson").encode(sent))
+    end
+    local told = wait("the word that it went", function() return shown("загружена в Яндекс Книги") end)
+    shot("p01b-own-book-sent")
+    UIManager:close(told)
+
+    -- The same book again: Yandex has it, so it is not sent twice.
+    local count = #uploads()
+    tap_widget(menu.upload_button)
+    tap_widget(sheet_with("file:" .. book).rows["file:" .. book])
+    wait("the word that Yandex has it", function() return shown("уже есть в Яндекс Книгах") end)
+    local list = uploads()
+    if #list ~= count + 1 or not list[#list].checked then fail("the book was sent twice") end
+
+    -- Held down in the file browser, an EPUB offers the same; a PDF does not.
+    local added = require("apps/filemanager/filemanager").instance.file_dialog_added_buttons
+    local row_func = added and added[added.index.yaknigi_upload]
+    if not row_func then fail("no row in the file browser's dialog") end
+    local row = row_func(book, true, {})
+    if not row or row[1].text ~= "Загрузить в Яндекс Книги" then fail("the file browser's row") end
+    if row_func(books .. "/notes.pdf", true, {}) or row_func(books, false, {}) then
+        fail("the row for what Yandex does not take")
+    end
+    if home then G_reader_settings:saveSetting("home_dir", home) else G_reader_settings:delSetting("home_dir") end
+    say("one's own book goes to Yandex once")
+end
+
 local function plugin_script()
     local FileManager = require("apps/filemanager/filemanager")
     local function plugin() return FileManager.instance and FileManager.instance.yaknigi end
@@ -3147,6 +3216,7 @@ local function plugin_script()
     shot("p01-library")
     swipe_down()
     no_shade()
+    test_own_books(plugin(), menu)
 
     -- KOReader's reading screen, and the place read sent all the same.
     local function position() return mock_get("/test/position?book=book0") end

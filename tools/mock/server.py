@@ -401,6 +401,46 @@ class Handler(BaseHTTPRequestHandler):
             return None
         return form
 
+    def upload_write(self, raw):
+        """A book of one's own, as the phone app sends it: its sums first, then the file. True if it was."""
+        path = urlparse(self.path).path
+        if not (path.endswith("/profile/library_cards/by_checksum") or path.endswith("/profile/upload_books")):
+            return False
+        if self.headers.get("Auth-Token") != "mock-token":
+            self.reply(401, b"")
+            return True
+        if path.endswith("/by_checksum"):
+            form = parse_qs(raw.decode())
+            sha1 = form.get("sha1", [""])[0]
+            ok = (re.fullmatch(r"[0-9A-F]{40}", sha1) and re.fullmatch(r"[0-9A-F]{32}", form.get("md5", [""])[0])
+                  and form.get("is_public") == ["false"])
+            self.server.uploads.append({"checked": sha1})
+            if not ok:
+                self.reply(400, b"")
+            else:
+                self.reply(200 if sha1 in self.server.uploaded_sums else 204, b"")
+            return True
+        match = re.fullmatch(r"multipart/form-data; boundary=(\S+)", self.headers.get("Content-Type", ""))
+        boundary = match and match.group(1).encode()
+        part = re.compile(rb'--(?P<b>[^\r]+)\r\nContent-Disposition: form-data; name="public"\r\n'
+                          rb"Content-Transfer-Encoding: binary\r\nContent-Type: text/plain; charset=UTF-8\r\n"
+                          rb"Content-Length: 5\r\n\r\n(?P<public>\w+)\r\n--(?P=b)\r\n"
+                          rb'Content-Disposition: form-data; name="files\[\]"; filename="(?P<name>[^"]+)"\r\n'
+                          rb"Content-Type: (?P<type>[^\r]+)\r\nContent-Length: (?P<size>\d+)\r\n\r\n", re.S)
+        head = boundary and part.match(raw)
+        size = head and int(head.group("size"))
+        if (not head or head.group("b") != boundary
+                or raw[head.end() + size:] != b"\r\n--" + boundary + b"--\r\n"):
+            self.reply(400, b"")
+            return True
+        data = raw[head.end():head.end() + size]
+        self.server.uploaded_sums.add(hashlib.sha1(data).hexdigest().upper())
+        self.server.uploads.append({"name": head.group("name").decode(), "type": head.group("type").decode(),
+                                    "public": head.group("public").decode(), "size": size,
+                                    "start": data[:4].hex()})
+        self.reply(204, b"")
+        return True
+
     def shelf_write(self, method, raw):
         """Shelves being changed, as the capture of the phone app has it. True if it was about them."""
         path = urlparse(self.path).path
@@ -790,6 +830,8 @@ class Handler(BaseHTTPRequestHandler):
         raw = self.rfile.read(int(self.headers.get("Content-Length", 0)))
         if self.shelf_write("POST", raw):
             return
+        if self.upload_write(raw):
+            return
         form = parse_qs(raw.decode())
         verifier = form.get("code_verifier", [""])[0]
         digest = hashlib.sha256(verifier.encode()).digest()
@@ -884,6 +926,8 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(200, b"")
         elif url.path == "/test/removed":
             self.reply_json(200, {"removed": self.server.removed})
+        elif url.path == "/test/uploads":
+            self.reply_json(200, {"uploads": self.server.uploads})
         elif url.path == "/test/added":
             self.reply_json(200, {"added": self.server.added})
         elif url.path == "/test/serial":
@@ -1078,6 +1122,8 @@ if __name__ == "__main__":
     server.notes_writes = 0
     server.fail_notes = 0
     server.added = []
+    server.uploads = []
+    server.uploaded_sums = set()
     # Of the serial that is in the library, two episodes of three came with it so far.
     server.taken = ["ep1-1", "ep1-2"]
     # The phone has got to the second chapter of the second episode.

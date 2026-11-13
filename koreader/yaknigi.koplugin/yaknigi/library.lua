@@ -634,10 +634,18 @@ function Library:build()
                 },
             },
         }
+        self.upload_button = nil
         if (home or in_feed) and not self.on_sign_in then
             self.refresh_button = Kit.icon_button("reload", side, function() self:refresh() end,
                 { edge = "right", margin = pad })
-            header_row[2] = RightContainer:new{ dimen = box:copy(), self.refresh_button }
+            local buttons = HorizontalGroup:new{ align = "center" }
+            -- A book of one's own from the device, as the phone's "Загрузить".
+            if home and self.on_upload then
+                self.upload_button = Kit.icon_button("plus", side, function() self.on_upload() end)
+                buttons[1] = Kit.fixed(self.upload_button, side)
+            end
+            buttons[#buttons + 1] = self.refresh_button
+            header_row[2] = RightContainer:new{ dimen = box:copy(), buttons }
         end
     else
         self.back_button = Kit.icon_button("chevron.left", side, function() self:goBack() end, { edge = "left", margin = pad })

@@ -12,6 +12,7 @@ local Updater = require("yaknigi/updater")
 local Access = require("yaknigi/access")
 local TextStyle = require("yaknigi/textstyle")
 local Fonts = require("yaknigi/fonts")
+local Upload = require("yaknigi/upload")
 
 local failed, passed = 0, 0
 local function eq(got, want, name)
@@ -30,6 +31,17 @@ do
     eq(table.concat(Fonts.visible(list, { FreeSans = true }), ","), "Noto Serif,Literata", "a font turned off")
     eq(#Fonts.visible(list, { ["Noto Serif"] = true, FreeSans = true, Literata = true }), 3, "all off shows all")
 end
+
+-- books of one's own
+eq(Upload.kind("/mnt/us/documents/A.EPUB"), "epub", "an epub in capitals")
+eq(Upload.kind("book.fb2"), "fb2", "fb2")
+eq(Upload.kind("book.fb2.zip"), nil, "a zipped fb2 is not taken")
+eq(Upload.kind("book.pdf"), nil, "pdf is not taken")
+eq(Upload.kind("epub"), nil, "no extension")
+eq(Upload.kind("dir.epub/x"), nil, "an extension of a folder")
+eq(Upload.content_type("x.fb2"), "application/x-fictionbook+xml", "fb2 type")
+eq(Upload.file_name("/a/b/Война и мир.epub"), "Война и мир.epub", "file name")
+eq(Upload.title("/a/b/v1.0.final.epub"), "v1.0.final", "title keeps inner dots")
 
 -- shelves
 eq(Shelves.of("finished", 40, 50), "finished", "a finished book stays finished")
@@ -180,14 +192,18 @@ eq(Cfi.to_xpointer("/6/8!,/2/4/2/4/1:2,/x", 4, nil), "/body/DocFragment[4]/body"
 local function fake_sock(script, log)
     -- script: list of responses, one per request; nil sends an error.
     local s = { buf = "", closed = false }
+    -- The answer comes once the request has been sent, in as many pieces as it took.
     function s:send(d)
         log[#log + 1] = d
-        local r = table.remove(script, 1)
-        if r == false then return nil, "closed" end
-        self.buf = r or ""
+        if script[1] == false then table.remove(script, 1); return nil, "closed" end
+        self.waiting = true
         return #d
     end
     function s:receive(n)
+        if self.waiting then
+            self.waiting = false
+            self.buf = table.remove(script, 1) or ""
+        end
         if n == "*l" then
             local line, rest = self.buf:match("^(.-)\r?\n(.*)$")
             if not line then return nil, "closed" end
@@ -235,6 +251,14 @@ st, body = h:request("POST", "http://x.test/2", nil, "data")
 eq(body, "b", "retry after idle close")
 eq(connects, 2, "reconnected once")
 assert(log[#log]:find("Content%-Length: 4\r\n\r\ndata$"), "post body")
+
+-- A body in pieces is sent piece by piece, its length the sum of them.
+log = {}
+h = Http.new(function() return fake_sock({ "HTTP/1.1 204 No Content\r\n\r\n" }, log) end)
+st = h:request("POST", "http://x.test/up", { ["Content-Type"] = "multipart/form-data" }, { "ab", "cde", "" })
+eq(st, 204, "pieces answered")
+assert(log[1]:find("Content%-Length: 5\r\n\r\n$"), "length of the pieces")
+eq(table.concat(log, "", 2), "abcde", "pieces after the head")
 
 -- A fresh connection that fails is not retried.
 connects = 0

@@ -430,6 +430,51 @@ function Api.multipart(fields)
     return "multipart/form-data; boundary=" .. SHELF_BOUNDARY, table.concat(parts)
 end
 
+-- Your own books, as the phone app sends them ---------------------------------
+
+local UPLOAD_BOUNDARY = "yaknigi-upload-form-4be1d0"
+
+--- Whether Yandex already has this very file, by its sums in capitals, as the app asks first.
+-- Yandex answers 204 when it does not.
+function Api:has_upload(sha1, md5)
+    local status, body = self.http:request("POST", API_BASE .. "/profile/library_cards/by_checksum",
+        self:headers("application/x-www-form-urlencoded"),
+        "is_public=false&sha1=" .. sha1:upper() .. "&md5=" .. md5:upper())
+    if status == 204 or status == 404 then return false end
+    if status == 200 or status == 201 then return true end
+    return status_error(status, body)
+end
+
+--- The form of an upload in pieces, the book itself not copied. Not public: one's own books
+-- are no one else's business.
+function Api.upload_form(filename, content_type, data)
+    local name = filename:gsub('[%c"\\]', "_")
+    local head = "--" .. UPLOAD_BOUNDARY .. "\r\n"
+        .. 'Content-Disposition: form-data; name="public"\r\n'
+        .. "Content-Transfer-Encoding: binary\r\n"
+        .. "Content-Type: text/plain; charset=UTF-8\r\n"
+        .. "Content-Length: 5\r\n\r\n"
+        .. "false\r\n"
+        .. "--" .. UPLOAD_BOUNDARY .. "\r\n"
+        .. 'Content-Disposition: form-data; name="files[]"; filename="' .. name .. '"\r\n'
+        .. "Content-Type: " .. content_type .. "\r\n"
+        .. "Content-Length: " .. #data .. "\r\n\r\n"
+    return "multipart/form-data; boundary=" .. UPLOAD_BOUNDARY,
+        { head, data, "\r\n--" .. UPLOAD_BOUNDARY .. "--\r\n" }
+end
+
+--- Sends a book file of one's own. Yandex answers with nothing: the book comes into the
+-- library once it has been read through there.
+function Api:upload_book(filename, content_type, data)
+    local form_type, body = Api.upload_form(filename, content_type, data)
+    local status, answer = self.http:request("POST", API_BASE .. "/profile/upload_books",
+        self:headers(form_type), body)
+    if status == 200 or status == 201 or status == 204 then return true end
+    if status == 413 then return nil, "too_big" end
+    if status == 415 or status == 422 then return nil, "rejected" end
+    return status_error(status, answer)
+end
+
 local function shelf_form(title, annotation, state)
     return Api.multipart({
         { "bookshelf[title]", title },

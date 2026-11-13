@@ -84,9 +84,25 @@ function Http:attempt(u, method, headers, body)
     local lines = { method .. " " .. u.path .. " HTTP/1.1", "Host: " .. u.host,
                     "Connection: keep-alive" }
     for k, v in pairs(headers or {}) do lines[#lines + 1] = k .. ": " .. v end
-    if body then lines[#lines + 1] = "Content-Length: " .. #body end
+    -- A body in pieces goes as they are: a book is not to be copied whole into one more string.
+    local pieces = type(body) == "table" and body or { body }
+    if body then
+        local length = 0
+        for _, piece in ipairs(pieces) do length = length + #piece end
+        lines[#lines + 1] = "Content-Length: " .. length
+    end
     lines[#lines + 1] = "\r\n"
-    local ok, err = sock:send(table.concat(lines, "\r\n") .. (body or ""))
+    local head = table.concat(lines, "\r\n")
+    local ok, err
+    if type(body) == "table" then
+        ok, err = sock:send(head)
+        for _, piece in ipairs(pieces) do
+            if not ok then break end
+            ok, err = sock:send(piece)
+        end
+    else
+        ok, err = sock:send(head .. (body or ""))
+    end
     if not ok then return nil, err, reused end
 
     local status, resp = read_headers(sock)
@@ -112,7 +128,8 @@ function Http:attempt(u, method, headers, body)
     return status, resp, data
 end
 
---- Returns status, body, headers; or nil and an error message.
+--- Returns status, body, headers; or nil and an error message. The body to send may be a
+-- string or a list of strings.
 function Http:request(method, url, headers, body)
     local u = parse_url(url)
     if not u then return nil, "bad url" end
