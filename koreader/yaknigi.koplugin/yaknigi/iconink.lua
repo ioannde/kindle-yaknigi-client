@@ -11,6 +11,7 @@ return {
     ["cloud.off"] = { left = 0.0792, right = 0.0792, top = 0.1042, bottom = 0.1208 },
     ["cold"] = { left = 0.1004, right = 0.1004, top = 0.0458, bottom = 0.0458 },
     ["dots"] = { left = 0.0792, right = 0.0792, top = 0.3708, bottom = 0.3708 },
+    ["folder"] = { left = 0.0792, right = 0.0792, top = 0.1417, bottom = 0.1417 },
     ["info"] = { left = 0.0792, right = 0.0792, top = 0.0792, bottom = 0.0792 },
     ["lock"] = { left = 0.1625, right = 0.1625, top = 0.0792, bottom = 0.0792 },
     ["lock.open"] = { left = 0.1625, right = 0.1625, top = 0.0800, bottom = 0.0792 },

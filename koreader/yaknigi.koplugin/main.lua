@@ -30,6 +30,7 @@ local Covers = require("yaknigi/covers")
 local Cfi = require("yaknigi/cfi")
 local Crypt = require("yaknigi/crypt")
 local Feed = require("yaknigi/feed")
+local FilePicker = require("yaknigi/filepicker")
 local Library = require("yaknigi/library")
 local Login = require("yaknigi/login")
 local NoAccess = require("yaknigi/noaccess")
@@ -502,7 +503,7 @@ function Yaknigi:showLibrary(quiet)
         on_book_menu = function(item) self:showBookMenu(item) end,
         on_bookshelves = function() self:openList("bookshelves", nil, "Полки") end,
         on_new_shelf = function() self:newShelf() end,
-        on_upload = function() self:chooseUpload(1) end,
+        on_upload = function() self:chooseUpload() end,
         on_shelf_menu = function(state) self:showShelfMenu(state) end,
         on_add = function(item) self:addFound(item) end,
         on_save = function(item) self:saveFound(item) end,
@@ -708,12 +709,20 @@ function Yaknigi:refreshLibrary(tell_failure)
             write_json(LIBRARY_RESULT, { kind = kind or "ok" })
             os.exit(0)
         end)
-        if self.library_pid then self:pollLibrary(tell_failure) end
+        if self.library_pid then
+            if self.library then self.library:setSyncState("busy") end
+            self:pollLibrary(tell_failure)
+        elseif self.library then
+            self.library:setSyncState("failed")
+        end
     end
     if tell_failure then
         NetworkMgr:runWhenOnline(start)
     elseif NetworkMgr:isOnline() then
         start()
+    elseif self.library then
+        -- Offline: the header says so, and a tap on it tries again.
+        self.library:setSyncState("failed")
     end
 end
 
@@ -729,16 +738,21 @@ function Yaknigi:pollLibrary(tell_failure)
         local kind = result.kind or "network"
         if kind == "ok" then
             local cards = read_json(LIBRARY_CACHE)
-            if not cards then return end
+            if not cards then self.library:setSyncState("failed"); return end
+            -- Drawn with the new list, in one go.
+            self.library.sync_state = nil
             if #cards == 0 then self.library.message = "Библиотека пуста. Книги можно найти через поиск." end
             self.library:switchItemTable(nil, self:libraryItems(cards))
             self:fetchCovers(without_episodes(cards))
         elseif kind == "auth" then
             save_token(nil)
             self:showLibrary()
-        elseif tell_failure then
-            message(error_text(kind), 3)
-            self.library:setMessage(error_text(kind))
+        else
+            self.library:setSyncState("failed")
+            if tell_failure then
+                message(error_text(kind), 3)
+                self.library:setMessage(error_text(kind))
+            end
         end
     end)
 end
@@ -1462,11 +1476,12 @@ end
 
 -- Books of one's own ----------------------------------------------------------
 
--- How many files the sheet offers at once, and when to look whether Yandex has read one through.
-local FILES_AT_ONCE = 6
+-- When to look whether Yandex has read a sent book through.
 local AFTER_UPLOAD_SECONDS = { 20, 90 }
--- Files being sent, by path.
-local uploading = {}
+-- Files being sent, and those sent or found already there since the app started, by path.
+local uploading, uploaded = {}, {}
+-- The file picker while it is open.
+local picker
 
 --- Where one's own books are: on a Kindle, what it shows as Documents.
 local function books_folder()
@@ -1483,27 +1498,36 @@ local function upload_error(kind)
     return error_text(kind)
 end
 
---- The EPUB and FB2 files on the device, a few at a time, to choose one to send.
-function Yaknigi:chooseUpload(first)
-    local files = Upload.find(books_folder(), { ROOT })
-    if #files == 0 then
+--- The device's folders with EPUB and FB2 in them, to choose a book to send.
+function Yaknigi:chooseUpload()
+    local root = books_folder()
+    if Upload.count(root, { ROOT }) == 0 then
         local where = require("device"):isKindle() and "в папку documents" or "в папку с книгами"
         message("Здесь нет файлов EPUB и FB2. Скопируйте книгу " .. where .. ", и её можно будет загрузить.", 5)
         return
     end
-    local entries = {}
-    local last = math.min(#files, first + FILES_AT_ONCE - 1)
-    for i = first, last do
-        local path = files[i].path
-        entries[#entries + 1] = { key = "file:" .. path, text = Upload.file_name(path), icon = "book",
-            disabled = uploading[path] ~= nil, action = function() self:uploadFile(path) end }
+    local is_kindle = require("device"):isKindle()
+    picker = FilePicker:new{
+        root = root,
+        root_name = is_kindle and "documents" or nil,
+        avoid = { ROOT },
+        on_pick = function(path) self:uploadFile(path) end,
+        state = function(path)
+            if uploading[path] then return "sending" end
+            if uploaded[path] then return "sent" end
+        end,
+    }
+    local shown = picker
+    local close = picker.onCloseWidget
+    picker.onCloseWidget = function(widget)
+        if picker == shown then picker = nil end
+        return close(widget)
     end
-    if last < #files then
-        entries[#entries + 1] = { key = "more", text = "Ещё файлы", icon = "chevron.right",
-            action = function() self:chooseUpload(last + 1) end }
-    end
-    UIManager:show(BookMenu:new{ title = "Загрузить в Яндекс Книги", authors = "EPUB и FB2 с устройства",
-        entries = entries })
+    UIManager:show(picker)
+end
+
+local function picker_changed()
+    if picker then picker:refresh() end
 end
 
 --- Sends a file of one's own to Yandex Books; it comes into the library once read through there.
@@ -1517,6 +1541,7 @@ function Yaknigi:uploadFile(path)
     NetworkMgr:runWhenOnline(function()
         if uploading[path] then return end
         uploading[path] = true
+        picker_changed()
         upload_requests = upload_requests + 1
         local result_path = UPLOAD_RESULT .. upload_requests
         local token = saved_token()
@@ -1530,10 +1555,11 @@ function Yaknigi:uploadFile(path)
         end)
         if not pid then
             uploading[path] = nil
+            picker_changed()
             message(error_text("http"), 3)
             return
         end
-        toast("Загружаю " .. title)
+        if not picker then toast("Загружаю " .. title) end
         local function wait()
             if not ffiutil.isSubProcessDone(pid) then
                 UIManager:scheduleIn(0.5, wait)
@@ -1542,6 +1568,8 @@ function Yaknigi:uploadFile(path)
             uploading[path] = nil
             local result = read_json(result_path) or {}
             os.remove(result_path)
+            if result.done then uploaded[path] = true end
+            picker_changed()
             if result.done == "had" then
                 toast(title .. " уже есть в Яндекс Книгах")
             elseif result.done == "sent" then

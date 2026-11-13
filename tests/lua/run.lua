@@ -42,6 +42,18 @@ eq(Upload.kind("dir.epub/x"), nil, "an extension of a folder")
 eq(Upload.content_type("x.fb2"), "application/x-fictionbook+xml", "fb2 type")
 eq(Upload.file_name("/a/b/Война и мир.epub"), "Война и мир.epub", "file name")
 eq(Upload.title("/a/b/v1.0.final.epub"), "v1.0.final", "title keeps inner dots")
+eq(Upload.books_word(1) .. Upload.books_word(3) .. Upload.books_word(5), "книгакнигикниг", "1, 3, 5 books")
+eq(Upload.books_word(11) .. Upload.books_word(21) .. Upload.books_word(112), "книгкнигакниг", "11, 21, 112 books")
+eq(Upload.size_text(5.2 * 1024 * 1024), "5,2 МБ", "megabytes with a comma")
+eq(Upload.size_text(840 * 1024), "840 КБ", "kilobytes")
+eq(Upload.size_text(100), "1 КБ", "a tiny file is not 0")
+do
+    local now = os.time{ year = 2026, month = 11, day = 13, hour = 9 }
+    eq(Upload.date_text(now - 3600, now), "сегодня", "an hour ago")
+    eq(Upload.date_text(os.time{ year = 2026, month = 11, day = 12, hour = 23 }, now), "вчера", "late yesterday")
+    eq(Upload.date_text(os.time{ year = 2026, month = 5, day = 2, hour = 12 }, now), "2 мая", "this year")
+    eq(Upload.date_text(os.time{ year = 2025, month = 11, day = 13, hour = 12 }, now), "13 нояб. 2025", "last year")
+end
 
 -- shelves
 eq(Shelves.of("finished", 40, 50), "finished", "a finished book stays finished")

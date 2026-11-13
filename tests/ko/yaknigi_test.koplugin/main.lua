@@ -2932,7 +2932,13 @@ local function script()
     menu:goHome()
     UIManager:forceRePaint()
     shot("48-library-dock")
-    if menu.refresh_button == nil then fail("no way to refresh the library") end
+    -- No button to sync: a swipe down does it, and the header says it is at it.
+    menu:onSwipe(nil, { direction = "south" })
+    wait("the library syncing", function() return menu.sync_state == "busy" end)
+    UIManager:forceRePaint()
+    shot("48b-library-syncing")
+    if not menu.sync_button then fail("nothing in the header while syncing") end
+    wait("the library synced", function() return menu.sync_state == nil end)
     local docked = menu.dock_item
     if not docked then fail("nothing in the dock") end
     for _, item in ipairs(menu.rows) do
@@ -3109,13 +3115,15 @@ local function test_own_books(plugin, menu)
     local book = books .. "/deep/Своя книга.epub"
     put(book, "PK\3\4" .. ("своя книга "):rep(500))
     put(books .. "/notes.pdf", "%PDF-1.4")
+    put(books .. "/Другая книга с очень длинным названием, которое не помещается в одну строку.fb2",
+        "<?xml version=\"1.0\"?><FictionBook/>")
     local home = G_reader_settings:readSetting("home_dir")
     G_reader_settings:saveSetting("home_dir", books)
     local function uploads() return mock_get("/test/uploads").uploads end
-    local function sheet_with(key)
+    local function picker_with(key)
         return wait("the files to send", function()
             local w = top()
-            return w.name == "YaknigiBookMenu" and w.rows[key] and w
+            return w.name == "YaknigiFilePicker" and w.rows[key] and w
         end)
     end
     local function shown(needle)
@@ -3127,10 +3135,15 @@ local function test_own_books(plugin, menu)
 
     if not menu.upload_button then fail("no plus in the library") end
     tap_widget(menu.upload_button)
-    local sheet = sheet_with("file:" .. book)
-    if sheet.rows["file:" .. books .. "/notes.pdf"] then fail("a pdf offered to Yandex") end
+    -- A folder with a book in it, and no PDF.
+    local picker = picker_with("dir:" .. books .. "/deep")
+    if picker.rows["file:" .. books .. "/notes.pdf"] then fail("a pdf offered to Yandex") end
     shot("p01a-own-books")
-    tap_widget(sheet.rows["file:" .. book])
+    tap_widget(picker.rows["dir:" .. books .. "/deep"])
+    picker_with("file:" .. book)
+    if not picker.rows.up then fail("no way up from a folder") end
+    shot("p01a2-own-books-folder")
+    tap_widget(picker.rows["file:" .. book])
     local sent = wait("the book sent", function()
         local list = uploads()
         return list[#list] and list[#list].name and list[#list]
@@ -3140,23 +3153,28 @@ local function test_own_books(plugin, menu)
         fail("the book as sent: " .. require("rapidjson").encode(sent))
     end
     local told = wait("the word that it went", function() return shown("загружена в Яндекс Книги") end)
-    shot("p01b-own-book-sent")
     UIManager:close(told)
+    wait("the book marked as sent", function() return picker.state(book) == "sent" end)
+    UIManager:forceRePaint()
+    shot("p01b-own-book-sent")
+    tap_widget(picker.rows.up)
+    picker_with("dir:" .. books .. "/deep")
+    tap_widget(picker.back)
+    wait("the picker closed", function() return top().name ~= "YaknigiFilePicker" end)
 
-    -- The same book again: Yandex has it, so it is not sent twice.
+    -- The same book again, from the file browser: Yandex has it, so it is not sent twice.
     local count = #uploads()
-    tap_widget(menu.upload_button)
-    tap_widget(sheet_with("file:" .. book).rows["file:" .. book])
-    wait("the word that Yandex has it", function() return shown("уже есть в Яндекс Книгах") end)
-    local list = uploads()
-    if #list ~= count + 1 or not list[#list].checked then fail("the book was sent twice") end
-
-    -- Held down in the file browser, an EPUB offers the same; a PDF does not.
     local added = require("apps/filemanager/filemanager").instance.file_dialog_added_buttons
     local row_func = added and added[added.index.yaknigi_upload]
     if not row_func then fail("no row in the file browser's dialog") end
     local row = row_func(book, true, {})
     if not row or row[1].text ~= "Загрузить в Яндекс Книги" then fail("the file browser's row") end
+    plugin:uploadFile(book)
+    wait("the word that Yandex has it", function() return shown("уже есть в Яндекс Книгах") end)
+    local list = uploads()
+    if #list ~= count + 1 or not list[#list].checked then fail("the book was sent twice") end
+
+    -- Held down in the file browser, a PDF or a folder does not offer it.
     if row_func(books .. "/notes.pdf", true, {}) or row_func(books, false, {}) then
         fail("the row for what Yandex does not take")
     end
@@ -3216,6 +3234,8 @@ local function plugin_script()
     shot("p01-library")
     swipe_down()
     no_shade()
+    -- The swipe synced the library again.
+    wait("the library synced", function() return menu.sync_state == nil end)
     test_own_books(plugin(), menu)
 
     -- KOReader's reading screen, and the place read sent all the same.

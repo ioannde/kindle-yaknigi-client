@@ -259,7 +259,8 @@ function Kit.icon_ink_width(name)
 end
 
 --- The drawing is what gets aligned: centred in a box side by side, or with opts.edge
--- ("left" or "right") at opts.margin from that edge of the box. opts.width narrows the box.
+-- ("left" or "right") at opts.margin from that edge of the box. opts.width narrows the box;
+-- opts.dim draws it gray.
 function Kit.icon_button(name, side, callback, opts)
     opts = opts or {}
     local icon = opts.icon_size or Kit.px(ICON)
@@ -282,7 +283,7 @@ function Kit.icon_button(name, side, callback, opts)
             height = side,
             dx = dx,
             dy = math.floor((side - (icon - top - bottom)) / 2) - top,
-            Kit.icon(name, icon),
+            Kit.icon(name, icon, { dim = opts.dim }),
         },
     }
 end
