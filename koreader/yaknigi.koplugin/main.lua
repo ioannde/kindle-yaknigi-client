@@ -81,6 +81,9 @@ local NOTES_AFTER_CHANGE_SECONDS = 3
 local NOTES_AFTER_WAKING_SECONDS = 10
 -- For a book left open: what was made on the phone meanwhile comes as the pages are turned.
 local NOTES_WHILE_READING_SECONDS = 180
+-- While pages turn, the place goes to Yandex this long after the first of them: the phone
+-- may be picked up without this device ever going to sleep.
+local POSITION_WHILE_READING_SECONDS = 60
 -- Wi-Fi takes a while to come back after sleep. Pauses between tries to reach Yandex.
 local WAKE_RETRY_SECONDS = { 5, 15, 30 }
 -- Which screen of the library was open, for coming back to it from a book.
@@ -2211,6 +2214,13 @@ function Yaknigi:poll()
 end
 
 function Yaknigi:onPageUpdate()
+    if self.shell and not self.position_soon then
+        self.position_soon = function()
+            self.position_soon = nil
+            if not self.closed and NetworkMgr:isOnline() then self:saveReading() end
+        end
+        UIManager:scheduleIn(POSITION_WHILE_READING_SECONDS, self.position_soon)
+    end
     if self.shell and self.notes_compared_at and not self.notes_soon
         and os.time() - self.notes_compared_at >= NOTES_WHILE_READING_SECONDS then
         self.notes_compared_at = os.time()
@@ -2574,6 +2584,7 @@ function Yaknigi:onCloseDocument()
     -- KOReader closes the document before its last SaveSettings, so that one is too late.
     self:saveReading()
     if self.notes_soon then UIManager:unschedule(self.notes_soon) end
+    if self.position_soon then UIManager:unschedule(self.position_soon) end
     if self.notes_dirty then self:syncNotes(true) end
     self.closed = true
     if self.prompt then
