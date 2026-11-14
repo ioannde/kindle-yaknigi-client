@@ -51,6 +51,7 @@ local AppState = require("yaknigi/appstate")
 local Terms = require("yaknigi/terms")
 local TextStyle = require("yaknigi/textstyle")
 local Updater = require("yaknigi/updater")
+local Launcher = require("yaknigi/launcher")
 local Upload = require("yaknigi/upload")
 
 local ROOT = DataStorage:getDataDir() .. "/yaknigi"
@@ -2646,6 +2647,12 @@ end
 
 function Yaknigi:init()
     if self.ui.menu then self.ui.menu:registerToMainMenu(self) end
+    -- Once per start: what a new version brought for the launcher goes in place.
+    if Updater.enabled() and not Yaknigi.launcher_checked then
+        Yaknigi.launcher_checked = true
+        local put = Launcher.install(Launcher.SOURCE, os.getenv("YAKNIGI_DIR"))
+        if #put > 0 then logger.info("yaknigi: launcher files put in place:", table.concat(put, ", ")) end
+    end
     -- In KOReader's own file manager: a book held down can go to Yandex Books.
     if not self.ui.document and self.ui.addFileDialogButtons then
         self.ui:addFileDialogButtons("yaknigi_upload", function(file, is_file)

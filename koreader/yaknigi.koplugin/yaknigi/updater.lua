@@ -32,7 +32,8 @@ function Updater.version()
     return os.getenv("YB_VERSION") or read_line(HERE .. "/VERSION") or "dev"
 end
 
---- What a new version needs from outside the plugin: KOReader and the launcher.
+--- What a new version needs from outside the plugin: the KOReader it came with. (The launcher's
+-- files come with the plugin since 0.9.11; before that their digest was a part of it.)
 function Updater.base()
     return os.getenv("YB_BASE") or read_line(HERE .. "/BASE") or "dev"
 end
@@ -73,10 +74,12 @@ function Updater.valid_manifest(m)
 end
 
 --- What to do about a release: "none", "manual" (it needs a new install) or "download".
+-- A release says its KOReader in koreader; base is what the versions before 0.9.11 compare.
 function Updater.decide(manifest, version, base, bad)
     if not Updater.newer(manifest.version, version) then return "none" end
     if manifest.version == bad then return "none" end -- it did not start here
-    if manifest.base ~= base then return "manual" end
+    local needs = type(manifest.koreader) == "string" and manifest.koreader or manifest.base
+    if needs ~= base then return "manual" end
     return "download"
 end
 

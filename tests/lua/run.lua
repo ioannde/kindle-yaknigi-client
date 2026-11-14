@@ -985,6 +985,42 @@ eq(Updater.decide(good_manifest, "1.2.2", "b"), "download", "newer")
 eq(Updater.decide(good_manifest, "1.2.2", "other"), "manual", "another launcher")
 eq(Updater.decide(good_manifest, "1.2.2", "b", "1.2.3"), "none", "this one did not start here")
 eq(Updater.decide(good_manifest, "1.2.2", "b", "1.2.1"), "download", "another one did not start")
+local ko_manifest = { version = "1.2.3", koreader = "v1", base = "v1-old", sha256 = ("a"):rep(64) }
+eq(Updater.decide(ko_manifest, "1.2.2", "v1"), "download", "the same KOReader")
+eq(Updater.decide(ko_manifest, "1.2.2", "v2"), "manual", "another KOReader")
+eq(Updater.decide(ko_manifest, "1.2.2", "v1-old"), "manual", "base is only for the versions before")
+
+-- the launcher's files
+local Launcher = require("yaknigi/launcher")
+local function scratch()
+    local dir = os.tmpname()
+    os.remove(dir)
+    os.execute("mkdir -p '" .. dir .. "'")
+    return dir
+end
+local function put_file(path, text)
+    local f = assert(io.open(path, "wb")); f:write(text); f:close()
+end
+local function file_text(path)
+    local f = io.open(path, "rb"); if not f then return nil end
+    local text = f:read("*a"); f:close(); return text
+end
+local src, dst = scratch(), scratch()
+for _, name in ipairs(Launcher.FILES) do put_file(src .. "/" .. name, "new " .. name) end
+put_file(dst .. "/seed.lua", "new seed.lua")
+put_file(dst .. "/run.sh", "old run.sh")
+eq(table.concat(Launcher.install(src, dst), ","), "apply-update.sh,run.sh,settings.reader.lua", "only those that differ")
+for _, name in ipairs(Launcher.FILES) do eq(file_text(dst .. "/" .. name), "new " .. name, "in place: " .. name) end
+eq(file_text(dst .. "/run.sh.new"), nil, "nothing left over")
+eq(#Launcher.install(src, dst), 0, "nothing the second time")
+eq(#Launcher.install(src .. "/missing", dst), 0, "a build without them")
+os.execute("rm -rf '" .. dst .. "' && mkdir '" .. dst .. "' && mkdir '" .. dst .. "/run.sh.new'")
+put_file(dst .. "/run.sh", "old run.sh")
+put_file(dst .. "/settings.reader.lua", "old seed")
+Launcher.install(src, dst)
+eq(file_text(dst .. "/run.sh"), "old run.sh", "a file that cannot be put stays")
+eq(file_text(dst .. "/settings.reader.lua"), "old seed", "and no seed goes after it")
+os.execute("rm -rf '" .. src .. "' '" .. dst .. "'")
 local from = "https://github.com/o/r/releases/latest/download/x"
 eq(Updater.redirect_allowed(from, "https://github.com/o/r/releases/download/v1/x"), true, "github")
 eq(Updater.redirect_allowed(from, "https://release-assets.githubusercontent.com/x"), true, "the assets")
