@@ -37,6 +37,8 @@ jobs:
         run: cd "$KO_DIR" && ./luajit "$GITHUB_WORKSPACE/tests/ko/tls_check.lua" "$GITHUB_WORKSPACE/koreader/yaknigi.koplugin"
       - name: UI against the mock server
         run: tests/ko/run.sh "$KO_DIR" "$PWD/ko-out"
+      - name: As a plugin in someone's own KOReader
+        run: tests/ko/run.sh "$KO_DIR" "$PWD/ko-out-plugin" plugin
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -44,6 +46,8 @@ jobs:
           path: |
             ko-out/*.png
             ko-out/koreader.log
+            ko-out-plugin/*.png
+            ko-out-plugin/koreader.log
   package:
     needs: integration
     runs-on: ubuntu-24.04
@@ -73,7 +77,7 @@ jobs:
           plugin=$ext/koreader/plugins/yaknigi.koplugin
           printf 'return "%s"\n' "$YANDEX_CLIENT_ID" > "$plugin/yaknigi/client_id.lua"
           # What an update cannot bring. Another of these means installing by hand.
-          launcher=$(cat kual/yaknigi-ko/run.sh kual/yaknigi-ko/apply-update.sh scriptlet/yaknigi.sh koreader/settings.reader.lua | sha256sum | cut -c1-8)
+          launcher=$(cat kual/yaknigi-ko/run.sh kual/yaknigi-ko/seed.lua kual/yaknigi-ko/apply-update.sh scriptlet/yaknigi.sh koreader/settings.reader.lua | sha256sum | cut -c1-8)
           base="$KO_VERSION-$launcher"
           echo "$base" > "$plugin/yaknigi/BASE"
           mkdir -p update
@@ -88,6 +92,11 @@ jobs:
               cat update/manifest.json
           fi
           cp LICENSE "$ext/"
+          # For those with KOReader of their own: the plugin's folder alone.
+          mkdir -p koplugin
+          cp LICENSE "$plugin/"
+          (cd "$ext/koreader/plugins" && zip -qr "$GITHUB_WORKSPACE/koplugin/yaknigi.koplugin.zip" yaknigi.koplugin)
+          rm "$plugin/LICENSE"
           du -sh "$ext"
           # Without KUAL, on the newer jailbreaks: a scriptlet is shown among the books.
           mkdir -p package/documents
@@ -113,6 +122,11 @@ jobs:
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
+          name: yaknigi-koplugin
+          path: koplugin
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
           name: yaknigi-update
           path: update
           if-no-files-found: ignore
@@ -132,4 +146,5 @@ jobs:
           (cd yaknigi-ko-kindlehf && zip -qr ../yaknigi-ko-kindlehf.zip .)
           gh release create "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --verify-tag --generate-notes \
               yaknigi-update/manifest.json yaknigi-update/yaknigi-update.tar \
-              yaknigi-ko-kindlehf.zip yaknigi-ko-kpkg/yaknigi-ko_kindlehf.kpkg
+              yaknigi-ko-kindlehf.zip yaknigi-ko-kpkg/yaknigi-ko_kindlehf.kpkg \
+              yaknigi-koplugin/yaknigi.koplugin.zip

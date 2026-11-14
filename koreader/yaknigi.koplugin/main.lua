@@ -30,6 +30,7 @@ local Covers = require("yaknigi/covers")
 local Cfi = require("yaknigi/cfi")
 local Crypt = require("yaknigi/crypt")
 local Feed = require("yaknigi/feed")
+local FilePicker = require("yaknigi/filepicker")
 local Library = require("yaknigi/library")
 local Login = require("yaknigi/login")
 local NoAccess = require("yaknigi/noaccess")
@@ -50,6 +51,7 @@ local AppState = require("yaknigi/appstate")
 local Terms = require("yaknigi/terms")
 local TextStyle = require("yaknigi/textstyle")
 local Updater = require("yaknigi/updater")
+local Upload = require("yaknigi/upload")
 
 local ROOT = DataStorage:getDataDir() .. "/yaknigi"
 local BOOKS = ROOT .. "/books"
@@ -64,6 +66,7 @@ local ADD_RESULT = ROOT .. "/add.result"
 local SAVE_RESULT = ROOT .. "/save.result"
 local REMOVE_RESULT = ROOT .. "/remove.result"
 local STORAGE_RESULT = ROOT .. "/storage.result"
+local UPLOAD_RESULT = ROOT .. "/upload.result"
 local UPDATE_DIR = ROOT .. "/update"
 local UPDATE_RESULT = ROOT .. "/update.result"
 os.execute("mkdir -p '" .. BOOKS .. "' '" .. COVERS .. "'")
@@ -78,6 +81,9 @@ local NOTES_AFTER_CHANGE_SECONDS = 3
 local NOTES_AFTER_WAKING_SECONDS = 10
 -- For a book left open: what was made on the phone meanwhile comes as the pages are turned.
 local NOTES_WHILE_READING_SECONDS = 180
+-- While pages turn, the place goes to Yandex this long after the first of them: the phone
+-- may be picked up without this device ever going to sleep.
+local POSITION_WHILE_READING_SECONDS = 60
 -- Wi-Fi takes a while to come back after sleep. Pauses between tries to reach Yandex.
 local WAKE_RETRY_SECONDS = { 5, 15, 30 }
 -- Which screen of the library was open, for coming back to it from a book.
@@ -90,6 +96,7 @@ local add_requests = 0
 local remove_requests = 0
 local save_requests = 0
 local storage_requests = 0
+local upload_requests = 0
 -- A check or a download is under way.
 local updating = false
 -- The books being saved on the device, by book id.
@@ -444,7 +451,7 @@ function Yaknigi:showSettings()
         storage = self:storageActions(),
         updates = {
             version = Updater.version(),
-            enabled = Updater.enabled(),
+            enabled = Updater.checks(),
             check = function() self:checkUpdates(true) end,
         },
         on_close_app = function()
@@ -499,6 +506,7 @@ function Yaknigi:showLibrary(quiet)
         on_book_menu = function(item) self:showBookMenu(item) end,
         on_bookshelves = function() self:openList("bookshelves", nil, "Полки") end,
         on_new_shelf = function() self:newShelf() end,
+        on_upload = function() self:chooseUpload() end,
         on_shelf_menu = function(state) self:showShelfMenu(state) end,
         on_add = function(item) self:addFound(item) end,
         on_save = function(item) self:saveFound(item) end,
@@ -580,7 +588,7 @@ end
 
 --- Asks once a day, on starting, with the network already up: never turns the Wi-Fi on for this.
 function Yaknigi:autoUpdate()
-    if not Updater.enabled() or updating then return end
+    if not Updater.checks() or updating then return end
     if not AppState:nilOrTrue("check_updates") or not NetworkMgr:isOnline() then return end
     if Updater.due(AppState:readSetting("update_checked"), os.time()) then
         self:checkUpdates(false)
@@ -610,7 +618,9 @@ function Yaknigi:updateChecked(result, tell)
     end
     local version = type(manifest) == "table" and manifest.version or nil
     local skipped = version and not tell and AppState:readSetting("update_skipped") == version
-    if kind == "available" and not skipped then
+    if Updater.notify_only() and (kind == "available" or kind == "manual") then
+        if not skipped then self:tellNewPlugin(version) end
+    elseif kind == "available" and not skipped then
         self:offerUpdate(manifest)
     elseif kind == "manual" and not skipped then
         -- Said once, unless asked: there is nothing to do about it from here.
@@ -625,6 +635,22 @@ function Yaknigi:updateChecked(result, tell)
     elseif tell and kind ~= "available" then
         UIManager:show(InfoMessage:new{ text = "Не удалось проверить обновления. Попробуйте позже." })
     end
+end
+
+--- In someone's own KOReader nothing is downloaded: the plugin's folder is theirs to replace.
+function Yaknigi:tellNewPlugin(version)
+    UIManager:show(ConfirmBox:new{
+        name = "YaknigiUpdateOffer",
+        text = "Вышла новая версия " .. version .. ", у вас " .. Updater.version() .. ". "
+            .. "Скачайте yaknigi.koplugin.zip на странице релизов проекта на GitHub и замените им "
+            .. "папку yaknigi.koplugin в папке plugins KOReader.",
+        ok_text = "Понятно", -- asked again at the next daily check
+        cancel_text = "Пропустить",
+        cancel_callback = function()
+            AppState:saveSetting("update_skipped", version)
+            AppState:flush()
+        end,
+    })
 end
 
 function Yaknigi:offerUpdate(manifest)
@@ -686,12 +712,20 @@ function Yaknigi:refreshLibrary(tell_failure)
             write_json(LIBRARY_RESULT, { kind = kind or "ok" })
             os.exit(0)
         end)
-        if self.library_pid then self:pollLibrary(tell_failure) end
+        if self.library_pid then
+            if self.library then self.library:setSyncState("busy") end
+            self:pollLibrary(tell_failure)
+        elseif self.library then
+            self.library:setSyncState("failed")
+        end
     end
     if tell_failure then
         NetworkMgr:runWhenOnline(start)
     elseif NetworkMgr:isOnline() then
         start()
+    elseif self.library then
+        -- Offline: the header says so, and a tap on it tries again.
+        self.library:setSyncState("failed")
     end
 end
 
@@ -707,16 +741,21 @@ function Yaknigi:pollLibrary(tell_failure)
         local kind = result.kind or "network"
         if kind == "ok" then
             local cards = read_json(LIBRARY_CACHE)
-            if not cards then return end
+            if not cards then self.library:setSyncState("failed"); return end
+            -- Drawn with the new list, in one go.
+            self.library.sync_state = nil
             if #cards == 0 then self.library.message = "Библиотека пуста. Книги можно найти через поиск." end
             self.library:switchItemTable(nil, self:libraryItems(cards))
             self:fetchCovers(without_episodes(cards))
         elseif kind == "auth" then
             save_token(nil)
             self:showLibrary()
-        elseif tell_failure then
-            message(error_text(kind), 3)
-            self.library:setMessage(error_text(kind))
+        else
+            self.library:setSyncState("failed")
+            if tell_failure then
+                message(error_text(kind), 3)
+                self.library:setMessage(error_text(kind))
+            end
         end
     end)
 end
@@ -1438,6 +1477,124 @@ local function in_background(work, done)
     UIManager:scheduleIn(0.2, wait)
 end
 
+-- Books of one's own ----------------------------------------------------------
+
+-- When to look whether Yandex has read a sent book through.
+local AFTER_UPLOAD_SECONDS = { 20, 90 }
+-- Files being sent, and those sent or found already there since the app started, by path.
+local uploading, uploaded = {}, {}
+-- The file picker while it is open.
+local picker
+
+--- Where one's own books are: on a Kindle, what it shows as Documents.
+local function books_folder()
+    local Device = require("device")
+    if Device:isKindle() then return "/mnt/us/documents" end
+    return G_reader_settings:readSetting("home_dir") or Device.home_dir or DataStorage:getDataDir()
+end
+
+local function upload_error(kind)
+    if kind == "too_big" then return "Файл слишком большой: больше 100 МБ." end
+    if kind == "unreadable" then return "Не получилось прочитать файл." end
+    if kind == "rejected" then return "Яндекс Книги не приняли этот файл." end
+    if kind == "denied" then return "Яндекс Книги не разрешили загрузить книгу." end
+    return error_text(kind)
+end
+
+--- The device's folders with EPUB and FB2 in them, to choose a book to send.
+function Yaknigi:chooseUpload()
+    local root = books_folder()
+    if Upload.count(root, { ROOT }) == 0 then
+        local where = require("device"):isKindle() and "в папку documents" or "в папку с книгами"
+        message("Здесь нет файлов EPUB и FB2. Скопируйте книгу " .. where .. ", и её можно будет загрузить.", 5)
+        return
+    end
+    local is_kindle = require("device"):isKindle()
+    picker = FilePicker:new{
+        root = root,
+        root_name = is_kindle and "documents" or nil,
+        avoid = { ROOT },
+        on_pick = function(path) self:uploadFile(path) end,
+        state = function(path)
+            if uploading[path] then return "sending" end
+            if uploaded[path] then return "sent" end
+        end,
+    }
+    local shown = picker
+    local close = picker.onCloseWidget
+    picker.onCloseWidget = function(widget)
+        if picker == shown then picker = nil end
+        return close(widget)
+    end
+    UIManager:show(picker)
+end
+
+local function picker_changed()
+    if picker then picker:refresh() end
+end
+
+--- Sends a file of one's own to Yandex Books; it comes into the library once read through there.
+function Yaknigi:uploadFile(path)
+    if uploading[path] then return end
+    if not saved_token() then
+        message("Сначала войдите в Яндекс Книги.", 3)
+        return
+    end
+    local title = quoted(Upload.title(path))
+    NetworkMgr:runWhenOnline(function()
+        if uploading[path] then return end
+        uploading[path] = true
+        picker_changed()
+        upload_requests = upload_requests + 1
+        local result_path = UPLOAD_RESULT .. upload_requests
+        local token = saved_token()
+        local pid = ffiutil.runInSubProcess(function()
+            local api = Api.new(token)
+            local ok, done, kind = pcall(Upload.send, api, path)
+            api:close()
+            if not ok then done, kind = nil, "http" end
+            write_json(result_path, { done = done, kind = kind })
+            os.exit(0)
+        end)
+        if not pid then
+            uploading[path] = nil
+            picker_changed()
+            message(error_text("http"), 3)
+            return
+        end
+        if not picker then toast("Загружаю " .. title) end
+        local function wait()
+            if not ffiutil.isSubProcessDone(pid) then
+                UIManager:scheduleIn(0.5, wait)
+                return
+            end
+            uploading[path] = nil
+            local result = read_json(result_path) or {}
+            os.remove(result_path)
+            if result.done then uploaded[path] = true end
+            picker_changed()
+            if result.done == "had" then
+                toast(title .. " уже есть в Яндекс Книгах")
+            elseif result.done == "sent" then
+                message(title .. " загружена в Яндекс Книги. В библиотеке она появится, когда Яндекс её обработает.", 4)
+            elseif result.kind == "auth" then
+                save_token(nil)
+                self:showLibrary()
+                return
+            else
+                message(upload_error(result.kind or "network"), 4)
+                return
+            end
+            for _, seconds in ipairs(AFTER_UPLOAD_SECONDS) do
+                UIManager:scheduleIn(seconds, function()
+                    if shown_library then self:refreshLibrary(false) end
+                end)
+            end
+        end
+        UIManager:scheduleIn(0.5, wait)
+    end)
+end
+
 -- Shelves ---------------------------------------------------------------------
 
 local function shelf_error(kind)
@@ -1826,6 +1983,15 @@ function Yaknigi:loadAndOpen(card, store)
     self:showBook(result, xpointer, target, stubs, text_start)
 end
 
+--- Goes to a place from Yandex. A letter crengine does not find, as its text came out other
+-- than counted, gives way to the start of its paragraph.
+local function go_to(ui, xpointer)
+    if not ui.document:isXPointerInDocument(xpointer) then
+        xpointer = (xpointer:gsub("/text%(%)[^/]*$", ""))
+    end
+    ui.rolling:onGotoXPointer(xpointer)
+end
+
 function Yaknigi:showBook(store, xpointer, target, stubs, text_start)
     if self.library then
         UIManager:close(self.library)
@@ -1841,9 +2007,9 @@ function Yaknigi:showBook(store, xpointer, target, stubs, text_start)
     local ReaderUI = require("apps/reader/readerui")
     install_opening_message(ReaderUI)
     ReaderUI:showReader(store.epub, nil, false, nil, function(ui)
-        if xpointer then ui.rolling:onGotoXPointer(xpointer) end
-        -- Only reading moves the position. Sending this one back would be a step behind
-        -- the phone, as what comes from Yandex lands at the start of its paragraph.
+        if xpointer then go_to(ui, xpointer) end
+        -- Only reading moves the position. Sending this one back would put the start of the
+        -- Kindle's page, a little before the phone's, in place of the phone's.
         if ui.yaknigi then
             ui.yaknigi.base_xp = ui.document:getXPointer()
             ui.yaknigi:exchange()
@@ -1933,13 +2099,16 @@ function Yaknigi:onReaderReady()
     self.reading_session = Sync.new_session()
     self.queued_at = os.time()
     self:keepChapter()
+    -- In someone's own KOReader the reading screen stays theirs: the shell only counts the
+    -- progress that goes to Yandex.
+    self.shell = Shell.new(self.ui, self)
     if APP_MODE then
-        self.shell = Shell.new(self.ui, self)
         self.shell:install()
+        self.shell_installed = true
         self:chooseSleepCover(store)
-        -- Not in the way of the first page.
-        UIManager:scheduleIn(NOTES_AFTER_OPENING_SECONDS, function() self:syncNotes() end)
     end
+    -- Not in the way of the first page.
+    UIManager:scheduleIn(NOTES_AFTER_OPENING_SECONDS, function() self:syncNotes() end)
     local state = workers[store.id] or {}
     workers[store.id] = state
     self:jumpIfWaiting(state)
@@ -2045,6 +2214,13 @@ function Yaknigi:poll()
 end
 
 function Yaknigi:onPageUpdate()
+    if self.shell and not self.position_soon then
+        self.position_soon = function()
+            self.position_soon = nil
+            if not self.closed and NetworkMgr:isOnline() then self:saveReading() end
+        end
+        UIManager:scheduleIn(POSITION_WHILE_READING_SECONDS, self.position_soon)
+    end
     if self.shell and self.notes_compared_at and not self.notes_soon
         and os.time() - self.notes_compared_at >= NOTES_WHILE_READING_SECONDS then
         self.notes_compared_at = os.time()
@@ -2364,7 +2540,7 @@ function Yaknigi:jumpIfWaiting(state)
     local target = store:fragment_of_spine_index(Cfi.spine_index(cfi))
     if (state.stubs or {})[target] or not store:has(store.paths[target]) then return end
     state.jump_cfi = nil
-    self.ui.rolling:onGotoXPointer(Cfi.to_xpointer(cfi, target, store:read(store.paths[target])))
+    go_to(self.ui, Cfi.to_xpointer(cfi, target, store:read(store.paths[target])))
     self.base_xp = self.ui.document:getXPointer()
 end
 
@@ -2399,7 +2575,7 @@ function Yaknigi:onResume()
     -- Wi-Fi takes a while to come back.
     UIManager:scheduleIn(NOTES_AFTER_WAKING_SECONDS, function() self:syncNotes() end)
     -- The time on the page is hours behind.
-    if self.shell and self.ui.view then self.shell:onWake() end
+    if self.shell_installed and self.ui.view then self.shell:onWake() end
 end
 
 function Yaknigi:onCloseDocument()
@@ -2408,6 +2584,7 @@ function Yaknigi:onCloseDocument()
     -- KOReader closes the document before its last SaveSettings, so that one is too late.
     self:saveReading()
     if self.notes_soon then UIManager:unschedule(self.notes_soon) end
+    if self.position_soon then UIManager:unschedule(self.position_soon) end
     if self.notes_dirty then self:syncNotes(true) end
     self.closed = true
     if self.prompt then
@@ -2422,7 +2599,7 @@ end
 
 function Yaknigi:onSetDimensions()
     -- The screen was rotated; KOReader has laid out its zones for the new shape.
-    if self.shell then
+    if self.shell_installed then
         UIManager:nextTick(function() self.shell:registerZone() end)
     end
 end
@@ -2469,6 +2646,20 @@ end
 
 function Yaknigi:init()
     if self.ui.menu then self.ui.menu:registerToMainMenu(self) end
+    -- In KOReader's own file manager: a book held down can go to Yandex Books.
+    if not self.ui.document and self.ui.addFileDialogButtons then
+        self.ui:addFileDialogButtons("yaknigi_upload", function(file, is_file)
+            if not is_file or not Upload.kind(file) or not saved_token() then return nil end
+            return { {
+                text = "Загрузить в Яндекс Книги",
+                callback = function()
+                    local dialog = UIManager:getTopmostVisibleWidget()
+                    if dialog then UIManager:close(dialog) end
+                    self:uploadFile(file)
+                end,
+            } }
+        end)
+    end
     -- The panel's sync and settings belong to the screen made last: the book or the library.
     -- Only in the app: in someone's own KOReader a swipe down is theirs.
     if APP_MODE then

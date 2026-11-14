@@ -1,9 +1,16 @@
 #!/bin/sh
 # Runs KOReader for Linux with the plugin and the test driver, against the mock server.
-# Usage: run.sh KOREADER_DIR OUT_DIR
+# Usage: run.sh KOREADER_DIR OUT_DIR [plugin]
+# With "plugin", as in someone's own KOReader: no launcher, so no app.
 set -u
 KO=$1
 OUT=$2
+MODE=${3:-app}
+if [ "$MODE" = plugin ]; then
+    APP_ENV="YAKNIGI_APP=0"
+else
+    APP_ENV="YAKNIGI_APP=1 YAKNIGI_DIR=$OUT/ext"
+fi
 REPO=$(CDPATH='' cd "$(dirname "$0")/../.." && pwd)
 PORT=18765
 HOME_DIR=$OUT/ko-home
@@ -21,10 +28,10 @@ sleep 1
 
 cd "$KO" || exit 2
 {
-    KO_HOME=$HOME_DIR YAKNIGI_APP=1 YAKNIGI_TEST_OUT=$OUT \
+    env $APP_ENV KO_HOME=$HOME_DIR YAKNIGI_TEST_OUT=$OUT \
         YB_API_BASE=http://127.0.0.1:$PORT/api/v5 YB_OAUTH_BASE=http://127.0.0.1:$PORT \
         YB_GRAPHQL_URL=http://127.0.0.1:$PORT/graphql YB_CLIENT_ID=test-client \
-        YB_UPDATE_URL=http://127.0.0.1:$PORT/update YB_VERSION=1.0.0 YB_BASE=test-base YAKNIGI_DIR=$OUT/ext \
+        YB_UPDATE_URL=http://127.0.0.1:$PORT/update YB_VERSION=1.0.0 YB_BASE=test-base \
         EMULATE_READER_W=1236 EMULATE_READER_H=1648 EMULATE_READER_DPI=300 \
         SDL_AUDIODRIVER=dummy \
         timeout 300 xvfb-run -a -s "-screen 0 1236x1648x24" ./luajit reader.lua -d "$OUT/empty" 2>&1

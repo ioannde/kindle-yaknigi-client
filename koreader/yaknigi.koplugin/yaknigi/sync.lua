@@ -79,6 +79,7 @@ function Sync.send(api, dir)
         if now and now.start == position.start then os.remove(dir .. "/to_send") end
     end
     if not ok then return nil, kind end
+    logger.info("yaknigi: position sent:", position.progress, "%")
     return position
 end
 

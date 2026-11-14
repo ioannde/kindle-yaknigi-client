@@ -24,6 +24,7 @@ local VerticalGroup = require("ui/widget/verticalgroup")
 local Screen = Device.screen
 
 local AppState = require("yaknigi/appstate")
+local Fonts = require("yaknigi/fonts")
 local Kit = require("yaknigi/kit")
 local Power = require("yaknigi/power")
 local Prefs = require("yaknigi/prefs")
@@ -44,6 +45,9 @@ local Settings = InputContainer:extend{
     storage = nil, -- { measure(done), clear(picks, done) }; what is on the device, from the library
     body_height = nil, -- how much room the list has; the rest of the screen unless given
     all_rows = nil, -- also the rows that this device has no use for
+    -- The rows of the app's own reading screen, sleep and refresh. In someone's own KOReader
+    -- these are KOReader's settings, and theirs.
+    app = os.getenv("YAKNIGI_APP") == "1",
     updates = nil, -- { version, enabled, check() }; from the library
 }
 
@@ -71,27 +75,8 @@ function Settings:init()
     self:build()
 end
 
---- What the list consists of. Reads the current values, so it is asked anew at each build.
-function Settings:entries()
-    local list = {}
-    local function heading(text) list[#list + 1] = { heading = text } end
-    local function switch(key, title, on, set) list[#list + 1] = { key = key, title = title, on = on, set = set } end
-    local function choice(key, title, labels, selected, pick, note)
-        list[#list + 1] = { key = key, title = title, labels = labels, selected = selected, pick = pick, note = note }
-    end
-
-    heading("Чтение")
-    switch("clock", "Часы на странице", Prefs.reading_clock(), function(on)
-        G_reader_settings:saveSetting("yaknigi_reading_clock", on)
-    end)
-    if Device:canDoSwipeAnimation() or self.all_rows then
-        switch("swipe", "Анимация листания", G_reader_settings:isTrue("swipe_animations"), function(on)
-            G_reader_settings:saveSetting("swipe_animations", on)
-        end)
-    end
-    switch("theme", "Тёмная тема", G_reader_settings:isTrue("night_mode"), function()
-        UIManager:broadcastEvent(Event:new("ToggleNightMode"))
-    end)
+--- Refresh and sleep, which only the app sets.
+function Settings:appRows(heading, choice)
     local rates, rate_labels = {}, {}
     for i, item in ipairs(Prefs.REFRESH) do rates[i], rate_labels[i] = item[1], item[2] end
     choice("refresh", "Обновление экрана", rate_labels, index_of(rates, Prefs.refresh_rate()) or 3, function(i)
@@ -116,6 +101,34 @@ function Settings:entries()
     choice("sleep_time", "Уходить в сон через", minutes, nearest(Prefs.SLEEP_MINUTES, Prefs.sleep_minutes()), function(i)
         Prefs.set_sleep_minutes(self.ui, Prefs.SLEEP_MINUTES[i])
     end)
+end
+
+--- What the list consists of. Reads the current values, so it is asked anew at each build.
+function Settings:entries()
+    local list = {}
+    local function heading(text) list[#list + 1] = { heading = text } end
+    local function switch(key, title, on, set) list[#list + 1] = { key = key, title = title, on = on, set = set } end
+    local function choice(key, title, labels, selected, pick, note)
+        list[#list + 1] = { key = key, title = title, labels = labels, selected = selected, pick = pick, note = note }
+    end
+
+    local app = self.app or self.all_rows
+    heading("Чтение")
+    if app then
+        switch("clock", "Часы на странице", Prefs.reading_clock(), function(on)
+            G_reader_settings:saveSetting("yaknigi_reading_clock", on)
+        end)
+    end
+    if app and Device:canDoSwipeAnimation() or self.all_rows then
+        switch("swipe", "Анимация листания", G_reader_settings:isTrue("swipe_animations"), function(on)
+            G_reader_settings:saveSetting("swipe_animations", on)
+        end)
+    end
+    switch("theme", "Тёмная тема", G_reader_settings:isTrue("night_mode"), function()
+        UIManager:broadcastEvent(Event:new("ToggleNightMode"))
+    end)
+    list[#list + 1] = { key = "fonts", title = "Шрифты", leads_on = true, action = function() self:openFonts() end }
+    if app then self:appRows(heading, choice) end
 
     if self.storage then
         heading("Память")
@@ -380,6 +393,91 @@ function Settings:clearCache()
     end
 end
 
+local FONT_SAMPLE = "В чащах юга жил-был цитрус?"
+
+--- How to add a font, and each font the device has, in itself, with a switch to leave it out of
+-- the text panel's list.
+function Settings:fontRows()
+    local W = self.dimen.w
+    local pad = Kit.px(16)
+    local rows = {}
+    local device, where = "Kindle", "в папку fonts в корне"
+    if not Device:isKindle() then device, where = "устройство", "в папку шрифтов KOReader" end
+    local note = FrameContainer:new{
+        bordersize = 0, padding = 0, padding_left = pad, padding_right = pad, padding_top = Kit.px(12),
+        padding_bottom = Kit.px(4),
+        TextBoxWidget:new{
+            text = "Чтобы добавить шрифт, подключите " .. device .. " к компьютеру и скопируйте файлы .ttf или .otf "
+                .. where .. ". Затем перезапустите приложение.",
+            face = Kit.face(15),
+            fgcolor = Blitbuffer.COLOR_DARK_GRAY,
+            width = W - 2 * pad,
+        },
+    }
+    rows[#rows + 1] = { height = note:getSize().h, widget = note }
+    local box = Geom:new{ w = W, h = Kit.px(HEADING_H) }
+    rows[#rows + 1] = {
+        heading = true,
+        height = box.h,
+        widget = LeftContainer:new{ dimen = box,
+            HorizontalGroup:new{ align = "center",
+                HorizontalSpan:new{ width = pad },
+                Kit.text("Доступные шрифты", 15, { bold = true, color = Blitbuffer.COLOR_DARK_GRAY }),
+            },
+        },
+    }
+
+    local all, hidden = self.font_list, Fonts.hidden()
+    local shown = 0
+    for _, name in ipairs(all) do
+        if not hidden[name] then shown = shown + 1 end
+    end
+    self.font_rows = {}
+    for _, name in ipairs(all) do
+        local on = not hidden[name]
+        local switch = Kit.Switch:new{ on = on }
+        local text_w = W - 3 * pad - switch:getSize().w
+        local color = not on and Blitbuffer.COLOR_DARK_GRAY or nil
+        local texts = VerticalGroup:new{ align = "left",
+            Kit.text(name, 15, { color = Blitbuffer.COLOR_DARK_GRAY, max_width = text_w }),
+            Kit.gap(Kit.px(4)),
+            Kit.text(FONT_SAMPLE, 22, { face = Fonts.face(name, 22), color = color, max_width = text_w }),
+        }
+        local h = texts:getSize().h + 2 * Kit.px(12)
+        local row_box = Geom:new{ w = W, h = h }
+        local widget = Kit.Tappable:new{
+            callback = function()
+                if on and shown <= 1 then
+                    UIManager:show(InfoMessage:new{ text = "Хотя бы один шрифт должен остаться", timeout = 2 })
+                    return
+                end
+                Fonts.set_hidden(name, on)
+                self:changed()
+            end,
+            OverlapGroup:new{ dimen = row_box:copy(), allow_mirroring = false,
+                LeftContainer:new{ dimen = row_box:copy(),
+                    HorizontalGroup:new{ HorizontalSpan:new{ width = pad }, texts } },
+                RightContainer:new{ dimen = row_box:copy(),
+                    HorizontalGroup:new{ align = "center", switch, HorizontalSpan:new{ width = pad } } },
+            },
+        }
+        self.font_rows[name] = widget
+        rows[#rows + 1] = {
+            height = h + Kit.px(1),
+            widget = VerticalGroup:new{ align = "left", widget, row_line(W) },
+        }
+    end
+    return rows
+end
+
+function Settings:openFonts()
+    self.font_list = Fonts.all()
+    self.choice = { title = "Шрифты", fonts_screen = true }
+    self.list_page = self.page
+    self.page = 1
+    self:changed()
+end
+
 --- Splits rows between pages of the given height. A heading stays with the row after it.
 local function paginate(rows, height)
     local pages, page, used = {}, {}, 0
@@ -401,7 +499,7 @@ function Settings:showPower()
     self.power_dialog = Power.show(function()
         self:close()
         UIManager:nextTick(self.on_close_app)
-    end, self.all_rows)
+    end, self.all_rows, self.app)
 end
 
 function Settings:build()
@@ -461,7 +559,9 @@ function Settings:build()
 
     local rows
     if choice then
-        rows = choice.cache_screen and self:cacheRows() or self:choiceRows(choice)
+        if choice.cache_screen then rows = self:cacheRows()
+        elseif choice.fonts_screen then rows = self:fontRows()
+        else rows = self:choiceRows(choice) end
     else
         rows = self:mainRows()
     end

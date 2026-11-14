@@ -618,7 +618,7 @@ function Library:build()
         body = self:listBody(inner, H - body_top - bottom_h - footer_h)
     end
 
-    self.back_button, self.refresh_button = nil, nil
+    self.back_button = nil
     local header_row
     local box = Geom:new{ w = W, h = row_h }
     if top_level then
@@ -634,10 +634,26 @@ function Library:build()
                 },
             },
         }
-        if (home or in_feed) and not self.on_sign_in then
-            self.refresh_button = Kit.icon_button("reload", side, function() self:refresh() end,
-                { edge = "right", margin = pad })
-            header_row[2] = RightContainer:new{ dimen = box:copy(), self.refresh_button }
+        self.upload_button, self.sync_button = nil, nil
+        if home and not self.on_sign_in then
+            -- The library syncs by itself, on opening and on waking, and on a swipe down; the
+            -- header says only that it is at it, or that the last time it could not.
+            local buttons = HorizontalGroup:new{ align = "center" }
+            local sync_icon = self.sync_state == "busy" and "wait"
+                or self.sync_state == "failed" and "cloud.off" or nil
+            if sync_icon then
+                self.sync_button = Kit.icon_button(sync_icon, side, function()
+                    if self.sync_state == "failed" then self:refresh() end
+                end, { dim = sync_icon == "wait" })
+                buttons[#buttons + 1] = Kit.fixed(self.sync_button, side)
+            end
+            -- A book of one's own from the device, as the phone's "Загрузить".
+            if self.on_upload then
+                self.upload_button = Kit.icon_button("plus", side, function() self.on_upload() end,
+                    { edge = "right", margin = pad })
+                buttons[#buttons + 1] = self.upload_button
+            end
+            if #buttons > 0 then header_row[2] = RightContainer:new{ dimen = box:copy(), buttons } end
         end
     else
         self.back_button = Kit.icon_button("chevron.left", side, function() self:goBack() end, { edge = "left", margin = pad })
@@ -912,8 +928,20 @@ end
 
 function Library:onSwipe(_, ges)
     if ges.direction == "west" or ges.direction == "north" then self:turn(1)
-    elseif ges.direction == "east" then self:turn(-1) end
+    elseif ges.direction == "east" then self:turn(-1)
+    elseif ges.direction == "south" and (self.view == "home" or self.view == "feed") and not self.on_sign_in then
+        -- Pulled down, as on the phone: the library or the feed again from Yandex. In the app the
+        -- swipe opens the panel instead, and its sync does the same.
+        self:refresh()
+    end
     return true
+end
+
+--- "busy" while the library syncs, "failed" when it last could not, nil otherwise.
+function Library:setSyncState(state)
+    if self.sync_state == state then return end
+    self.sync_state = state
+    if self.view == "home" then self:refreshScreen() end
 end
 
 function Library:onClose()

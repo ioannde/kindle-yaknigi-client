@@ -11,6 +11,8 @@ local NoteSync = require("yaknigi/notesync")
 local Updater = require("yaknigi/updater")
 local Access = require("yaknigi/access")
 local TextStyle = require("yaknigi/textstyle")
+local Fonts = require("yaknigi/fonts")
+local Upload = require("yaknigi/upload")
 
 local failed, passed = 0, 0
 local function eq(got, want, name)
@@ -20,6 +22,37 @@ local function eq(got, want, name)
         failed = failed + 1
         print(("FAIL %s: got %s, want %s"):format(name, tostring(got), tostring(want)))
     end
+end
+
+-- fonts
+do
+    local list = Fonts.order({ "Literata", "Noto Sans CJK SC", "FreeSans", "Noto Serif", "DejaVu Sans Mono", "Literata" })
+    eq(table.concat(list, ","), "Noto Serif,FreeSans,Literata", "usual fonts first, none for other scripts, once each")
+    eq(table.concat(Fonts.visible(list, { FreeSans = true }), ","), "Noto Serif,Literata", "a font turned off")
+    eq(#Fonts.visible(list, { ["Noto Serif"] = true, FreeSans = true, Literata = true }), 3, "all off shows all")
+end
+
+-- books of one's own
+eq(Upload.kind("/mnt/us/documents/A.EPUB"), "epub", "an epub in capitals")
+eq(Upload.kind("book.fb2"), "fb2", "fb2")
+eq(Upload.kind("book.fb2.zip"), nil, "a zipped fb2 is not taken")
+eq(Upload.kind("book.pdf"), nil, "pdf is not taken")
+eq(Upload.kind("epub"), nil, "no extension")
+eq(Upload.kind("dir.epub/x"), nil, "an extension of a folder")
+eq(Upload.content_type("x.fb2"), "application/x-fictionbook+xml", "fb2 type")
+eq(Upload.file_name("/a/b/Война и мир.epub"), "Война и мир.epub", "file name")
+eq(Upload.title("/a/b/v1.0.final.epub"), "v1.0.final", "title keeps inner dots")
+eq(Upload.books_word(1) .. Upload.books_word(3) .. Upload.books_word(5), "книгакнигикниг", "1, 3, 5 books")
+eq(Upload.books_word(11) .. Upload.books_word(21) .. Upload.books_word(112), "книгкнигакниг", "11, 21, 112 books")
+eq(Upload.size_text(5.2 * 1024 * 1024), "5,2 МБ", "megabytes with a comma")
+eq(Upload.size_text(840 * 1024), "840 КБ", "kilobytes")
+eq(Upload.size_text(100), "1 КБ", "a tiny file is not 0")
+do
+    local now = os.time{ year = 2026, month = 11, day = 13, hour = 9 }
+    eq(Upload.date_text(now - 3600, now), "сегодня", "an hour ago")
+    eq(Upload.date_text(os.time{ year = 2026, month = 11, day = 12, hour = 23 }, now), "вчера", "late yesterday")
+    eq(Upload.date_text(os.time{ year = 2026, month = 5, day = 2, hour = 12 }, now), "2 мая", "this year")
+    eq(Upload.date_text(os.time{ year = 2025, month = 11, day = 13, hour = 12 }, now), "13 нояб. 2025", "last year")
 end
 
 -- shelves
@@ -161,19 +194,28 @@ eq(Cfi.resolve(chapter, {}), "", "empty path")
 eq(Cfi.to_xpointer("/6/8!,/2/4/2/1:0,/x", 4, chapter), "/body/DocFragment[4]/body/div[1]", "xpointer")
 eq(Cfi.to_xpointer("/6/8!,/2/4/9/1:0,/x", 4, chapter), "/body/DocFragment[4]/body", "text step at body")
 eq(Cfi.to_xpointer("nope", 4, chapter), "/body/DocFragment[4]/body", "fallback")
+eq(Cfi.to_xpointer("/6/8!,/2/4/2/4/1:2,/2/4/2/4/1:3", 4, chapter), "/body/DocFragment[4]/body/div[1]/p[1]/text().2",
+   "down to the letter where the page starts")
+eq(Cfi.to_xpointer("/6/8!/2/4/2/8/1:3", 4, chapter), "/body/DocFragment[4]/body/div[1]/p[2]/text().3",
+   "a start without a range")
+eq(Cfi.to_xpointer("/6/8!,/2/4/2/4/1:2,/x", 4, nil), "/body/DocFragment[4]/body", "no chapter text")
 
 -- http
 local function fake_sock(script, log)
     -- script: list of responses, one per request; nil sends an error.
     local s = { buf = "", closed = false }
+    -- The answer comes once the request has been sent, in as many pieces as it took.
     function s:send(d)
         log[#log + 1] = d
-        local r = table.remove(script, 1)
-        if r == false then return nil, "closed" end
-        self.buf = r or ""
+        if script[1] == false then table.remove(script, 1); return nil, "closed" end
+        self.waiting = true
         return #d
     end
     function s:receive(n)
+        if self.waiting then
+            self.waiting = false
+            self.buf = table.remove(script, 1) or ""
+        end
         if n == "*l" then
             local line, rest = self.buf:match("^(.-)\r?\n(.*)$")
             if not line then return nil, "closed" end
@@ -221,6 +263,14 @@ st, body = h:request("POST", "http://x.test/2", nil, "data")
 eq(body, "b", "retry after idle close")
 eq(connects, 2, "reconnected once")
 assert(log[#log]:find("Content%-Length: 4\r\n\r\ndata$"), "post body")
+
+-- A body in pieces is sent piece by piece, its length the sum of them.
+log = {}
+h = Http.new(function() return fake_sock({ "HTTP/1.1 204 No Content\r\n\r\n" }, log) end)
+st = h:request("POST", "http://x.test/up", { ["Content-Type"] = "multipart/form-data" }, { "ab", "cde", "" })
+eq(st, 204, "pieces answered")
+assert(log[1]:find("Content%-Length: 5\r\n\r\n$"), "length of the pieces")
+eq(table.concat(log, "", 2), "abcde", "pieces after the head")
 
 -- A fresh connection that fails is not retried.
 connects = 0

@@ -982,6 +982,23 @@ local function test_reading_screen()
     if not G_reader_settings:isTrue("yaknigi_reading_clock") then fail("the clock did not come back") end
     shot("20b-settings-switched")
 
+    -- The fonts: each in itself, and one turned off leaves the text panel's list.
+    local Fonts = require("yaknigi/fonts")
+    tap_widget(settings_row(settings, "fonts"))
+    if not (settings.choice and settings.choice.fonts_screen) then fail("the fonts did not open") end
+    local first_font = settings.font_list[1]
+    if not first_font or #settings.font_list < 2 then fail("fonts: " .. #settings.font_list) end
+    tap_widget(settings.font_rows[first_font])
+    for _, name in ipairs(Fonts.shown()) do
+        if name == first_font then fail("a font turned off is still in the list") end
+    end
+    UIManager:forceRePaint()
+    shot("20f-settings-fonts")
+    tap_widget(settings.font_rows[first_font])
+    if Fonts.shown()[1] ~= first_font then fail("the font did not come back") end
+    tap_widget(settings.back)
+    if settings.choice then fail("back does not leave the fonts") end
+
     -- A row with choices opens them, a choice comes back to the list.
     tap_widget(settings_row(settings, "refresh"))
     if not settings.choice then fail("the choices of the refresh did not open") end
@@ -2915,7 +2932,13 @@ local function script()
     menu:goHome()
     UIManager:forceRePaint()
     shot("48-library-dock")
-    if menu.refresh_button == nil then fail("no way to refresh the library") end
+    -- No button to sync: a swipe down does it, and the header says it is at it.
+    menu:onSwipe(nil, { direction = "south" })
+    wait("the library syncing", function() return menu.sync_state == "busy" end)
+    UIManager:forceRePaint()
+    shot("48b-library-syncing")
+    if not menu.sync_button then fail("nothing in the header while syncing") end
+    wait("the library synced", function() return menu.sync_state == nil end)
     local docked = menu.dock_item
     if not docked then fail("nothing in the dock") end
     for _, item in ipairs(menu.rows) do
@@ -3076,12 +3099,221 @@ local function script()
     tap_widget(settings.power_dialog.buttontable:getButtonById("exit"))
 end
 
+--- In someone's own KOReader: the library is asked for from the menu, the reading screen stays
+-- KOReader's, the place still goes to Yandex, and a new version is only told about.
+-- A book of one's own goes to Yandex Books, from the library's plus or from the file browser.
+local function test_own_books(plugin, menu)
+    local lfs = require("libs/libkoreader-lfs")
+    local books = require("datastorage"):getDataDir() .. "/test-books"
+    lfs.mkdir(books)
+    lfs.mkdir(books .. "/deep")
+    local function put(path, data)
+        local f = io.open(path, "wb")
+        f:write(data)
+        f:close()
+    end
+    local book = books .. "/deep/Своя книга.epub"
+    put(book, "PK\3\4" .. ("своя книга "):rep(500))
+    put(books .. "/notes.pdf", "%PDF-1.4")
+    put(books .. "/Другая книга с очень длинным названием, которое не помещается в одну строку.fb2",
+        "<?xml version=\"1.0\"?><FictionBook/>")
+    local home = G_reader_settings:readSetting("home_dir")
+    G_reader_settings:saveSetting("home_dir", books)
+    local function uploads() return mock_get("/test/uploads").uploads end
+    local function picker_with(key)
+        return wait("the files to send", function()
+            local w = top()
+            return w.name == "YaknigiFilePicker" and w.rows[key] and w
+        end)
+    end
+    local function shown(needle)
+        for _, window in ipairs(UIManager._window_stack) do
+            local text = window.widget.text
+            if type(text) == "string" and text:find(needle, 1, true) then return window.widget end
+        end
+    end
+
+    if not menu.upload_button then fail("no plus in the library") end
+    tap_widget(menu.upload_button)
+    -- A folder with a book in it, and no PDF.
+    local picker = picker_with("dir:" .. books .. "/deep")
+    if picker.rows["file:" .. books .. "/notes.pdf"] then fail("a pdf offered to Yandex") end
+    shot("p01a-own-books")
+    tap_widget(picker.rows["dir:" .. books .. "/deep"])
+    picker_with("file:" .. book)
+    if not picker.rows.up then fail("no way up from a folder") end
+    shot("p01a2-own-books-folder")
+    tap_widget(picker.rows["file:" .. book])
+    local sent = wait("the book sent", function()
+        local list = uploads()
+        return list[#list] and list[#list].name and list[#list]
+    end)
+    if sent.name ~= "Своя книга.epub" or sent.type ~= "application/epub+zip" or sent.public ~= "false"
+        or sent.start ~= "504b0304" or sent.size ~= lfs.attributes(book, "size") then
+        fail("the book as sent: " .. require("rapidjson").encode(sent))
+    end
+    local told = wait("the word that it went", function() return shown("загружена в Яндекс Книги") end)
+    UIManager:close(told)
+    wait("the book marked as sent", function() return picker.state(book) == "sent" end)
+    UIManager:forceRePaint()
+    shot("p01b-own-book-sent")
+    tap_widget(picker.rows.up)
+    picker_with("dir:" .. books .. "/deep")
+    tap_widget(picker.back)
+    wait("the picker closed", function() return top().name ~= "YaknigiFilePicker" end)
+
+    -- The same book again, from the file browser: Yandex has it, so it is not sent twice.
+    local count = #uploads()
+    local added = require("apps/filemanager/filemanager").instance.file_dialog_added_buttons
+    local row_func = added and added[added.index.yaknigi_upload]
+    if not row_func then fail("no row in the file browser's dialog") end
+    local row = row_func(book, true, {})
+    if not row or row[1].text ~= "Загрузить в Яндекс Книги" then fail("the file browser's row") end
+    plugin:uploadFile(book)
+    wait("the word that Yandex has it", function() return shown("уже есть в Яндекс Книгах") end)
+    local list = uploads()
+    if #list ~= count + 1 or not list[#list].checked then fail("the book was sent twice") end
+
+    -- Held down in the file browser, a PDF or a folder does not offer it.
+    if row_func(books .. "/notes.pdf", true, {}) or row_func(books, false, {}) then
+        fail("the row for what Yandex does not take")
+    end
+    if home then G_reader_settings:saveSetting("home_dir", home) else G_reader_settings:delSetting("home_dir") end
+    say("one's own book goes to Yandex once")
+end
+
+local function plugin_script()
+    local FileManager = require("apps/filemanager/filemanager")
+    local function plugin() return FileManager.instance and FileManager.instance.yaknigi end
+    if not plugin() then fail("plugin is not loaded") end
+    local function no_shade()
+        for _, window in ipairs(UIManager._window_stack) do
+            if window.widget.name == "YaknigiShade" then fail("the panel from the top in someone's KOReader") end
+        end
+    end
+    local function swipe_down()
+        local W, H = Screen:getWidth(), Screen:getHeight()
+        UIManager:forceRePaint()
+        UIManager:sendEvent(Event:new("Gesture", {
+            ges = "swipe", direction = "south", distance = math.floor(H * 0.4),
+            pos = Geom:new{ x = math.floor(W / 2), y = math.floor(H * 0.3), w = 0, h = 0 },
+            end_pos = Geom:new{ x = math.floor(W / 2), y = math.floor(H * 0.7), w = 0, h = 0 },
+            time = require("ui/time").now(),
+        }))
+        UIManager:forceRePaint()
+    end
+
+    -- KOReader's own file browser is what starts, and nothing of ours is over it.
+    local t0 = socket.gettime()
+    wait("a moment", function() return socket.gettime() - t0 > 2 end)
+    if top() ~= FileManager.instance then fail("something over the file browser: " .. tostring(top().name)) end
+    shot("p00-file-browser")
+    local items = {}
+    plugin():addToMainMenu(items)
+    if not items.yaknigi then fail("no menu entry") end
+    items.yaknigi.sub_item_table[1].callback()
+
+    local terms = wait("the terms", function() return top().name == "YaknigiTerms" and top() end)
+    tap_widget(terms.accept_button)
+    local login = wait("the sign-in screen", function()
+        local w = top()
+        return w.name == "YaknigiLogin" and w.url:find("code_challenge=", 1, true) and w
+    end)
+    require("socket.http").request(os.getenv("YB_OAUTH_BASE") .. "/challenge?c=" .. login.url:match("code_challenge=([^&]+)"))
+    tap_widget(login.enter_button)
+    local dialog = wait("the code dialog", function()
+        for _, window in ipairs(UIManager._window_stack) do
+            if window.widget.getInputText then return window.widget end
+        end
+    end)
+    dialog:setInputText("abc123")
+    for _, b in ipairs(dialog.buttons[1]) do
+        if b.text == "Войти" then b.callback() end
+    end
+    local menu = library_with(21)
+    shot("p01-library")
+    swipe_down()
+    no_shade()
+    -- The swipe synced the library again.
+    wait("the library synced", function() return menu.sync_state == nil end)
+    test_own_books(plugin(), menu)
+
+    -- KOReader's reading screen, and the place read sent all the same.
+    local function position() return mock_get("/test/position?book=book0") end
+    local before = position().writes
+    open(menu, "Книга номер 0")
+    local ui = reader()
+    if not ui.yaknigi or ui.yaknigi.shell_installed then fail("the reading screen was taken over") end
+    swipe_down()
+    no_shade()
+    for _ = 1, 3 do ui:handleEvent(Event:new("GotoViewRel", 1)) end
+    UIManager:forceRePaint()
+    shot("p02-reader")
+    ui:onHome()
+    wait("the file browser after the book", function() return FileManager.instance and top() == FileManager.instance end)
+    wait("the place sent", function() return position().writes ~= before end, 20)
+    say("the place goes to Yandex from KOReader's own reader")
+
+    -- Only KOReader's own settings for the screen and sleep: none of ours.
+    plugin():showLibrary()
+    library_with(21)
+    plugin():showSettings()
+    local settings = wait("the settings", function() return top().name == "YaknigiSettings" and top() end)
+    UIManager:forceRePaint()
+    for _, key in ipairs({ "clock", "refresh", "sleep_screen", "sleep_time" }) do
+        if settings.rows[key] then fail("an app's row in someone's KOReader: " .. key) end
+    end
+    for _ = 2, settings.pages or 1 do
+        tap_widget(settings.pager_next)
+        UIManager:forceRePaint()
+    end
+    if not settings.rows.check_updates then fail("no switch for looking for new versions") end
+    shot("p03-settings")
+
+    -- A new version is told about; nothing is fetched.
+    local Updater = require("yaknigi/updater")
+    if Updater.enabled() or not Updater.notify_only() then fail("the plugin would install updates itself") end
+    require("socket.http").request(os.getenv("YB_OAUTH_BASE") .. "/test/update?mode=good")
+    plugin():checkUpdates(true)
+    local told = wait("the news of a version", function()
+        return top().name == "YaknigiUpdateOffer" and top()
+    end)
+    if not tostring(told.text):find("yaknigi.koplugin.zip", 1, true) then fail("the news says not where to get it") end
+    shot("p04-new-version")
+    told.cancel_callback()
+    UIManager:close(told)
+    if require("yaknigi/appstate"):readSetting("update_skipped") ~= "9.9.9" and
+        not require("yaknigi/appstate"):readSetting("update_skipped") then
+        fail("«skip» was not kept")
+    end
+    if Updater.pending(require("datastorage"):getDataDir() .. "/yaknigi/update") then
+        fail("an update was fetched in someone's KOReader")
+    end
+
+    -- The way out leads back to the file browser, and KOReader goes on.
+    settings = wait("the settings again", function() return top().name == "YaknigiSettings" and top() end)
+    tap_widget(settings.power)
+    UIManager:forceRePaint()
+    local buttons = settings.power_dialog.buttontable
+    if buttons:getButtonById("off") then fail("turning the device off from someone's KOReader") end
+    if buttons:getButtonById("exit").text ~= "Вернуться в KOReader" then fail("the way out is not named for KOReader") end
+    tap_widget(buttons:getButtonById("exit"))
+    wait("the file browser at the end", function() return FileManager.instance and top() == FileManager.instance end)
+    shot("p05-back")
+    local f = io.open(OUT .. "/PASS", "w")
+    f:write("ok\n")
+    f:close()
+    say("PASS")
+    UIManager:quit()
+end
+
 function Driver:init()
     if started or not OUT then return end
     started = true
     UIManager:scheduleIn(1, function()
         local co = coroutine.create(function()
-            local ok, err = xpcall(script, debug.traceback)
+            local run = os.getenv("YAKNIGI_APP") == "1" and script or plugin_script
+            local ok, err = xpcall(run, debug.traceback)
             if not ok then fail(err) end
         end)
         local ok, err = coroutine.resume(co)

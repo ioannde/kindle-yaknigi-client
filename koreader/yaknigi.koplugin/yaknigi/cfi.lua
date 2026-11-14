@@ -88,10 +88,15 @@ function Cfi.resolve(html, path)
     end
 end
 
---- Returns the xpointer for a CFI given the chapter's text, or nil.
--- fragment is the 1-based DocFragment. Falls back to the chapter's start.
+--- Returns the xpointer for a CFI given the chapter's text: down to the letter where the
+-- page starts, as a paragraph may take more than a page; else the element, else the chapter.
+-- fragment is the 1-based DocFragment.
 function Cfi.to_xpointer(cfi, fragment, html)
     local base = "/body/DocFragment[" .. fragment .. "]/body"
+    local _, first = Cfi.range(cfi)
+    first = first or (type(cfi) == "string" and cfi:match("^/[^!]*!(/[^,]*)$"))
+    local point = first and html and Cfi.to_point(html, fragment, first)
+    if point then return point end
     local path = html and Cfi.body_path(cfi)
     local inner = path and Cfi.resolve(html, path)
     if inner and inner ~= "" then return base .. "/" .. inner end
