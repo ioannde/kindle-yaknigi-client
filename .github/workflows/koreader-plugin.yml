@@ -76,26 +76,30 @@ jobs:
           cp -R koreader/yaknigi.koplugin "$ext/koreader/plugins/"
           plugin=$ext/koreader/plugins/yaknigi.koplugin
           printf 'return "%s"\n' "$YANDEX_CLIENT_ID" > "$plugin/yaknigi/client_id.lua"
-          # What an update cannot bring. Another of these means installing by hand.
-          launcher=$(cat kual/yaknigi-ko/run.sh kual/yaknigi-ko/seed.lua kual/yaknigi-ko/apply-update.sh scriptlet/yaknigi.sh koreader/settings.reader.lua | sha256sum | cut -c1-8)
-          base="$KO_VERSION-$launcher"
-          echo "$base" > "$plugin/yaknigi/BASE"
+          # The launcher's files go with the plugin, and an update puts them in place (yaknigi/launcher.lua).
+          mkdir -p "$plugin/launcher"
+          cp kual/yaknigi-ko/run.sh kual/yaknigi-ko/seed.lua kual/yaknigi-ko/apply-update.sh koreader/settings.reader.lua "$plugin/launcher/"
+          # What an update cannot bring: KOReader itself. Another one means installing by hand.
+          echo "$KO_VERSION" > "$plugin/yaknigi/BASE"
+          # The versions before 0.9.11 compare base, which held the launcher's digest then:
+          # 0.9.9's, the last one most have, so that they update too.
+          legacy_base="$KO_VERSION-a8e7a9bb"
           mkdir -p update
           if [ -n "$version" ]; then
               echo "$version" > "$plugin/yaknigi/VERSION"
               jq --argjson v "[${version//./,}]" '.version = $v' kpm/manifest.json > kpm/manifest.json.new
               mv kpm/manifest.json.new kpm/manifest.json
               tar -C "$ext/koreader/plugins" --owner=0 --group=0 -cf update/yaknigi-update.tar yaknigi.koplugin
-              jq -n --arg version "$version" --arg base "$base" \
+              jq -n --arg version "$version" --arg koreader "$KO_VERSION" --arg base "$legacy_base" \
                   --arg sha256 "$(sha256sum update/yaknigi-update.tar | cut -d' ' -f1)" \
-                  '{version: $version, base: $base, sha256: $sha256}' > update/manifest.json
+                  '{version: $version, koreader: $koreader, base: $base, sha256: $sha256}' > update/manifest.json
               cat update/manifest.json
           fi
           cp LICENSE "$ext/"
           # For those with KOReader of their own: the plugin's folder alone.
           mkdir -p koplugin
           cp LICENSE "$plugin/"
-          (cd "$ext/koreader/plugins" && zip -qr "$GITHUB_WORKSPACE/koplugin/yaknigi.koplugin.zip" yaknigi.koplugin)
+          (cd "$ext/koreader/plugins" && zip -qr "$GITHUB_WORKSPACE/koplugin/yaknigi.koplugin.zip" yaknigi.koplugin -x 'yaknigi.koplugin/launcher/*')
           rm "$plugin/LICENSE"
           du -sh "$ext"
           # Without KUAL, on the newer jailbreaks: a scriptlet is shown among the books.

@@ -1,7 +1,7 @@
 #!/bin/sh
 # Puts a downloaded version of the plugin in place, before KOReader reads it, and takes it back
-# if the last start with it never reported success. It is the one thing updates do not replace
-# (a new launcher means a new install): it has to work whatever the plugin has become.
+# if the last start with it never reported success. A new version of the plugin brings a new one
+# of this file too, but it has to work whatever the plugin has become.
 DIR=${YAKNIGI_DIR:-/mnt/us/extensions/yaknigi-ko}
 UPDATE=${KO_HOME:-$DIR/home}/yaknigi/update
 PLUGIN=$DIR/koreader/plugins/yaknigi.koplugin
