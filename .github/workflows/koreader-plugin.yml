@@ -68,13 +68,9 @@ jobs:
           fi
           # The registration at oauth.yandex.ru is not in the repository: without it nobody can sign in.
           test -n "$YANDEX_CLIENT_ID" || { echo "::error::set the secret YANDEX_CLIENT_ID"; exit 1; }
-          gh release download "$KO_VERSION" -R koreader/koreader -p "koreader-kindlehf-$KO_VERSION.zip" -O ko.zip
-          ext=package/extensions/yaknigi-ko
-          mkdir -p "$ext"
-          cp kual/yaknigi-ko/* koreader/settings.reader.lua "$ext/"
-          unzip -q ko.zip 'koreader/*' -d "$ext"
-          cp -R koreader/yaknigi.koplugin "$ext/koreader/plugins/"
-          plugin=$ext/koreader/plugins/yaknigi.koplugin
+          mkdir -p staging_plugin update koplugin kpkg
+          cp -R koreader/yaknigi.koplugin staging_plugin/
+          plugin=staging_plugin/yaknigi.koplugin
           printf 'return "%s"\n' "$YANDEX_CLIENT_ID" > "$plugin/yaknigi/client_id.lua"
           # The launcher's files go with the plugin, and an update puts them in place (yaknigi/launcher.lua).
           mkdir -p "$plugin/launcher"
@@ -84,40 +80,55 @@ jobs:
           # The versions before 0.9.11 compare base, which held the launcher's digest then:
           # 0.9.9's, the last one most have, so that they update too.
           legacy_base="$KO_VERSION-a8e7a9bb"
-          mkdir -p update
           if [ -n "$version" ]; then
               echo "$version" > "$plugin/yaknigi/VERSION"
               jq --argjson v "[${version//./,}]" '.version = $v' kpm/manifest.json > kpm/manifest.json.new
               mv kpm/manifest.json.new kpm/manifest.json
-              tar -C "$ext/koreader/plugins" --owner=0 --group=0 -cf update/yaknigi-update.tar yaknigi.koplugin
+              tar -C staging_plugin --owner=0 --group=0 -cf update/yaknigi-update.tar yaknigi.koplugin
               jq -n --arg version "$version" --arg koreader "$KO_VERSION" --arg base "$legacy_base" \
                   --arg sha256 "$(sha256sum update/yaknigi-update.tar | cut -d' ' -f1)" \
                   '{version: $version, koreader: $koreader, base: $base, sha256: $sha256}' > update/manifest.json
               cat update/manifest.json
           fi
-          cp LICENSE "$ext/"
           # For those with KOReader of their own: the plugin's folder alone.
-          mkdir -p koplugin
           cp LICENSE "$plugin/"
-          (cd "$ext/koreader/plugins" && zip -qr "$GITHUB_WORKSPACE/koplugin/yaknigi.koplugin.zip" yaknigi.koplugin -x 'yaknigi.koplugin/launcher/*')
+          (cd staging_plugin && zip -qr "$GITHUB_WORKSPACE/koplugin/yaknigi.koplugin.zip" yaknigi.koplugin -x 'yaknigi.koplugin/launcher/*')
           rm "$plugin/LICENSE"
-          du -sh "$ext"
-          # Without KUAL, on the newer jailbreaks: a scriptlet is shown among the books.
-          mkdir -p package/documents
-          cp scriptlet/yaknigi.sh package/documents/
+
+          for flavor in kindlehf kindlepw2 kindle; do
+              gh release download "$KO_VERSION" -R koreader/koreader -p "koreader-${flavor}-$KO_VERSION.zip" -O "ko-${flavor}.zip"
+              pkg_dir="pkg-${flavor}"
+              ext="${pkg_dir}/extensions/yaknigi-ko"
+              mkdir -p "$ext" "${pkg_dir}/documents"
+              cp kual/yaknigi-ko/* koreader/settings.reader.lua LICENSE "$ext/"
+              unzip -q "ko-${flavor}.zip" 'koreader/*' -d "$ext"
+              cp -R "$plugin" "$ext/koreader/plugins/"
+              cp scriptlet/yaknigi.sh "${pkg_dir}/documents/"
+              du -sh "$ext"
+          done
       - name: Build the KPM package
         run: |
           kpm=kpm-package
-          mkdir -p "$kpm/scriptlets" kpkg
+          mkdir -p "$kpm/scriptlets"
           cp kpm/* "$kpm/"
           cp scriptlet/yaknigi.sh "$kpm/scriptlets/"
-          cp -R package/extensions/yaknigi-ko "$kpm/yaknigi-ko"
+          cp -R pkg-kindlehf/extensions/yaknigi-ko "$kpm/yaknigi-ko"
           (cd "$kpm" && tar -czf ../kpkg/yaknigi-ko_kindlehf.kpkg *)
           tar -tzf kpkg/yaknigi-ko_kindlehf.kpkg | grep -v '^yaknigi-ko/'
       - uses: actions/upload-artifact@v4
         with:
           name: yaknigi-ko-kindlehf
-          path: package
+          path: pkg-kindlehf
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: yaknigi-ko-kindlepw2
+          path: pkg-kindlepw2
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: yaknigi-ko-kindle
+          path: pkg-kindle
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
@@ -147,8 +158,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          (cd yaknigi-ko-kindlehf && zip -qr ../yaknigi-ko-kindlehf.zip .)
+          for flavor in kindlehf kindlepw2 kindle; do
+              (cd "yaknigi-ko-${flavor}" && zip -qr "../yaknigi-ko-${flavor}.zip" .)
+          done
           gh release create "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --verify-tag --generate-notes \
               yaknigi-update/manifest.json yaknigi-update/yaknigi-update.tar \
-              yaknigi-ko-kindlehf.zip yaknigi-ko-kpkg/yaknigi-ko_kindlehf.kpkg \
+              yaknigi-ko-kindlehf.zip yaknigi-ko-kindlepw2.zip yaknigi-ko-kindle.zip \
+              yaknigi-ko-kpkg/yaknigi-ko_kindlehf.kpkg \
               yaknigi-koplugin/yaknigi.koplugin.zip

@@ -3,6 +3,10 @@
 DIR=/mnt/us/extensions/yaknigi-ko
 export KO_HOME="$DIR/home"
 export YAKNIGI_APP=1
+if [ "${1:-}" = "--koreader" ]; then
+    shift 1
+    export YAKNIGI_APP=0
+fi
 export YAKNIGI_DIR="$DIR"
 mkdir -p "$KO_HOME"
 # A version that was downloaded goes in place here, or one that did not start goes back.
