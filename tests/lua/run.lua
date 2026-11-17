@@ -1103,5 +1103,26 @@ do
     eq(select(2, TextStyle.without_align({ footnote = true })), false, "nothing to take out")
 end
 
+-- background prerender memory guard
+do
+    package.preload["ffi/util"] = function() return {} end
+    package.preload["logger"] = function() return { info = function() end, warn = function() end } end
+    package.preload["yaknigi/api"] = function() return {} end
+    package.preload["yaknigi/serial"] = function() return {} end
+    local Background = require("yaknigi/background")
+    eq(Background.available_kb("MemTotal: 250000 kB\nMemFree: 20000 kB\nMemAvailable: 120000 kB\n"),
+        120000, "modern kernel MemAvailable")
+    eq(Background.available_kb("MemTotal: 248000 kB\nMemFree: 18000 kB\nBuffers: 4000 kB\nCached: 30000 kB\n"),
+        52000, "legacy Kindle kernel MemFree + Buffers + Cached")
+    eq(Background.available_kb("unexpected"), nil, "unknown meminfo")
+    local mem_dir = scratch()
+    put_file(mem_dir .. "/low", "MemTotal: 248000 kB\nMemFree: 18000 kB\nBuffers: 4000 kB\nCached: 30000 kB\n")
+    put_file(mem_dir .. "/high", "MemTotal: 500000 kB\nMemFree: 180000 kB\nBuffers: 10000 kB\nCached: 50000 kB\n")
+    eq(Background.can_prerender(mem_dir .. "/low"), false, "skip prerender on low-RAM device")
+    eq(Background.can_prerender(mem_dir .. "/high"), true, "allow prerender when RAM is plentiful")
+    eq(Background.can_prerender(mem_dir .. "/missing"), true, "fallback to true when meminfo missing")
+    os.execute("rm -rf '" .. mem_dir .. "'")
+end
+
 print(("%d passed, %d failed"):format(passed, failed))
 os.exit(failed == 0 and 0 or 1)

@@ -6,6 +6,20 @@
       "action": "/bin/sh",
       "params": "/mnt/us/extensions/yaknigi-ko/run.sh",
       "exitmenu": true
+    },
+    {
+      "name": "Клиент для Яндекс Книг (макс. ОЗУ, без оболочки Kindle)",
+      "priority": 1,
+      "action": "/bin/sh",
+      "params": "/mnt/us/extensions/yaknigi-ko/run.sh --kual --framework_stop",
+      "exitmenu": true
+    },
+    {
+      "name": "KOReader (обычный режим + Яндекс Книги)",
+      "priority": 2,
+      "action": "/bin/sh",
+      "params": "/mnt/us/extensions/yaknigi-ko/run.sh --koreader",
+      "exitmenu": true
     }
   ]
 }

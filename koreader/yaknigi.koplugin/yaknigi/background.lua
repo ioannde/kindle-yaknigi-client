@@ -15,6 +15,31 @@ pcall(ffi.cdef, "int nice(int); int getppid(void);")
 
 local Background = {}
 
+Background.MIN_PRERENDER_KB = 96 * 1024
+
+--- Parses /proc/meminfo text and returns available memory in KiB, or nil if unknown.
+function Background.available_kb(text)
+    if type(text) ~= "string" then return nil end
+    local avail = tonumber(text:match("MemAvailable:%s*(%d+)%s*kB"))
+    if avail then return avail end
+    local free = tonumber(text:match("MemFree:%s*(%d+)%s*kB"))
+    if not free then return nil end
+    local buffers = tonumber(text:match("Buffers:%s*(%d+)%s*kB")) or 0
+    local cached = tonumber(text:match("Cached:%s*(%d+)%s*kB")) or 0
+    return free + buffers + cached
+end
+
+--- True when the device has enough free/reclaimable RAM to run a second crengine instance
+-- in the background child process without risking OOM on 256 MB Kindles (e.g. Paperwhite 1 EY21).
+function Background.can_prerender(meminfo_path)
+    local f = io.open(meminfo_path or "/proc/meminfo", "rb")
+    if not f then return true end
+    local text = f:read("*a")
+    f:close()
+    local kb = Background.available_kb(text)
+    return not kb or kb >= Background.MIN_PRERENDER_KB
+end
+
 local function read_number(path)
     local f = io.open(path, "rb")
     if not f then return nil end
@@ -77,14 +102,18 @@ function Background.start(store, token, around, document)
         if not whole then os.exit(0) end
         if not store:build() then os.exit(1) end
         if document then
-            -- Same document view and settings as the parent: the cache's key matches.
-            document:setCallback()
-            document:enablePartialRerendering(false)
-            local view = document._document
-            if view:loadDocument(store.epub) then
-                view:renderDocument()
-                view:updateTocAndPageMap()
-                view:close() -- writes the cache
+            if Background.can_prerender() then
+                -- Same document view and settings as the parent: the cache's key matches.
+                document:setCallback()
+                document:enablePartialRerendering(false)
+                local view = document._document
+                if view:loadDocument(store.epub) then
+                    view:renderDocument()
+                    view:updateTocAndPageMap()
+                    view:close() -- writes the cache
+                end
+            else
+                logger.info("yaknigi: skipping background prerender on low-RAM device")
             end
         end
         os.exit(0)
